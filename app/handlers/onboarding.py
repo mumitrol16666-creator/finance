@@ -1,0 +1,161 @@
+# app/handlers/onboarding.py
+
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+
+from app.config.settings import settings
+from app.db.repositories.users_repo import get_onboarded
+from app.ui.texts import get_text
+from app.ui.keyboards import (
+    onboarding_start_kb, currency_kb, cancel_kb,
+    yes_no_kb, daily_time_quick_kb
+)
+from app.fsm.states import Onboarding
+from app.domain.validators import clean_name, parse_positive_int, parse_hhmm
+from app.handlers.common import cancel_to_main_menu, is_cancel_text, build_main_menu_markup
+from app.domain.services.onboarding_service import (
+    init_user, save_currency, add_account, has_any_account,
+    save_daily_report, finish_onboarding
+)
+from app.db.repositories.settings_repo import get_lang
+
+router = Router()
+PARSE_MODE = "Markdown"
+
+def dbg(txt: str) -> str:
+    return f"\n\n#DBG {txt}" if settings.debug else ""
+
+async def answer_md(m: Message, text: str, **kwargs):
+    return await m.answer(text, parse_mode=PARSE_MODE, **kwargs)
+
+async def edit_md(msg, text: str, **kwargs):
+    return await msg.edit_text(text, parse_mode=PARSE_MODE, **kwargs)
+
+@router.message(CommandStart())
+async def start(m: Message, state: FSMContext, db):
+    await state.clear()
+    onboarded = await get_onboarded(db, m.from_user.id)
+    lang = await get_lang(db, m.from_user.id)
+    if onboarded == 1:
+        return await answer_md(m, get_text(lang, 'MENU'), reply_markup=await build_main_menu_markup(db, m.from_user.id, lang))
+    await init_user(db, m.from_user.id, settings.timezone)
+    sent = await answer_md(m, get_text(lang, 'START_INTRO'), reply_markup=onboarding_start_kb(lang))
+    await state.update_data(flow_message_id=sent.message_id, ui_scope='onboarding')
+
+@router.callback_query(F.data == 'ob:cancel')
+async def ob_cancel(c: CallbackQuery, state: FSMContext):
+    await cancel_to_main_menu(c, state)
+
+@router.callback_query(F.data == 'ob:start')
+async def ob_start(c: CallbackQuery, state: FSMContext, db):
+    await state.clear()
+    await state.update_data(flow_message_id=c.message.message_id, ui_scope='onboarding')
+    lang = await get_lang(db, c.from_user.id)
+    await edit_md(c.message, get_text(lang, 'ASK_CURRENCY'), reply_markup=currency_kb())
+    await c.answer()
+
+@router.callback_query(F.data.startswith('ob:cur:'))
+async def ob_currency(c: CallbackQuery, state: FSMContext, db):
+    cur = c.data.split(':')[2]
+    await save_currency(db, c.from_user.id, cur)
+    lang = await get_lang(db, c.from_user.id)
+    await edit_md(c.message, get_text(lang, 'CURRENCY_SAVED', cur=cur) + dbg(f' currency={cur}'), reply_markup=None)
+    await state.set_state(Onboarding.acc_name)
+    sent = await answer_md(c.message, get_text(lang, 'ASK_ACC_NAME'), reply_markup=cancel_kb(lang))
+    await state.update_data(prompt_message_id=sent.message_id, ui_scope='onboarding')
+    await c.answer()
+
+@router.message(Onboarding.acc_name, F.text)
+async def ob_acc_name(m: Message, state: FSMContext, db):
+    lang = await get_lang(db, m.from_user.id)
+    if is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state)
+        return
+    name = clean_name(m.text)
+    if not name:
+        return await answer_md(m, get_text(lang, 'NAME_ERROR'), reply_markup=cancel_kb(lang))
+    await state.update_data(acc_name=name)
+    await state.set_state(Onboarding.acc_balance)
+    sent = await answer_md(m, get_text(lang, 'ASK_ACC_BAL'), reply_markup=cancel_kb(lang))
+    await state.update_data(prompt_message_id=sent.message_id)
+
+@router.message(Onboarding.acc_balance, F.text)
+async def ob_acc_bal(m: Message, state: FSMContext, db):
+    lang = await get_lang(db, m.from_user.id)
+    if is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state)
+        return
+    bal = parse_positive_int(m.text, max_value=99_999_999)
+    if bal is None:
+        t = m.text.strip().replace(' ', '')
+        if t.isdigit() and int(t) == 0:
+            bal = 0
+        else:
+            return await answer_md(m, get_text(lang, 'SUM_ERROR'), reply_markup=cancel_kb(lang))
+    data = await state.get_data()
+    await add_account(db, m.from_user.id, data['acc_name'], bal)
+    await state.clear()
+    await answer_md(m, get_text(lang, 'ASK_ADD_MORE'), reply_markup=yes_no_kb('ob:moreacc', lang))
+
+@router.callback_query(F.data.startswith('ob:moreacc:'))
+async def ob_more_acc(c: CallbackQuery, state: FSMContext, db):
+    ans = c.data.split(':')[2]
+    lang = await get_lang(db, c.from_user.id)
+    if ans == 'yes':
+        await state.set_state(Onboarding.acc_name)
+        sent = await answer_md(c.message, get_text(lang, 'ASK_ACC_NAME'), reply_markup=cancel_kb(lang))
+        await state.update_data(prompt_message_id=sent.message_id, ui_scope='onboarding')
+        await c.answer()
+        return
+    if not await has_any_account(db, c.from_user.id):
+        await c.answer(get_text(lang, 'NEED_ONE_ACCOUNT'), show_alert=True)
+        await state.set_state(Onboarding.acc_name)
+        sent = await answer_md(c.message, get_text(lang, 'ASK_ACC_NAME'), reply_markup=cancel_kb(lang))
+        await state.update_data(prompt_message_id=sent.message_id)
+        return
+    await answer_md(c.message, get_text(lang, 'ASK_DAILY'), reply_markup=yes_no_kb('ob:daily', lang))
+    await c.answer()
+
+@router.callback_query(F.data.startswith('ob:daily:'))
+async def ob_daily(c: CallbackQuery, state: FSMContext, db):
+    ans = c.data.split(':')[2]
+    lang = await get_lang(db, c.from_user.id)
+    if ans == 'no':
+        await save_daily_report(db, c.from_user.id, 0, '21:00')
+        await finish_onboarding(db, c.from_user.id)
+        await answer_md(c.message, get_text(lang, 'DONE'), reply_markup=await build_main_menu_markup(db, c.from_user.id, lang))
+        await c.answer()
+        return
+    await save_daily_report(db, c.from_user.id, 1, '21:00')
+    await answer_md(c.message, get_text(lang, 'ASK_DAILY_TIME'), reply_markup=daily_time_quick_kb(lang))
+    await c.answer()
+
+@router.callback_query(F.data.startswith('ob:time:'))
+async def ob_time_pick(c: CallbackQuery, state: FSMContext, db):
+    part = c.data.split(':')[2:]
+    lang = await get_lang(db, c.from_user.id)
+    if part[0] == 'other':
+        await state.set_state(Onboarding.daily_time_custom)
+        await state.update_data(flow_message_id=c.message.message_id, ui_scope='onboarding')
+        sent = await answer_md(c.message, get_text(lang, 'CUSTOM_TIME') + dbg(' time custom'), reply_markup=cancel_kb(lang))
+        await state.update_data(prompt_message_id=sent.message_id)
+        await c.answer()
+        return
+    hhmm = ':'.join(part)
+    await save_daily_report(db, c.from_user.id, 1, hhmm)
+    await finish_onboarding(db, c.from_user.id)
+    await answer_md(c.message, get_text(lang, 'DONE'), reply_markup=await build_main_menu_markup(db, c.from_user.id, lang))
+    await c.answer()
+
+@router.message(Onboarding.daily_time_custom, F.text)
+async def ob_time_custom(m: Message, state: FSMContext, db):
+    lang = await get_lang(db, m.from_user.id)
+    hhmm = parse_hhmm(m.text)
+    if not hhmm:
+        return await answer_md(m, get_text(lang, 'TIME_ERROR'))
+    await save_daily_report(db, m.from_user.id, 1, hhmm)
+    await finish_onboarding(db, m.from_user.id)
+    await state.clear()
+    await answer_md(m, get_text(lang, 'DONE'), reply_markup=await build_main_menu_markup(db, m.from_user.id, lang))
