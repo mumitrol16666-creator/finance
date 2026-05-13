@@ -1,0 +1,1611 @@
+from __future__ import annotations
+
+from datetime import datetime
+from html import escape
+
+from aiogram import Router, F
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+)
+from aiogram.fsm.context import FSMContext
+
+from app.fsm.states import ExpenseFlow, IncomeFlow, TransferFlow
+from app.domain.validators import parse_positive_int, clean_note
+from app.domain.services.ai_service import simple_feedback
+from app.domain.services.accounting_service import (
+    get_balance_after,
+    add_expense_v2,
+    add_income,
+    add_transfer,
+)
+
+from app.db.repositories.accounts_repo import list_accounts, get_account
+from app.db.repositories.categories_repo import list_categories, get_category
+from app.db.repositories.settings_repo import get_settings, get_lang
+from app.db.repositories.budgets_repo import (
+    get_category_budget,
+    month_spent_by_category,
+    month_spent_map,
+)
+
+from app.handlers.common import cancel_to_main_menu, is_cancel_text, deny_feature_message, build_main_menu_markup
+from app.domain.services.access_service import FEATURE_TRANSFER, can_use_feature
+from app.ui.i18n import text_matches_key
+from app.ui.keyboards import (
+    cancel_kb,
+    accounts_kb,
+    categories_kb,
+    yes_no_kb,
+    main_menu,
+    budgets_categories_kb,
+)
+from app.ui.formatters import fmt_money
+
+router = Router()
+
+PARSE_MODE = "HTML"
+
+
+# =========================================================
+# Common helpers
+# =========================================================
+def _format_month(month: str | None) -> str:
+    if not month:
+        return ""
+
+    try:
+        y, m = month.split("-")
+        months = [
+            "январь", "февраль", "март", "апрель", "май", "июнь",
+            "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"
+        ]
+        return f"{months[int(m) - 1]} {y}"
+    except Exception:
+        return month
+
+
+async def start_prefilled_expense(
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    db,
+    *,
+    amount: int,
+    note: str | None = None,
+    account_id: int | None = None,
+    category_id: int | None = None,
+    skip_note_prompt: bool = False,
+):
+    await _clear_flow_message(
+        target.bot,
+        target.message.chat.id if isinstance(target, CallbackQuery) else target.chat.id,
+        state,
+    )
+
+    await state.clear()
+
+    payload: dict = {
+        "amount": int(amount),
+        "note": note,
+    }
+
+    user_id = target.from_user.id
+
+    acc = None
+    if account_id:
+        acc = await _validate_account(db, user_id, int(account_id))
+        if acc:
+            payload["account_id"] = int(account_id)
+            payload["account_name"] = acc[1]
+            payload["balance_before"] = acc[2]
+
+    cat = None
+    if category_id:
+        cat = await _validate_category(db, user_id, int(category_id))
+        if cat:
+            _, cat_name, cat_emoji, _, _ = cat
+            month = datetime.now().strftime("%Y-%m")
+            category_limit = await get_category_budget(
+                db=db,
+                user_id=user_id,
+                category_id=int(category_id),
+                month=month,
+            )
+            payload["category_id"] = int(category_id)
+            payload["category_name"] = cat_name
+            payload["category_emoji"] = (cat_emoji or "")
+            payload["category_limit"] = category_limit
+            payload["category_limit_month"] = month
+
+    await state.update_data(**payload)
+
+    if not payload.get("account_id"):
+        await state.set_state(ExpenseFlow.account)
+        await _exp_render_account(target, state, db)
+        return
+
+    if not payload.get("category_id"):
+        await state.set_state(ExpenseFlow.category)
+        await _exp_render_category(target, state, db)
+        return
+
+    if note is None and not skip_note_prompt:
+        await state.set_state(ExpenseFlow.need_note)
+        await _exp_render_need_note(target, state)
+        return
+
+    await state.set_state(ExpenseFlow.confirm)
+    await _exp_render_confirm(target, state, db)
+
+async def start_prefilled_income(
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    db,
+    *,
+    amount: int,
+    note: str | None = None,
+    account_id: int | None = None,
+    category_id: int | None = None,
+    skip_note_prompt: bool = False,
+):
+    await _clear_flow_message(
+        target.bot,
+        target.message.chat.id if isinstance(target, CallbackQuery) else target.chat.id,
+        state,
+    )
+
+    await state.clear()
+
+    payload: dict = {
+        "amount": int(amount),
+        "note": note,
+    }
+
+    user_id = target.from_user.id
+
+    acc = None
+    if account_id:
+        acc = await _validate_account(db, user_id, int(account_id))
+        if acc:
+            payload["account_id"] = int(account_id)
+            payload["account_name"] = acc[1]
+            payload["balance_before"] = acc[2]
+
+    cat = None
+    if category_id:
+        cat = await _validate_category(db, user_id, int(category_id))
+        if cat:
+            _, cat_name, cat_emoji, _, _ = cat
+            payload["category_id"] = int(category_id)
+            payload["category_name"] = cat_name
+            payload["category_emoji"] = (cat_emoji or "")
+
+    await state.update_data(**payload)
+
+    if not payload.get("account_id"):
+        await state.set_state(IncomeFlow.account)
+        await _inc_render_account(target, state, db)
+        return
+
+    if not payload.get("category_id"):
+        await state.set_state(IncomeFlow.category)
+        await _inc_render_category(target, state, db)
+        return
+
+    if note is None and not skip_note_prompt:
+        await state.set_state(ExpenseFlow.need_note)
+        await _exp_render_need_note(target, state)
+        return
+
+    await state.set_state(IncomeFlow.confirm)
+    await _inc_render_confirm(target, state, db)
+
+
+async def _delete_flow_message(bot, chat_id: int, state: FSMContext):
+    data = await state.get_data()
+    flow_message_id = data.get("flow_message_id")
+    prompt_message_id = data.get("prompt_message_id")
+
+    for msg_id in [flow_message_id, prompt_message_id]:
+        if not msg_id:
+            continue
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=int(msg_id))
+        except Exception:
+            pass
+
+def _prev_month_key(month: str) -> str:
+    y, m = map(int, month.split("-"))
+    if m == 1:
+        return f"{y - 1:04d}-12"
+    return f"{y:04d}-{m - 1:02d}"
+
+async def _clear_flow_message(bot, chat_id: int, state: FSMContext):
+    data = await state.get_data()
+    flow_message_id = data.get("flow_message_id")
+    if not flow_message_id:
+        return
+
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=int(flow_message_id),
+            reply_markup=None,
+        )
+    except Exception:
+        pass
+
+
+async def _clear_prompt_message(bot, chat_id: int, state: FSMContext):
+    data = await state.get_data()
+    prompt_message_id = data.get("prompt_message_id")
+    if not prompt_message_id:
+        return
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=int(prompt_message_id))
+    except Exception:
+        pass
+    await state.update_data(prompt_message_id=None)
+
+
+async def _flow_enter_text_mode(
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    screen_text: str,
+    *,
+    prompt_text: str | None = None,
+) -> None:
+    data = await state.get_data()
+    flow_message_id = data.get("flow_message_id")
+
+    if isinstance(target, CallbackQuery):
+        bot = target.bot
+        chat_id = target.message.chat.id
+        current_message = target.message
+        send = target.message.answer
+    else:
+        bot = target.bot
+        chat_id = target.chat.id
+        current_message = None
+        send = target.answer
+
+    await _clear_prompt_message(bot, chat_id, state)
+
+    if flow_message_id:
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=int(flow_message_id),
+                reply_markup=None,
+            )
+        except Exception:
+            pass
+    elif current_message is not None:
+        flow_message_id = current_message.message_id
+
+    if current_message is not None:
+        try:
+            await current_message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+    prompt = await send(prompt_text or screen_text, reply_markup=cancel_kb(), parse_mode=PARSE_MODE)
+    await state.update_data(flow_message_id=flow_message_id, prompt_message_id=prompt.message_id)
+
+async def _note_max(db, user_id: int) -> int:
+    s = await get_settings(db, user_id)
+    return int(s[4]) if s else 80
+
+
+def _is_cancel_text(text: str | None) -> bool:
+    return is_cancel_text(text)
+
+
+async def _safe_delete_message(msg: Message):
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+
+async def _safe_remove_markup(msg: Message):
+    try:
+        await msg.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+
+async def _safe_edit_text(msg: Message, text: str, reply_markup=None):
+    try:
+        await msg.edit_text(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
+        return True
+    except Exception:
+        return False
+
+
+async def _flow_render(
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    text: str,
+    *,
+    reply_markup=None,
+) -> Message | None:
+    if isinstance(reply_markup, ReplyKeyboardMarkup):
+        await _flow_enter_text_mode(target, state, text)
+        return None
+
+    data = await state.get_data()
+    flow_message_id = data.get("flow_message_id")
+
+    if isinstance(target, Message):
+        await _clear_prompt_message(target.bot, target.chat.id, state)
+        if flow_message_id:
+            try:
+                await target.bot.edit_message_reply_markup(
+                    chat_id=target.chat.id,
+                    message_id=int(flow_message_id),
+                    reply_markup=None,
+                )
+            except Exception:
+                pass
+        sent = await target.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
+        await state.update_data(flow_message_id=sent.message_id)
+        return sent
+
+    bot = target.bot
+    chat_id = target.message.chat.id
+    fallback_message = target.message
+
+    await _clear_prompt_message(bot, chat_id, state)
+
+    if flow_message_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=int(flow_message_id),
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=PARSE_MODE,
+            )
+            return None
+        except Exception:
+            pass
+
+    if flow_message_id:
+        try:
+            if int(flow_message_id) != fallback_message.message_id:
+                await bot.edit_message_reply_markup(
+                    chat_id=chat_id,
+                    message_id=int(flow_message_id),
+                    reply_markup=None,
+                )
+        except Exception:
+            pass
+
+    edited = await _safe_edit_text(fallback_message, text, reply_markup=reply_markup)
+    if edited:
+        await state.update_data(flow_message_id=fallback_message.message_id)
+        return fallback_message
+
+    sent = await target.message.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
+    await state.update_data(flow_message_id=sent.message_id)
+    return sent
+
+async def _flow_finish(
+    ctx: Message | CallbackQuery,
+    state: FSMContext,
+    text: str,
+    db=None,
+):
+    """
+    Финал сценария:
+    - удаляем экранное сообщение сценария
+    - очищаем FSM
+    - отправляем одно финальное сообщение с main_menu
+    """
+    if isinstance(ctx, CallbackQuery):
+        await _delete_flow_message(ctx.bot, ctx.message.chat.id, state)
+        await state.clear()
+        lang = await get_lang(db, ctx.from_user.id) if db is not None else "ru"
+        await ctx.message.answer(text, reply_markup=await build_main_menu_markup(db, ctx.from_user.id, lang), parse_mode=PARSE_MODE)
+        await ctx.answer()
+        return
+
+    await _delete_flow_message(ctx.bot, ctx.chat.id, state)
+    await state.clear()
+    lang = await get_lang(db, ctx.from_user.id) if db is not None else "ru"
+    await ctx.answer(text, reply_markup=await build_main_menu_markup(db, ctx.from_user.id, lang), parse_mode=PARSE_MODE)
+
+
+def _action_buttons_kb(
+    save_cb: str,
+    *,
+    edit1_text: str | None = None,
+    edit1_cb: str | None = None,
+    edit2_text: str | None = None,
+    edit2_cb: str | None = None,
+    edit3_text: str | None = None,
+    edit3_cb: str | None = None,
+    save_text: str = "✅ Сохранить",
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=save_text, callback_data=save_cb)]
+    ]
+
+    edit_row: list[InlineKeyboardButton] = []
+    if edit1_text and edit1_cb:
+        edit_row.append(InlineKeyboardButton(text=edit1_text, callback_data=edit1_cb))
+    if edit2_text and edit2_cb:
+        edit_row.append(InlineKeyboardButton(text=edit2_text, callback_data=edit2_cb))
+    if edit_row:
+        rows.append(edit_row)
+
+    if edit3_text and edit3_cb:
+        rows.append([InlineKeyboardButton(text=edit3_text, callback_data=edit3_cb)])
+
+    rows.append(
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=save_cb.rsplit(":", 1)[0] + ":cancel")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _overdraft_kb(
+    prefix: str,
+    *,
+    yes_text: str = "✅ Провести",
+    no_text: str = "⬅️ Назад",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=yes_text, callback_data=f"{prefix}:yes"),
+                InlineKeyboardButton(text=no_text, callback_data=f"{prefix}:no"),
+            ]
+        ]
+    )
+
+
+def _exp_confirm_kb() -> InlineKeyboardMarkup:
+    return _action_buttons_kb(
+        "expcfm:save",
+        edit1_text="✏️ Категория",
+        edit1_cb="expcfm:category",
+        edit2_text="✏️ Комментарий",
+        edit2_cb="expcfm:note",
+    )
+
+
+def _inc_confirm_kb() -> InlineKeyboardMarkup:
+    return _action_buttons_kb(
+        "inccfm:save",
+        edit1_text="✏️ Категория",
+        edit1_cb="inccfm:category",
+        edit2_text="✏️ Комментарий",
+        edit2_cb="inccfm:note",
+    )
+
+
+def _tr_confirm_kb() -> InlineKeyboardMarkup:
+    return _action_buttons_kb(
+        "trcfm:save",
+        edit1_text="✏️ Откуда",
+        edit1_cb="trcfm:from",
+        edit2_text="✏️ Куда",
+        edit2_cb="trcfm:to",
+        edit3_text="✏️ Комментарий",
+        edit3_cb="trcfm:note",
+        save_text="✅ Выполнить",
+    )
+
+
+def _exp_summary_lines(data: dict) -> str:
+    lines = []
+
+    if data.get("amount") is not None:
+        lines.append(f"💸 Сумма: <b>{fmt_money(int(data['amount']))}</b>")
+
+    if data.get("account_name"):
+        lines.append(f"💳 Счёт: <b>{escape(str(data['account_name']))}</b>")
+
+    if data.get("category_name"):
+        emoji = (data.get("category_emoji") or "").strip()
+        label = f"{emoji} {escape(str(data['category_name']))}".strip()
+        lines.append(f"🧾 Категория: <b>{label}</b>")
+
+    if data.get("note"):
+        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+
+    return "\n".join(lines)
+
+
+def _inc_summary_lines(data: dict) -> str:
+    lines = []
+
+    if data.get("amount") is not None:
+        lines.append(f"💵 Сумма: <b>{fmt_money(int(data['amount']))}</b>")
+
+    if data.get("account_name"):
+        lines.append(f"💳 Счёт: <b>{escape(str(data['account_name']))}</b>")
+
+    if data.get("category_name"):
+        emoji = (data.get("category_emoji") or "").strip()
+        label = f"{emoji} {escape(str(data['category_name']))}".strip()
+        lines.append(f"💼 Категория: <b>{label}</b>")
+
+    if data.get("note"):
+        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+
+    return "\n".join(lines)
+
+
+def _tr_summary_lines(data: dict) -> str:
+    lines = ["🔁 <b>Новый перевод</b>", ""]
+
+    if data.get("amount") is not None:
+        lines.append(f"💸 Сумма: <b>{fmt_money(int(data['amount']))}</b>")
+
+    if data.get("from_name"):
+        lines.append(f"📤 Откуда: <b>{escape(str(data['from_name']))}</b>")
+
+    if data.get("to_name"):
+        lines.append(f"📥 Куда: <b>{escape(str(data['to_name']))}</b>")
+
+    if data.get("note"):
+        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+
+    return "\n".join(lines)
+
+
+async def _validate_account(db, user_id: int, account_id: int):
+    acc = await get_account(db, user_id, account_id)
+    if not acc:
+        return None
+    if int(acc[3] or 0) == 1:
+        return None
+    return acc
+
+
+async def _validate_category(db, user_id: int, category_id: int):
+    cat = await get_category(db, user_id, category_id)
+    if not cat:
+        return None
+    _, _, _, _, is_archived = cat
+    if int(is_archived or 0) == 1:
+        return None
+    return cat
+
+
+# =========================================================
+# Expense screens
+# =========================================================
+
+async def _exp_render_amount(target: Message | CallbackQuery, state: FSMContext):
+    text = (
+        "💸 <b>Новый расход</b>\n\n"
+        "Шаг 1 из 5.\n"
+        "Введи сумму цифрами.\n\n"
+        "Пример: <code>4500</code>"
+    )
+    await _flow_render(target, state, text, reply_markup=cancel_kb())
+
+
+async def _exp_render_account(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    accs = await list_accounts(db, target.from_user.id)
+    text = (
+        f"{_exp_summary_lines(data)}\n\n"
+        "Шаг 2 из 5.\n"
+        "Выбери счёт:"
+    )
+    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "expacc"))
+
+
+async def _exp_render_category(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    user_id = target.from_user.id
+
+    cats = await list_categories(db, user_id, kind="expense")
+    month = datetime.now().strftime("%Y-%m")
+
+    spent_map = await month_spent_map(db, user_id, month)
+    left_map: dict[int, int] = {}
+
+    for cid, name, emoji in cats:
+        limit = await get_category_budget(db, user_id, month, cid)
+        spent = spent_map.get(cid, 0)
+
+        if isinstance(limit, int) and limit > 0:
+            left_map[cid] = limit - spent
+
+    text = (
+        f"{_exp_summary_lines(data)}\n\n"
+        "Шаг 3 из 5.\n"
+        "Выбери категорию расхода:"
+    )
+
+    await _flow_render(
+        target,
+        state,
+        text,
+        reply_markup=budgets_categories_kb(
+            cats,
+            left_map,
+            prefix="expcat",
+            cancel_cb="cancel",
+        ),
+    )
+
+
+async def _exp_render_need_note(target: Message | CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text = (
+        f"{_exp_summary_lines(data)}\n\n"
+        "Шаг 4 из 5.\n"
+        "Добавить комментарий?"
+    )
+    await _flow_render(target, state, text, reply_markup=yes_no_kb("expnote"))
+
+
+async def _exp_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    max_len = await _note_max(db, target.from_user.id)
+    text = (
+        f"{_exp_summary_lines(data)}\n\n"
+        "Шаг 4 из 5.\n"
+        f"Введи короткий комментарий сообщением ниже.\n"
+        f"До {max_len} символов."
+    )
+    await _flow_render(target, state, text, reply_markup=cancel_kb())
+
+
+async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    amt = int(data["amount"])
+    acc_id = int(data["account_id"])
+    user_id = target.from_user.id
+
+    bal_before, bal_after, acc_name = (
+        await get_balance_after(db, user_id, acc_id, -amt)
+    ) or (None, None, None)
+
+    if bal_before is None:
+        await state.clear()
+        return await (
+            target.message.answer("Счёт не найден.", reply_markup=await build_main_menu_markup(db, target.from_user.id, await get_lang(db, target.from_user.id)))
+            if isinstance(target, CallbackQuery)
+            else target.answer("Счёт не найден.", reply_markup=await build_main_menu_markup(db, target.from_user.id, await get_lang(db, target.from_user.id)))
+        )
+
+    await state.update_data(
+        balance_before=bal_before,
+        balance_after=bal_after,
+        account_name=acc_name or data.get("account_name"),
+    )
+    data = await state.get_data()
+
+    cat_emoji = (data.get("category_emoji") or "").strip()
+    cat_name = escape(str(data.get("category_name") or "Без категории"))
+    cat_label = f"{cat_emoji} {cat_name}".strip()
+
+    category_id = int(data["category_id"])
+    category_limit = data.get("category_limit")
+    month = datetime.now().strftime("%Y-%m")
+    spent_before = await month_spent_by_category(db, user_id, month, category_id)
+    after_spent = spent_before + amt
+
+    lines = [
+        "💸 <b>Подтверждение расхода</b>",
+        "",
+        f"🧾 Категория: <b>{cat_label}</b>",
+    ]
+
+    if isinstance(category_limit, int) and category_limit > 0:
+        left_after = category_limit - after_spent
+        lines.append(f"📉 Лимит категории: <b>{fmt_money(category_limit)}</b>")
+        lines.append(f"📊 Уже потрачено: <b>{fmt_money(spent_before)}</b>")
+
+        if left_after >= 0:
+            lines.append(f"🟢 Остаток после операции: <b>{fmt_money(left_after)}</b>")
+        else:
+            lines.append(f"🔴 Перерасход после операции: <b>{fmt_money(abs(left_after))}</b>")
+    else:
+        lines.append("📉 Лимит категории: <b>не задан</b>")
+
+    lines.extend([
+        f"💸 Сумма: <b>-{fmt_money(int(data['amount']))}</b>",
+        f"💳 Счёт: <b>{escape(str(data.get('account_name') or '—'))}</b>",
+        f"📊 Баланс: <b>{fmt_money(int(bal_before))} → {fmt_money(int(bal_after))}</b>",
+    ])
+
+    if data.get("note"):
+        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+
+    if int(bal_after) < 0:
+        lines += ["", "⚠️ После операции счёт уйдёт в минус."]
+
+    lines += ["", "Шаг 5 из 5.", "Сохранить?"]
+
+    await _flow_render(target, state, "\n".join(lines), reply_markup=_exp_confirm_kb())
+
+
+# =========================================================
+# Expense handlers
+# =========================================================
+
+@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_EXPENSE"))
+async def exp_start(m: Message, state: FSMContext):
+    await _clear_flow_message(m.bot, m.chat.id, state)
+    await state.clear()
+    await state.set_state(ExpenseFlow.amount)
+    await _exp_render_amount(m, state)
+
+
+@router.message(ExpenseFlow.amount, F.text)
+async def exp_amount(m: Message, state: FSMContext, db):
+    if _is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+
+    amt = parse_positive_int(m.text)
+    if amt is None:
+        return await m.answer("Use digits only. Example: 4500" if (await get_lang(db, m.from_user.id))=="en" else ("Тек цифрлар. Мысалы: 4500" if (await get_lang(db, m.from_user.id))=="kk" else "Нужны цифры. Пример: 4500"), reply_markup=cancel_kb())
+
+    await state.update_data(amount=amt)
+    await state.set_state(ExpenseFlow.account)
+
+    await _exp_render_account(m, state, db)
+
+
+@router.callback_query(ExpenseFlow.account, F.data.startswith("expacc:"))
+async def exp_account(c: CallbackQuery, state: FSMContext, db):
+    acc_id = int(c.data.split(":")[1])
+    acc = await _validate_account(db, c.from_user.id, acc_id)
+
+    if not acc:
+        await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
+        return
+
+    await state.update_data(
+        account_id=acc_id,
+        account_name=acc[1],
+        balance_before=acc[2],
+    )
+
+    data = await state.get_data()
+    if data.get("category_id"):
+        await state.set_state(ExpenseFlow.confirm)
+        await _exp_render_confirm(c, state, db)
+        await c.answer()
+        return
+
+    await state.set_state(ExpenseFlow.category)
+    await _exp_render_category(c, state, db)
+    await c.answer()
+
+
+@router.callback_query(ExpenseFlow.category, F.data.startswith("expcat:"))
+async def exp_category(c: CallbackQuery, state: FSMContext, db):
+    cat_id = int(c.data.split(":")[1])
+    cat = await _validate_category(db, c.from_user.id, cat_id)
+
+    if not cat:
+        await c.answer("Category not found" if (await get_lang(db, c.from_user.id))=="en" else ("Санат табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Категория не найдена"), show_alert=True)
+        return
+
+    _, cat_name, cat_emoji, _, _ = cat
+
+    month = datetime.now().strftime("%Y-%m")
+    category_limit = await get_category_budget(
+        db=db,
+        user_id=c.from_user.id,
+        category_id=cat_id,
+        month=month,
+    )
+
+    await state.update_data(
+        category_id=cat_id,
+        category_name=cat_name,
+        category_emoji=(cat_emoji or ""),
+        category_limit=category_limit,
+        category_limit_month=month,
+    )
+    await state.set_state(ExpenseFlow.need_note)
+
+    await _exp_render_need_note(c, state)
+    await c.answer()
+
+
+@router.callback_query(ExpenseFlow.need_note, F.data.startswith("expnote:"))
+async def exp_need_note(c: CallbackQuery, state: FSMContext, db):
+    ans = c.data.split(":")[1]
+
+    if ans == "yes":
+        await state.set_state(ExpenseFlow.note)
+        await _exp_render_note_input(c, state, db)
+    else:
+        await state.update_data(note=None)
+        await state.set_state(ExpenseFlow.confirm)
+        await _exp_render_confirm(c, state, db)
+
+    await c.answer()
+
+
+@router.message(ExpenseFlow.note, F.text)
+async def exp_note(m: Message, state: FSMContext, db):
+    if _is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+
+    max_len = await _note_max(db, m.from_user.id)
+    note = clean_note(m.text, max_len)
+    if not note:
+        return await m.answer(f"Комментарий 1–{max_len} символов.")
+
+    await state.update_data(note=note)
+    await state.set_state(ExpenseFlow.confirm)
+
+
+    await _exp_render_confirm(m, state, db)
+
+
+@router.callback_query(ExpenseFlow.confirm, F.data.startswith("expcfm:"))
+async def exp_confirm(c: CallbackQuery, state: FSMContext, db):
+    action = c.data.split(":")[1]
+
+    if action == "cancel":
+        await _flow_finish(c, state, "Отменено.", db)
+        return
+
+    if action == "category":
+        await state.set_state(ExpenseFlow.category)
+        await _exp_render_category(c, state, db)
+        await c.answer()
+        return
+
+    if action == "note":
+        await state.set_state(ExpenseFlow.note)
+        await _exp_render_note_input(c, state, db)
+        await c.answer()
+        return
+
+    if action == "save":
+        data = await state.get_data()
+        bal_after = data.get("balance_after")
+
+        if isinstance(bal_after, int) and bal_after < 0:
+            await state.set_state(ExpenseFlow.confirm_overdraft)
+            text = (
+                "⚠️ <b>Подтверждение перерасхода</b>\n\n"
+                f"💳 Счёт: <b>{escape(str(data['account_name']))}</b>\n"
+                f"📊 Баланс: <b>{fmt_money(int(data['balance_before']))} → {fmt_money(int(data['balance_after']))}</b>\n\n"
+                "Провести расход?"
+            )
+            await _flow_render(
+                c,
+                state,
+                text,
+                reply_markup=_overdraft_kb("expod", yes_text="✅ Провести", no_text="⬅️ Назад"),
+            )
+            await c.answer()
+            return
+
+        await _exp_save(c, state, db)
+        return
+
+
+@router.callback_query(ExpenseFlow.confirm_overdraft, F.data.startswith("expod:"))
+async def exp_od(c: CallbackQuery, state: FSMContext, db):
+    ans = c.data.split(":")[1]
+
+    if ans == "no":
+        await state.set_state(ExpenseFlow.confirm)
+        await _exp_render_confirm(c, state, db)
+        await c.answer()
+        return
+
+    await _exp_save(c, state, db)
+
+
+async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+
+    tx_id, meta = await add_expense_v2(
+        db,
+        ctx.from_user.id,
+        int(data["amount"]),
+        int(data["account_id"]),
+        int(data["category_id"]),
+        data.get("note"),
+    )
+
+    feedback = simple_feedback(int(data["amount"]), None)
+
+    cat_name = data.get("category_name") or "Без категории"
+    cat_emoji = (data.get("category_emoji") or "").strip()
+    cat_label = f"{cat_emoji} {cat_name}".strip()
+
+    bal_before_txt = (
+        fmt_money(int(data["balance_before"]))
+        if isinstance(data.get("balance_before"), int)
+        else str(data.get("balance_before") or "—")
+    )
+    bal_after_txt = (
+        fmt_money(int(data["balance_after"]))
+        if isinstance(data.get("balance_after"), int)
+        else str(data.get("balance_after") or "—")
+    )
+
+    msg = (
+        "✅ <b>Расход добавлен</b>\n\n"
+        f"🧾 Категория: {escape(cat_label)}\n"
+        f"💸 Сумма: <b>-{fmt_money(int(data['amount']))}</b>\n"
+        f"💳 Счёт: {escape(str(data['account_name']))}\n"
+        f"📊 Баланс: <b>{bal_before_txt} → {bal_after_txt}</b>\n"
+        f"\n<i>ID операции: {tx_id}</i>"
+    )
+
+    if data.get("note"):
+        msg += f"\n📝 Комментарий: <i>{escape(str(data['note']))}</i>"
+
+    dl = meta.get("daily_limit")
+    after_day = meta.get("after_total")
+    st_day = meta.get("daily_state")
+    if isinstance(dl, int) and isinstance(after_day, int) and dl > 0:
+        left = dl - after_day
+        if st_day == "warn":
+            msg += f"\n\n⚠️ Почти дневной лимит. Остаток: <b>{fmt_money(left)}</b>"
+        elif st_day == "over":
+            msg += f"\n\nПревышение дневного лимита: {fmt_money(abs(left))}"
+        elif st_day == "hard_over":
+            msg += f"\n\n🚫 Жёсткое превышение дневного лимита: <b>{fmt_money(abs(left))}</b>"
+
+    cb = meta.get("cat_budget")
+    st_cat = meta.get("cat_state")
+    left_cat = meta.get("cat_left")
+    month = _format_month(meta.get("month"))
+    if isinstance(cb, int) and cb > 0 and isinstance(month, str) and isinstance(left_cat, int):
+        if st_cat == "warn":
+            msg += f"\n\n⚠️ Почти лимит категории ({escape(month)}). Остаток: <b>{fmt_money(left_cat)}</b>"
+        elif st_cat == "over":
+            msg += f"\n\nПревышение лимита категории ({escape(month)}): {fmt_money(abs(left_cat))}"
+        elif st_cat == "hard_over":
+            msg += f"\n\n🚫 Жёсткий перерасход по категории ({escape(month)}): <b>{fmt_money(abs(left_cat))}</b>"
+
+    if feedback:
+        msg += f"\n\n<i>{escape(str(feedback))}</i>"
+
+    await _flow_finish(ctx, state, msg, db)
+
+
+# =========================================================
+# Income screens
+# =========================================================
+
+async def _inc_render_amount(target: Message | CallbackQuery, state: FSMContext):
+    text = (
+        "✅ <b>Новый доход</b>\n\n"
+        "Шаг 1 из 5.\n"
+        "Введи сумму цифрами.\n\n"
+        "Пример: <code>20000</code>"
+    )
+    await _flow_render(target, state, text, reply_markup=cancel_kb())
+
+
+async def _inc_render_account(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    accs = await list_accounts(db, target.from_user.id)
+    text = (
+        f"{_inc_summary_lines(data)}\n\n"
+        "Шаг 2 из 5.\n"
+        "Выбери счёт:"
+    )
+    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "incacc"))
+
+
+async def _inc_render_category(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    cats = await list_categories(db, target.from_user.id, "income")
+    text = (
+        f"{_inc_summary_lines(data)}\n\n"
+        "Шаг 3 из 5.\n"
+        "Выбери категорию дохода:"
+    )
+    await _flow_render(target, state, text, reply_markup=categories_kb(cats, "inccat"))
+
+
+async def _inc_render_need_note(target: Message | CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text = (
+        f"{_inc_summary_lines(data)}\n\n"
+        "Шаг 4 из 5.\n"
+        "Добавить комментарий?"
+    )
+    await _flow_render(target, state, text, reply_markup=yes_no_kb("incnote"))
+
+
+async def _inc_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    max_len = await _note_max(db, target.from_user.id)
+    text = (
+        f"{_inc_summary_lines(data)}\n\n"
+        "Шаг 4 из 5.\n"
+        f"Введи короткий комментарий сообщением ниже.\n"
+        f"До {max_len} символов."
+    )
+    await _flow_render(target, state, text, reply_markup=cancel_kb())
+
+
+async def _inc_render_confirm(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+
+    acc = await _validate_account(db, target.from_user.id, int(data["account_id"]))
+    if not acc:
+        await state.clear()
+        return await (
+            target.message.answer("Счёт не найден.", reply_markup=await build_main_menu_markup(db, target.from_user.id, await get_lang(db, target.from_user.id)))
+            if isinstance(target, CallbackQuery)
+            else target.answer("Счёт не найден.", reply_markup=await build_main_menu_markup(db, target.from_user.id, await get_lang(db, target.from_user.id)))
+        )
+
+    bal_before = int(acc[2])
+    bal_after = bal_before + int(data["amount"])
+
+    await state.update_data(account_name=acc[1])
+    data = await state.get_data()
+
+    cat_emoji = (data.get("category_emoji") or "").strip()
+    cat_name = escape(str(data.get("category_name") or "Без категории"))
+    cat_label = f"{cat_emoji} {cat_name}".strip()
+
+    lines = [
+        "✅ <b>Подтверждение дохода</b>",
+        "",
+        f"💼 Категория: <b>{cat_label}</b>",
+        f"💵 Сумма: <b>+{fmt_money(int(data['amount']))}</b>",
+        f"💳 Счёт: <b>{escape(str(data['account_name']))}</b>",
+        f"📊 Баланс: <b>{fmt_money(bal_before)} → {fmt_money(bal_after)}</b>",
+    ]
+
+    if data.get("note"):
+        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+
+    lines += ["", "Провести доход?"]
+
+    await _flow_render(target, state, "\n".join(lines), reply_markup=_inc_confirm_kb())
+
+# =========================================================
+# Income handlers
+# =========================================================
+
+@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_INCOME"))
+async def inc_start(m: Message, state: FSMContext):
+    await _clear_flow_message(m.bot, m.chat.id, state)
+    await state.clear()
+    await state.set_state(IncomeFlow.amount)
+    await _inc_render_amount(m, state)
+
+
+@router.message(IncomeFlow.amount, F.text)
+async def inc_amount(m: Message, state: FSMContext, db):
+    if _is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+
+    amt = parse_positive_int(m.text)
+    if amt is None:
+        return await m.answer("Use digits only. Example: 20000" if (await get_lang(db, m.from_user.id))=="en" else ("Тек цифрлар. Мысалы: 20000" if (await get_lang(db, m.from_user.id))=="kk" else "Нужны цифры. Пример: 20000"), reply_markup=cancel_kb())
+
+    await state.update_data(amount=amt)
+    await state.set_state(IncomeFlow.account)
+
+
+    await _inc_render_account(m, state, db)
+
+
+@router.callback_query(IncomeFlow.account, F.data.startswith("incacc:"))
+async def inc_account(c: CallbackQuery, state: FSMContext, db):
+    acc_id = int(c.data.split(":")[1])
+    acc = await _validate_account(db, c.from_user.id, acc_id)
+
+    if not acc:
+        await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
+        return
+
+    await state.update_data(
+        account_id=acc_id,
+        account_name=acc[1],
+        balance_before=acc[2],
+    )
+
+    data = await state.get_data()
+    if data.get("category_id"):
+        await state.set_state(IncomeFlow.confirm)
+        await _inc_render_confirm(c, state, db)
+        await c.answer()
+        return
+
+    await state.set_state(IncomeFlow.category)
+    await _inc_render_category(c, state, db)
+    await c.answer()
+
+@router.callback_query(IncomeFlow.category, F.data.startswith("inccat:"))
+async def inc_category(c: CallbackQuery, state: FSMContext, db):
+    cat_id = int(c.data.split(":")[1])
+    cat = await _validate_category(db, c.from_user.id, cat_id)
+
+    if not cat:
+        await c.answer("Category not found" if (await get_lang(db, c.from_user.id))=="en" else ("Санат табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Категория не найдена"), show_alert=True)
+        return
+
+    _, cat_name, cat_emoji, _, _ = cat
+    await state.update_data(
+        category_id=cat_id,
+        category_name=cat_name,
+        category_emoji=(cat_emoji or ""),
+    )
+    await state.set_state(IncomeFlow.need_note)
+
+    await _inc_render_need_note(c, state)
+    await c.answer()
+
+
+@router.callback_query(IncomeFlow.need_note, F.data.startswith("incnote:"))
+async def inc_need_note(c: CallbackQuery, state: FSMContext, db):
+    ans = c.data.split(":")[1]
+
+    if ans == "yes":
+        await state.set_state(IncomeFlow.note)
+        await _inc_render_note_input(c, state, db)
+    else:
+        await state.update_data(note=None)
+        await state.set_state(IncomeFlow.confirm)
+        await _inc_render_confirm(c, state, db)
+
+    await c.answer()
+
+
+@router.message(IncomeFlow.note, F.text)
+async def inc_note(m: Message, state: FSMContext, db):
+    if _is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+
+    max_len = await _note_max(db, m.from_user.id)
+    note = clean_note(m.text, max_len)
+    if not note:
+        return await m.answer(f"Комментарий 1–{max_len} символов.")
+
+    await state.update_data(note=note)
+    await state.set_state(IncomeFlow.confirm)
+
+
+    await _inc_render_confirm(m, state, db)
+
+
+@router.callback_query(IncomeFlow.confirm, F.data.startswith("inccfm:"))
+async def inc_confirm(c: CallbackQuery, state: FSMContext, db):
+    action = c.data.split(":")[1]
+
+    if action == "cancel":
+        await _flow_finish(c, state, "Отменено.", db)
+        return
+
+    if action == "category":
+        await state.set_state(IncomeFlow.category)
+        await _inc_render_category(c, state, db)
+        await c.answer()
+        return
+
+    if action == "note":
+        await state.set_state(IncomeFlow.note)
+        await _inc_render_note_input(c, state, db)
+        await c.answer()
+        return
+
+    if action == "save":
+        await _inc_save(c, state, db)
+        return
+
+
+async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+
+    tx_id = await add_income(
+        db,
+        ctx.from_user.id,
+        int(data["amount"]),
+        int(data["account_id"]),
+        int(data["category_id"]),
+        data.get("note"),
+    )
+
+    acc = await get_account(db, ctx.from_user.id, int(data["account_id"]))
+    bal_after = acc[2] if acc else None
+
+    cat_name = data.get("category_name") or "Без категории"
+    cat_emoji = (data.get("category_emoji") or "").strip()
+    cat_label = f"{cat_emoji} {cat_name}".strip()
+    bal_after_txt = fmt_money(int(bal_after)) if isinstance(bal_after, int) else "—"
+
+    month = datetime.now().strftime("%Y-%m")
+    prev_month = _prev_month_key(month)
+    month_txt = _format_month(month)
+    prev_month_txt = _format_month(prev_month)
+
+    # Текущий месяц: сумма, количество, максимум
+    cur = await db.execute(
+        """
+        SELECT
+            COALESCE(SUM(amount), 0),
+            COUNT(*),
+            COALESCE(MAX(amount), 0)
+        FROM transactions
+        WHERE user_id = ?
+          AND type = 'income'
+          AND strftime('%Y-%m', created_at) = ?
+        """,
+        (ctx.from_user.id, month),
+    )
+    row = await cur.fetchone()
+    month_total = int(row[0] or 0)
+    month_count = int(row[1] or 0)
+    month_max = int(row[2] or 0)
+
+    # Прошлый месяц: только сумма
+    cur = await db.execute(
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM transactions
+        WHERE user_id = ?
+          AND type = 'income'
+          AND strftime('%Y-%m', created_at) = ?
+        """,
+        (ctx.from_user.id, prev_month),
+    )
+    row = await cur.fetchone()
+    prev_month_total = int(row[0] or 0)
+
+    # По текущей категории за месяц
+    cur = await db.execute(
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM transactions
+        WHERE user_id = ?
+          AND type = 'income'
+          AND category_id = ?
+          AND strftime('%Y-%m', created_at) = ?
+        """,
+        (ctx.from_user.id, int(data["category_id"]), month),
+    )
+    row = await cur.fetchone()
+    cat_month_total = int(row[0] or 0)
+
+    delta = month_total - prev_month_total
+
+    msg = (
+        "✅ <b>Доход добавлен</b>\n\n"
+        f"💼 Категория: {escape(cat_label)}\n"
+        f"💵 Сумма: <b>+{fmt_money(int(data['amount']))}</b>\n"
+        f"💳 Счёт: {escape(str(data['account_name']))}\n"
+        f"📊 Баланс: <b>{bal_after_txt}</b>\n\n"
+        f"📈 Доход за {escape(month_txt)}: <b>{fmt_money(month_total)}</b>\n"
+        f"🧾 Операций за {escape(month_txt)}: <b>{month_count}</b>\n"
+        f"💼 По категории за {escape(month_txt)}: <b>{fmt_money(cat_month_total)}</b>\n"
+        f"🏆 Крупнейший доход месяца: <b>{fmt_money(month_max)}</b>\n"
+    )
+
+    if prev_month_total > 0:
+        if delta > 0:
+            msg += f"↗️ К {escape(prev_month_txt)}: <b>+{fmt_money(delta)}</b>\n"
+        elif delta < 0:
+            msg += f"↘️ К {escape(prev_month_txt)}: <b>-{fmt_money(abs(delta))}</b>\n"
+        else:
+            msg += f"➡️ К {escape(prev_month_txt)}: <b>без изменений</b>\n"
+    else:
+        msg += f"📁 За {escape(prev_month_txt)}: <b>нет данных</b>\n"
+
+    msg += f"\n<i>ID операции: {tx_id}</i>"
+
+    if data.get("note"):
+        msg += f"\n📝 Комментарий: <i>{escape(str(data['note']))}</i>"
+
+    await _flow_finish(ctx, state, msg, db)
+
+# =========================================================
+# Transfer screens
+# =========================================================
+
+async def _tr_render_amount(target: Message | CallbackQuery, state: FSMContext):
+    text = (
+        "🔁 <b>Новый перевод</b>\n\n"
+        "Шаг 1 из 5.\n"
+        "Введи сумму цифрами.\n\n"
+        "Пример: <code>50000</code>"
+    )
+    await _flow_render(target, state, text, reply_markup=cancel_kb())
+
+
+async def _tr_render_from(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    accs = await list_accounts(db, target.from_user.id)
+    text = (
+        f"{_tr_summary_lines(data)}\n\n"
+        "Шаг 2 из 5.\n"
+        "Выбери счёт списания:"
+    )
+    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "trfrom"))
+
+
+async def _tr_render_to(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    accs = await list_accounts(db, target.from_user.id)
+    text = (
+        f"{_tr_summary_lines(data)}\n\n"
+        "Шаг 3 из 5.\n"
+        "Выбери счёт зачисления:"
+    )
+    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "trto"))
+
+
+async def _tr_render_need_note(target: Message | CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text = (
+        f"{_tr_summary_lines(data)}\n\n"
+        "Шаг 4 из 5.\n"
+        "Добавить комментарий?"
+    )
+    await _flow_render(target, state, text, reply_markup=yes_no_kb("trnote"))
+
+
+async def _tr_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    max_len = await _note_max(db, target.from_user.id)
+    text = (
+        f"{_tr_summary_lines(data)}\n\n"
+        "Шаг 4 из 5.\n"
+        f"Введи короткий комментарий сообщением ниже.\n"
+        f"До {max_len} символов."
+    )
+    await _flow_render(target, state, text, reply_markup=cancel_kb())
+
+
+async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+
+    from_before = int(data["from_before"])
+    from_after = from_before - int(data["amount"])
+    await state.update_data(from_after=from_after)
+
+    data = await state.get_data()
+
+    lines = [
+        "🔁 <b>Подтверждение перевода</b>",
+        "",
+        f"📤 Откуда: <b>{escape(str(data['from_name']))}</b>",
+        f"📥 Куда: <b>{escape(str(data['to_name']))}</b>",
+        f"💸 Сумма: <b>{fmt_money(int(data['amount']))}</b>",
+        f"📊 После списания: <b>{fmt_money(int(from_before))} → {fmt_money(int(from_after))}</b>",
+    ]
+
+    if data.get("note"):
+        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+
+    if from_after < 0:
+        lines += ["", "⚠️ После перевода счёт списания уйдёт в минус."]
+
+    lines += ["", "Шаг 5 из 5.", "Выполнить перевод?"]
+
+    await _flow_render(target, state, "\n".join(lines), reply_markup=_tr_confirm_kb())
+
+
+# =========================================================
+# Transfer handlers
+# =========================================================
+
+@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_TRANSFER"))
+async def tr_start(m: Message, state: FSMContext, db):
+    if not await can_use_feature(db, m.from_user.id, FEATURE_TRANSFER):
+        await deny_feature_message(m, db, m.from_user.id)
+        return
+    await _clear_flow_message(m.bot, m.chat.id, state)
+    await state.clear()
+    await state.set_state(TransferFlow.amount)
+    await _tr_render_amount(m, state)
+
+
+@router.message(TransferFlow.amount, F.text)
+async def tr_amount(m: Message, state: FSMContext, db):
+    if _is_cancel_text(m.text):
+        return await cancel_to_main_menu(m, state, db)
+
+    amt = parse_positive_int(m.text)
+    if amt is None:
+        return await m.answer("Use digits only. Example: 50000" if (await get_lang(db, m.from_user.id))=="en" else ("Тек цифрлар. Мысалы: 50000" if (await get_lang(db, m.from_user.id))=="kk" else "Нужны цифры. Пример: 50000"), reply_markup=cancel_kb())
+
+    await state.update_data(amount=amt)
+    await state.set_state(TransferFlow.from_account)
+
+
+    await _tr_render_from(m, state, db)
+
+
+@router.callback_query(TransferFlow.from_account, F.data.startswith("trfrom:"))
+async def tr_from(c: CallbackQuery, state: FSMContext, db):
+    from_id = int(c.data.split(":")[1])
+    acc = await _validate_account(db, c.from_user.id, from_id)
+
+    if not acc:
+        await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
+        return
+
+    await state.update_data(
+        from_account=from_id,
+        from_name=acc[1],
+        from_before=acc[2],
+    )
+    await state.set_state(TransferFlow.to_account)
+
+    await _tr_render_to(c, state, db)
+    await c.answer()
+
+
+@router.callback_query(TransferFlow.to_account, F.data.startswith("trto:"))
+async def tr_to(c: CallbackQuery, state: FSMContext, db):
+    to_id = int(c.data.split(":")[1])
+    data = await state.get_data()
+
+    if to_id == int(data["from_account"]):
+        await c.answer("Нужны разные счета", show_alert=True)
+        return
+
+    acc = await _validate_account(db, c.from_user.id, to_id)
+    if not acc:
+        await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
+        return
+
+    await state.update_data(
+        to_account=to_id,
+        to_name=acc[1],
+        to_before=acc[2],
+    )
+    await state.set_state(TransferFlow.need_note)
+
+    await _tr_render_need_note(c, state)
+    await c.answer()
+
+
+@router.callback_query(TransferFlow.need_note, F.data.startswith("trnote:"))
+async def tr_need_note(c: CallbackQuery, state: FSMContext, db):
+    ans = c.data.split(":")[1]
+
+    if ans == "yes":
+        await state.set_state(TransferFlow.note)
+        await _tr_render_note_input(c, state, db)
+    else:
+        await state.update_data(note=None)
+        await state.set_state(TransferFlow.confirm)
+        await _tr_render_confirm(c, state)
+
+    await c.answer()
+
+
+@router.message(TransferFlow.note, F.text)
+async def tr_note(m: Message, state: FSMContext, db):
+    if _is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+
+    max_len = await _note_max(db, m.from_user.id)
+    note = clean_note(m.text, max_len)
+    if not note:
+        return await m.answer(f"Комментарий 1–{max_len} символов.")
+
+    await state.update_data(note=note)
+    await state.set_state(TransferFlow.confirm)
+
+
+    await _tr_render_confirm(m, state)
+
+
+@router.callback_query(TransferFlow.confirm, F.data.startswith("trcfm:"))
+async def tr_confirm(c: CallbackQuery, state: FSMContext, db):
+    action = c.data.split(":")[1]
+
+    if action == "cancel":
+        await _flow_finish(c, state, "Отменено.", db)
+        return
+
+    if action == "from":
+        await state.set_state(TransferFlow.from_account)
+        await _tr_render_from(c, state, db)
+        await c.answer()
+        return
+
+    if action == "to":
+        await state.set_state(TransferFlow.to_account)
+        await _tr_render_to(c, state, db)
+        await c.answer()
+        return
+
+    if action == "note":
+        await state.set_state(TransferFlow.note)
+        await _tr_render_note_input(c, state, db)
+        await c.answer()
+        return
+
+    if action == "save":
+        data = await state.get_data()
+        from_after = data.get("from_after")
+
+        if isinstance(from_after, int) and from_after < 0:
+            text = (
+                "⚠️ <b>Подтверждение перерасхода</b>\n\n"
+                f"📤 Счёт списания: <b>{escape(str(data['from_name']))}</b>\n"
+                f"📊 Баланс: <b>{fmt_money(int(data['from_before']))} → {fmt_money(int(data['from_after']))}</b>\n\n"
+                "Выполнить перевод?"
+            )
+            await state.set_state(TransferFlow.confirm_overdraft)
+            await _flow_render(
+                c,
+                state,
+                text,
+                reply_markup=_overdraft_kb("trod", yes_text="✅ Провести", no_text="⬅️ Назад"),
+            )
+            await c.answer()
+            return
+
+        await _tr_save(c, state, db)
+        return
+
+
+@router.callback_query(TransferFlow.confirm_overdraft, F.data.startswith("trod:"))
+async def tr_od(c: CallbackQuery, state: FSMContext, db):
+    ans = c.data.split(":")[1]
+
+    if ans == "no":
+        await state.set_state(TransferFlow.confirm)
+        await _tr_render_confirm(c, state)
+        await c.answer()
+        return
+
+    await _tr_save(c, state, db)
+
+
+async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+
+    tx1, tx2 = await add_transfer(
+        db,
+        ctx.from_user.id,
+        int(data["amount"]),
+        int(data["from_account"]),
+        int(data["to_account"]),
+        data.get("note"),
+    )
+
+    from_acc = await get_account(db, ctx.from_user.id, int(data["from_account"]))
+    to_acc = await get_account(db, ctx.from_user.id, int(data["to_account"]))
+
+    from_balance = from_acc[2] if from_acc else None
+    to_balance = to_acc[2] if to_acc else None
+
+    from_balance_txt = fmt_money(int(from_balance)) if isinstance(from_balance, int) else "—"
+    to_balance_txt = fmt_money(int(to_balance)) if isinstance(to_balance, int) else "—"
+
+    msg = (
+        "🔁 <b>Перевод между счетами выполнен</b>\n\n"
+        f"📤 Откуда: <b>{escape(str(data['from_name']))}</b>\n"
+        f"📥 Куда: <b>{escape(str(data['to_name']))}</b>\n"
+        f"💸 Сумма: <b>{fmt_money(int(data['amount']))}</b>\n\n"
+        f"📊 {escape(str(data['from_name']))}: <b>{from_balance_txt}</b>\n"
+        f"📊 {escape(str(data['to_name']))}: <b>{to_balance_txt}</b>\n"
+        f"\n<i>ID: {tx1}/{tx2}</i>"
+    )
+
+    if data.get("note"):
+        msg += f"\n📝 Комментарий: <i>{escape(str(data['note']))}</i>"
+
+    await _flow_finish(ctx, state, msg, db)

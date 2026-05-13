@@ -1,0 +1,98 @@
+from aiogram.fsm.state import StatesGroup, State
+
+class Onboarding(StatesGroup):
+    acc_name = State()
+    acc_balance = State()
+    daily_time_custom = State()
+
+class ExpenseFlow(StatesGroup):
+    amount = State()
+    account = State()
+    category = State()
+    need_note = State()
+    note = State()
+    confirm = State()
+    confirm_overdraft = State()
+
+
+class IncomeFlow(StatesGroup):
+    amount = State()
+    account = State()
+    category = State()
+    need_note = State()
+    note = State()
+    confirm = State()
+
+class TransferFlow(StatesGroup):
+    amount = State()
+    from_account = State()
+    to_account = State()
+    need_note = State()
+    note = State()
+    confirm = State()
+    confirm_overdraft = State()
+
+class SettingsFlow(StatesGroup):
+    daily_report_time = State()
+
+    rename_pick = State()
+    rename_new = State()
+    balance_pick = State()
+    balance_new = State()
+    archive_pick = State()
+    archived_pick = State()
+    add_name = State()
+    add_balance = State()
+
+
+class QuickAddFlow(StatesGroup):
+    draft = State()
+    pick_type = State()
+    edit_amount = State()
+    new_cat_name = State()
+
+class CategoriesFlow(StatesGroup):
+    add_name = State()
+    rename = State()
+    emoji = State()
+
+class BudgetFlow(StatesGroup):
+    pick_category = State()
+    enter_amount = State()
+    confirm = State()
+
+
+class AiConsultantFlow(StatesGroup):
+    waiting_goal = State()
+    waiting_question = State()
+    waiting_context_note = State()
+
+
+class RecurringExpenseFlow(StatesGroup):
+    title = State()
+    amount = State()
+    category = State()
+    account = State()
+    day = State()
+    comment = State()
+
+
+class RecurringIncomeFlow(StatesGroup):
+    title = State()
+    amount = State()
+    category = State()
+    account = State()
+    day = State()
+    comment = State()
+
+
+class PlannedFlow(StatesGroup):
+    kind = State()
+    title = State()
+    amount = State()
+    importance = State()
+    category = State()
+    account = State()
+    date = State()
+    comment = State()
+    move_date = State()
