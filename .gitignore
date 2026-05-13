@@ -30,3 +30,6 @@ scripts/*.db
 
 logs/
 *.log
+*.db-*
+data/*.db-*
+scripts/*.db-*
