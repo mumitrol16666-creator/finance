@@ -1,0 +1,31 @@
+# =============================================================================
+# systemd service — FinanceBot
+# =============================================================================
+# Скопируйте этот файл на сервер:
+#   sudo cp finance-bot.service /etc/systemd/system/finance-bot.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable finance-bot
+#   sudo systemctl start finance-bot
+#
+# Логи:  journalctl -u finance-bot -f
+# =============================================================================
+
+[Unit]
+Description=FinanceBot Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/finance-bot
+EnvironmentFile=/opt/finance-bot/.env
+ExecStart=/opt/finance-bot/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

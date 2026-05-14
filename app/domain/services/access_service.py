@@ -87,9 +87,27 @@ async def get_user_context(db: aiosqlite.Connection, user_id: int) -> UserAccess
     stored_mode = str(row["mode"] or "newbie").lower()
     stored_progress = int(row["progress_level"] or 0)
     full_access = int(row["full_access"] or 0) == 1
+    full_access_until = str(row["full_access_until"]) if row["full_access_until"] else None
     current_streak = int(row["current_streak"] or 0)
     max_streak = int(row["max_streak"] or 0)
     last_activity_date = str(row["last_activity_date"]) if row["last_activity_date"] else None
+
+    # Check if full access has expired
+    if full_access and full_access_until:
+        from datetime import date as _date
+        try:
+            until_date = _date.fromisoformat(full_access_until)
+            if _date.today() > until_date:
+                # Access expired — downgrade
+                full_access = False
+                stored_mode = "newbie"
+                await db.execute(
+                    "UPDATE users SET full_access=0, mode='newbie', full_access_until=NULL WHERE user_id=?",
+                    (user_id,),
+                )
+                await db.commit()
+        except (ValueError, TypeError):
+            pass
 
     auto_progress = 2 if max(current_streak, max_streak) >= 3 else 0
     effective_progress = max(stored_progress, auto_progress)

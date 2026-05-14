@@ -659,7 +659,7 @@ async def debt_add_direction(c: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("debt:addtype:"))
-async def debt_add_type(c: CallbackQuery, state: FSMContext):
+async def debt_add_type(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     dtype = c.data.split(":")[-1]
     data = await state.get_data()
     direction = data.get("direction")
@@ -694,48 +694,52 @@ async def debt_add_type(c: CallbackQuery, state: FSMContext):
             "Можно написать имя или короткое описание."
         )
 
-    await _enter_chat_mode(c, state, prompt, reply_markup=cancel_kb())
+    lang = await get_lang(db, c.from_user.id)
+    await _enter_chat_mode(c, state, prompt, reply_markup=cancel_kb(lang))
     await c.answer()
 
 
 @router.message(DebtAdd.title, F.text)
-async def debt_add_title(m: Message, state: FSMContext):
+async def debt_add_title(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if _is_cancel(m.text):
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
 
     title = (m.text or "").strip()
     if len(title) < 2:
+        lang = await get_lang(db, m.from_user.id)
         await m.answer(
             "Слишком коротко.\n\nНапиши имя, банк или понятную пометку.",
-            reply_markup=cancel_kb(),
+            reply_markup=cancel_kb(lang),
         )
         return
 
     await state.update_data(title=title)
     await state.set_state(DebtAdd.remaining)
 
+    lang = await get_lang(db, m.from_user.id)
     await _enter_chat_mode(
         m,
         state,
         "Сколько осталось по этому долгу?\n\n"
         "Напиши сумму цифрами.\n"
         "Например: <b>250000</b>",
-        reply_markup=cancel_kb(),
+        reply_markup=cancel_kb(lang),
     )
 
 
 @router.message(DebtAdd.remaining, F.text)
-async def debt_add_remaining(m: Message, state: FSMContext):
+async def debt_add_remaining(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if _is_cancel(m.text):
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
 
     remaining = _parse_money(m.text)
     if remaining is None or remaining <= 0:
+        lang = await get_lang(db, m.from_user.id)
         await m.answer(
             "Нужна сумма больше 0.\n\nПример: <b>250000</b>",
-            reply_markup=cancel_kb(),
+            reply_markup=cancel_kb(lang),
             parse_mode="HTML",
         )
         return
@@ -763,20 +767,22 @@ async def debt_add_remaining(m: Message, state: FSMContext):
             "Если фиксированной суммы нет — напиши <b>0</b>."
         )
 
-    await _enter_chat_mode(m, state, prompt, reply_markup=cancel_kb())
+    lang = await get_lang(db, m.from_user.id)
+    await _enter_chat_mode(m, state, prompt, reply_markup=cancel_kb(lang))
 
 
 @router.message(DebtAdd.payment, F.text)
-async def debt_add_payment(m: Message, state: FSMContext):
+async def debt_add_payment(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if _is_cancel(m.text):
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
 
     payment = _parse_money(m.text)
     if payment is None:
+        lang = await get_lang(db, m.from_user.id)
         await m.answer(
             "Нужны только цифры.\n\nПример: <b>20000</b>",
-            reply_markup=cancel_kb(),
+            reply_markup=cancel_kb(lang),
             parse_mode="HTML",
         )
         return
@@ -786,9 +792,10 @@ async def debt_add_payment(m: Message, state: FSMContext):
     dtype = data["dtype"]
 
     if direction == "out" and dtype == "bank" and payment <= 0:
+        lang = await get_lang(db, m.from_user.id)
         await m.answer(
             "Для кредита платёж должен быть больше 0.",
-            reply_markup=cancel_kb(),
+            reply_markup=cancel_kb(lang),
         )
         return
 
@@ -821,8 +828,9 @@ async def debt_due_none(c: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "debt:due:custom", DebtAdd.confirm)
-async def debt_due_custom(c: CallbackQuery, state: FSMContext):
+async def debt_due_custom(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     await state.set_state(DebtAdd.custom_due_date)
+    lang = await get_lang(db, c.from_user.id)
     await _enter_chat_mode(
         c,
         state,
@@ -830,7 +838,7 @@ async def debt_due_custom(c: CallbackQuery, state: FSMContext):
         "<b>25.03.2026</b>\n"
         "или\n"
         "<code>2026-03-25</code>",
-        reply_markup=cancel_kb(),
+        reply_markup=cancel_kb(lang),
     )
     await c.answer()
 
@@ -850,26 +858,28 @@ async def debt_due_quick(c: CallbackQuery, state: FSMContext):
 
 
 @router.message(DebtAdd.custom_due_date, F.text)
-async def debt_due_custom_save(m: Message, state: FSMContext):
+async def debt_due_custom_save(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if _is_cancel(m.text):
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
 
     ymd = _parse_friendly_date(m.text)
     data = await state.get_data()
 
     if not ymd and data["direction"] == "out" and data["dtype"] == "bank":
+        lang = await get_lang(db, m.from_user.id)
         await m.answer(
             "Для кредита дата обязательна.\n\nФормат: <b>25.03.2026</b>",
-            reply_markup=cancel_kb(),
+            reply_markup=cancel_kb(lang),
             parse_mode="HTML",
         )
         return
 
     if not ymd and (m.text or "").strip().lower() not in {"0", "-", "нет"}:
+        lang = await get_lang(db, m.from_user.id)
         await m.answer(
             "Не понял дату.\n\nНапиши так: <b>25.03.2026</b>",
-            reply_markup=cancel_kb(),
+            reply_markup=cancel_kb(lang),
             parse_mode="HTML",
         )
         return
@@ -1076,11 +1086,12 @@ async def debt_pay_amount_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
     debt = _normalize_row(debt_raw)
 
     if amount_raw == "custom":
+        lang = await get_lang(db, c.from_user.id)
         await _enter_chat_mode(
             c,
             state,
             "Введи сумму цифрами.\n\nПример: <b>25000</b>",
-            reply_markup=cancel_kb(),
+            reply_markup=cancel_kb(lang),
         )
         await c.answer()
         return
@@ -1107,14 +1118,15 @@ async def debt_pay_amount_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
 @router.message(DebtPay.amount, F.text)
 async def debt_pay_amount_custom(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if _is_cancel(m.text):
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
 
     amount = _parse_money(m.text)
     if amount is None or amount <= 0:
+        lang = await get_lang(db, m.from_user.id)
         await m.answer(
             "Нужна сумма больше 0.\n\nПример: <b>25000</b>",
-            reply_markup=cancel_kb(),
+            reply_markup=cancel_kb(lang),
             parse_mode="HTML",
         )
         return

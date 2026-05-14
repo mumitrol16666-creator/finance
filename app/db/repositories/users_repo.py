@@ -75,7 +75,7 @@ async def update_streak_on_activity(db: aiosqlite.Connection, user_id: int, loca
 
 async def get_access_profile(db: aiosqlite.Connection, user_id: int):
     cur = await db.execute(
-        "SELECT onboarded, current_streak, max_streak, last_activity_date, COALESCE(mode, 'newbie') AS mode, COALESCE(progress_level,0) AS progress_level, COALESCE(full_access,0) AS full_access FROM users WHERE user_id=?",
+        "SELECT onboarded, current_streak, max_streak, last_activity_date, COALESCE(mode, 'newbie') AS mode, COALESCE(progress_level,0) AS progress_level, COALESCE(full_access,0) AS full_access, full_access_until FROM users WHERE user_id=?",
         (user_id,),
     )
     return await cur.fetchone()
@@ -89,8 +89,13 @@ async def set_mode(db: aiosqlite.Connection, user_id: int, mode: str):
     await db.execute("UPDATE users SET mode=? WHERE user_id=?", (str(mode or 'newbie').lower(), user_id))
 
 
-async def grant_full_access(db: aiosqlite.Connection, user_id: int):
-    await db.execute("UPDATE users SET full_access=1, mode='full' WHERE user_id=?", (user_id,))
+async def grant_full_access(db: aiosqlite.Connection, user_id: int, days: int = 90):
+    from datetime import datetime, timedelta, timezone
+    until = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
+    await db.execute(
+        "UPDATE users SET full_access=1, mode='full', full_access_until=? WHERE user_id=?",
+        (until, user_id),
+    )
 
 
 async def set_newbie_defaults(db: aiosqlite.Connection, user_id: int):

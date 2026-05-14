@@ -45,8 +45,8 @@ async def start(m: Message, state: FSMContext, db):
     await state.update_data(flow_message_id=sent.message_id, ui_scope='onboarding')
 
 @router.callback_query(F.data == 'ob:cancel')
-async def ob_cancel(c: CallbackQuery, state: FSMContext):
-    await cancel_to_main_menu(c, state)
+async def ob_cancel(c: CallbackQuery, state: FSMContext, db):
+    await cancel_to_main_menu(c, state, db)
 
 @router.callback_query(F.data == 'ob:start')
 async def ob_start(c: CallbackQuery, state: FSMContext, db):
@@ -71,7 +71,7 @@ async def ob_currency(c: CallbackQuery, state: FSMContext, db):
 async def ob_acc_name(m: Message, state: FSMContext, db):
     lang = await get_lang(db, m.from_user.id)
     if is_cancel_text(m.text):
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
     name = clean_name(m.text)
     if not name:
@@ -85,7 +85,7 @@ async def ob_acc_name(m: Message, state: FSMContext, db):
 async def ob_acc_bal(m: Message, state: FSMContext, db):
     lang = await get_lang(db, m.from_user.id)
     if is_cancel_text(m.text):
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
     bal = parse_positive_int(m.text, max_value=99_999_999)
     if bal is None:
