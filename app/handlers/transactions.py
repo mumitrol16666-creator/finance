@@ -257,6 +257,7 @@ async def _flow_enter_text_mode(
     screen_text: str,
     *,
     prompt_text: str | None = None,
+    lang: str = "ru",
 ) -> None:
     data = await state.get_data()
     flow_message_id = data.get("flow_message_id")
@@ -292,7 +293,7 @@ async def _flow_enter_text_mode(
         except Exception:
             pass
 
-    prompt = await send(prompt_text or screen_text, reply_markup=cancel_kb(), parse_mode=PARSE_MODE)
+    prompt = await send(prompt_text or screen_text, reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
     await state.update_data(flow_message_id=flow_message_id, prompt_message_id=prompt.message_id)
 
 async def _note_max(db, user_id: int) -> int:
@@ -334,7 +335,8 @@ async def _flow_render(
     reply_markup=None,
 ) -> Message | None:
     if isinstance(reply_markup, ReplyKeyboardMarkup):
-        await _flow_enter_text_mode(target, state, text)
+        lang = (await state.get_data()).get("lang", "ru")
+        await _flow_enter_text_mode(target, state, text, lang=lang)
         return None
 
     data = await state.get_data()
@@ -583,13 +585,14 @@ async def _validate_category(db, user_id: int, category_id: int):
 # =========================================================
 
 async def _exp_render_amount(target: Message | CallbackQuery, state: FSMContext):
+    lang = (await state.get_data()).get("lang", "ru")
     text = (
         "💸 <b>Новый расход</b>\n\n"
         "Шаг 1 из 5.\n"
         "Введи сумму цифрами.\n\n"
         "Пример: <code>4500</code>"
     )
-    await _flow_render(target, state, text, reply_markup=cancel_kb())
+    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _exp_render_account(target: Message | CallbackQuery, state: FSMContext, db):
@@ -651,6 +654,7 @@ async def _exp_render_need_note(target: Message | CallbackQuery, state: FSMConte
 
 async def _exp_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     max_len = await _note_max(db, target.from_user.id)
     text = (
         f"{_exp_summary_lines(data)}\n\n"
@@ -658,7 +662,7 @@ async def _exp_render_note_input(target: Message | CallbackQuery, state: FSMCont
         f"Введи короткий комментарий сообщением ниже.\n"
         f"До {max_len} символов."
     )
-    await _flow_render(target, state, text, reply_markup=cancel_kb())
+    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext, db):
@@ -736,9 +740,11 @@ async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext
 # =========================================================
 
 @router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_EXPENSE"))
-async def exp_start(m: Message, state: FSMContext):
+async def exp_start(m: Message, state: FSMContext, db):
     await _clear_flow_message(m.bot, m.chat.id, state)
     await state.clear()
+    lang = await get_lang(db, m.from_user.id)
+    await state.update_data(lang=lang)
     await state.set_state(ExpenseFlow.amount)
     await _exp_render_amount(m, state)
 
@@ -751,7 +757,8 @@ async def exp_amount(m: Message, state: FSMContext, db):
 
     amt = parse_positive_int(m.text)
     if amt is None:
-        return await m.answer("Use digits only. Example: 4500" if (await get_lang(db, m.from_user.id))=="en" else ("Тек цифрлар. Мысалы: 4500" if (await get_lang(db, m.from_user.id))=="kk" else "Нужны цифры. Пример: 4500"), reply_markup=cancel_kb())
+        lang = await get_lang(db, m.from_user.id)
+        return await m.answer("Use digits only. Example: 4500" if lang=="en" else ("Тек цифрлар. Мысалы: 4500" if lang=="kk" else "Нужны цифры. Пример: 4500"), reply_markup=cancel_kb(lang))
 
     await state.update_data(amount=amt)
     await state.set_state(ExpenseFlow.account)
@@ -985,13 +992,14 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
 # =========================================================
 
 async def _inc_render_amount(target: Message | CallbackQuery, state: FSMContext):
+    lang = (await state.get_data()).get("lang", "ru")
     text = (
         "✅ <b>Новый доход</b>\n\n"
         "Шаг 1 из 5.\n"
         "Введи сумму цифрами.\n\n"
         "Пример: <code>20000</code>"
     )
-    await _flow_render(target, state, text, reply_markup=cancel_kb())
+    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _inc_render_account(target: Message | CallbackQuery, state: FSMContext, db):
@@ -1028,6 +1036,7 @@ async def _inc_render_need_note(target: Message | CallbackQuery, state: FSMConte
 
 async def _inc_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     max_len = await _note_max(db, target.from_user.id)
     text = (
         f"{_inc_summary_lines(data)}\n\n"
@@ -1035,7 +1044,7 @@ async def _inc_render_note_input(target: Message | CallbackQuery, state: FSMCont
         f"Введи короткий комментарий сообщением ниже.\n"
         f"До {max_len} символов."
     )
-    await _flow_render(target, state, text, reply_markup=cancel_kb())
+    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _inc_render_confirm(target: Message | CallbackQuery, state: FSMContext, db):
@@ -1081,9 +1090,11 @@ async def _inc_render_confirm(target: Message | CallbackQuery, state: FSMContext
 # =========================================================
 
 @router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_INCOME"))
-async def inc_start(m: Message, state: FSMContext):
+async def inc_start(m: Message, state: FSMContext, db):
     await _clear_flow_message(m.bot, m.chat.id, state)
     await state.clear()
+    lang = await get_lang(db, m.from_user.id)
+    await state.update_data(lang=lang)
     await state.set_state(IncomeFlow.amount)
     await _inc_render_amount(m, state)
 
@@ -1096,7 +1107,8 @@ async def inc_amount(m: Message, state: FSMContext, db):
 
     amt = parse_positive_int(m.text)
     if amt is None:
-        return await m.answer("Use digits only. Example: 20000" if (await get_lang(db, m.from_user.id))=="en" else ("Тек цифрлар. Мысалы: 20000" if (await get_lang(db, m.from_user.id))=="kk" else "Нужны цифры. Пример: 20000"), reply_markup=cancel_kb())
+        lang = await get_lang(db, m.from_user.id)
+        return await m.answer("Use digits only. Example: 20000" if lang=="en" else ("Тек цифрлар. Мысалы: 20000" if lang=="kk" else "Нужны цифры. Пример: 20000"), reply_markup=cancel_kb(lang))
 
     await state.update_data(amount=amt)
     await state.set_state(IncomeFlow.account)
@@ -1319,13 +1331,14 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
 # =========================================================
 
 async def _tr_render_amount(target: Message | CallbackQuery, state: FSMContext):
+    lang = (await state.get_data()).get("lang", "ru")
     text = (
         "🔁 <b>Новый перевод</b>\n\n"
         "Шаг 1 из 5.\n"
         "Введи сумму цифрами.\n\n"
         "Пример: <code>50000</code>"
     )
-    await _flow_render(target, state, text, reply_markup=cancel_kb())
+    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _tr_render_from(target: Message | CallbackQuery, state: FSMContext, db):
@@ -1362,6 +1375,7 @@ async def _tr_render_need_note(target: Message | CallbackQuery, state: FSMContex
 
 async def _tr_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     max_len = await _note_max(db, target.from_user.id)
     text = (
         f"{_tr_summary_lines(data)}\n\n"
@@ -1369,7 +1383,7 @@ async def _tr_render_note_input(target: Message | CallbackQuery, state: FSMConte
         f"Введи короткий комментарий сообщением ниже.\n"
         f"До {max_len} символов."
     )
-    await _flow_render(target, state, text, reply_markup=cancel_kb())
+    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext):
@@ -1412,6 +1426,8 @@ async def tr_start(m: Message, state: FSMContext, db):
         return
     await _clear_flow_message(m.bot, m.chat.id, state)
     await state.clear()
+    lang = await get_lang(db, m.from_user.id)
+    await state.update_data(lang=lang)
     await state.set_state(TransferFlow.amount)
     await _tr_render_amount(m, state)
 
@@ -1423,7 +1439,8 @@ async def tr_amount(m: Message, state: FSMContext, db):
 
     amt = parse_positive_int(m.text)
     if amt is None:
-        return await m.answer("Use digits only. Example: 50000" if (await get_lang(db, m.from_user.id))=="en" else ("Тек цифрлар. Мысалы: 50000" if (await get_lang(db, m.from_user.id))=="kk" else "Нужны цифры. Пример: 50000"), reply_markup=cancel_kb())
+        lang = await get_lang(db, m.from_user.id)
+        return await m.answer("Use digits only. Example: 50000" if lang=="en" else ("Тек цифрлар. Мысалы: 50000" if lang=="kk" else "Нужны цифры. Пример: 50000"), reply_markup=cancel_kb(lang))
 
     await state.update_data(amount=amt)
     await state.set_state(TransferFlow.from_account)

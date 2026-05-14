@@ -1335,7 +1335,7 @@ async def st_notifs_daily_time_set(m: Message, state: FSMContext, db: aiosqlite.
 
     row = await get_notification_settings(db, m.from_user.id)
     if not row:
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
 
     daily_enabled, _daily_time, _nudge_enabled, _nudge_interval = row

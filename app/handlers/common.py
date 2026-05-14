@@ -1,4 +1,4 @@
-﻿from aiogram import F, Router
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 import aiosqlite
@@ -109,10 +109,10 @@ async def deny_feature_message(ctx: Message | CallbackQuery, db: aiosqlite.Conne
 
 def is_cancel_text(text: str | None) -> bool:
     raw = (text or '').strip().casefold()
-    for token in ('?', '??', '?', '?', '??'):
+    for token in ('❌', '⛔', '✖', '✕', '×'):
         raw = raw.replace(token, '')
     raw = ' '.join(raw.split())
-    return raw in {'������', '/cancel', 'cancel', '���������'}
+    return raw in {'отмена', 'отменить', '/cancel', 'cancel', 'болдырмау'}
 
 
 _is_cancel_text = is_cancel_text
@@ -161,7 +161,8 @@ async def _ensure_scope_reply_keyboard(target: Message | CallbackQuery, state: F
     if data.get("settings_reply_message_id"):
         return
     sender = target.message.answer if isinstance(target, CallbackQuery) else target.answer
-    sent = await sender("����� ������.", reply_markup=cancel_kb(lang), disable_notification=True)
+    hint = {"ru": "↩️ Отмена → главное меню", "en": "↩️ Cancel → main menu", "kk": "↩️ Болдырмау → басты мәзір"}.get(lang, "↩️ Отмена → главное меню")
+    sent = await sender(hint, reply_markup=cancel_kb(lang), disable_notification=True)
     extra_ids = data.get("extra_prompt_message_ids") or []
     if not isinstance(extra_ids, list):
         extra_ids = [extra_ids]
@@ -400,7 +401,7 @@ def _invoice_description(lang: str) -> str:
     return f"Полный доступ ко всем разделам бота на {days} дней."
 
 
-@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_ALL_FEATURES"))
+@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_UPGRADE_FULL"))
 async def upgrade_info_message(m: Message, state: FSMContext, db: aiosqlite.Connection):
     lang = await get_lang(db, m.from_user.id)
 
@@ -480,7 +481,10 @@ async def upgrade_activate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
 
 @router.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
-    await pre_checkout_query.answer(ok=True)
+    if pre_checkout_query.invoice_payload == "full_access_upgrade":
+        await pre_checkout_query.answer(ok=True)
+    else:
+        await pre_checkout_query.answer(ok=False, error_message="Unknown payment type")
 
 
 @router.message(F.successful_payment)
@@ -495,7 +499,7 @@ async def process_successful_payment(m: Message, state: FSMContext, db: aiosqlit
 
     try:
         await _cleanup_ui(m.bot, m.chat.id, data)
-        await grant_full_access(db, m.from_user.id)
+        await grant_full_access(db, m.from_user.id, days=_full_access_days())
         await db.commit()
     except Exception:
         await db.rollback()

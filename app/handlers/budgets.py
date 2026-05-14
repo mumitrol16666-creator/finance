@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import aiosqlite
 from aiogram import Router, F
@@ -80,8 +80,8 @@ def _category_label(name: str, emoji: str | None) -> str:
     return f"{(emoji + ' ') if emoji else ''}{name}".strip()
 
 
-def _cancel_reply_kb() -> ReplyKeyboardMarkup:
-    return cancel_kb()
+def _cancel_reply_kb(lang: str = "ru") -> ReplyKeyboardMarkup:
+    return cancel_kb(lang)
 
 async def _track_flow_message(state: FSMContext, message_id: int):
     await state.update_data(flow_message_id=message_id)
@@ -114,8 +114,10 @@ async def _safe_remove_markup(bot, chat_id: int, message_id: int | None):
 async def _start_budget_input_flow(c: CallbackQuery, state: FSMContext, screen_text: str, prompt_text: str):
     await _clear_budget_prompt(c, state)
     await _safe_remove_markup(c.bot, c.message.chat.id, c.message.message_id)
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
     screen = await c.message.answer(screen_text, parse_mode="HTML")
-    prompt = await c.message.answer(prompt_text, reply_markup=_cancel_reply_kb())
+    prompt = await c.message.answer(prompt_text, reply_markup=_cancel_reply_kb(lang))
     await state.update_data(flow_message_id=screen.message_id, prompt_message_id=prompt.message_id)
 
 
@@ -573,9 +575,9 @@ async def budget_start_set(c: CallbackQuery, state: FSMContext):
 
 
 @router.message(BudgetFlow.enter_amount, F.text)
-async def budget_enter_amount(m: Message, state: FSMContext):
+async def budget_enter_amount(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if is_cancel_text(m.text):
-        await cancel_to_main_menu(m, state)
+        await cancel_to_main_menu(m, state, db)
         return
 
     t = (m.text or "").strip().replace(" ", "")
@@ -814,9 +816,10 @@ async def budget_back(c: CallbackQuery, state: FSMContext):
         )
         await state.update_data(flow_message_id=screen.message_id)
 
+    lang = (await state.get_data()).get("lang", "ru")
     prompt = await c.message.answer(
         "Введи сумму или нажми «Отмена».",
-        reply_markup=_cancel_reply_kb(),
+        reply_markup=_cancel_reply_kb(lang),
     )
     await state.update_data(prompt_message_id=prompt.message_id)
 
@@ -839,6 +842,6 @@ async def budget_menu(c: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "bud:cancel")
-async def budget_cancel(c: CallbackQuery, state: FSMContext):
-    await cancel_to_main_menu(c, state)
+async def budget_cancel(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await cancel_to_main_menu(c, state, db)
     await c.message.answer("Отменено. Меню ниже.", reply_markup=main_menu())
