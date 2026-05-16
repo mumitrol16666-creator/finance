@@ -9,7 +9,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.db.repositories.accounts_repo import list_accounts
@@ -27,10 +27,12 @@ from app.domain.services.reports_service import (
     report_by_category,
     report_period,
     week_bounds_utc,
+    build_smart_suggestion,
 )
-from app.handlers.common import deny_feature_message,  cancel_to_main_menu
+from app.handlers.common import deny_feature_message, cancel_to_main_menu, build_main_menu_markup, _cleanup_ui, _ensure_minimized_menu
+from app.ui.formatters import fmt_money
 from app.ui.i18n import t, text_matches_key
-from app.ui.keyboards import cancel_kb, reports_kb
+from app.ui.keyboards import cancel_kb, reports_kb, minimized_menu_kb
 
 router = Router()
 
@@ -117,12 +119,7 @@ def _fmt_month_label(lang: str, dt_local: datetime) -> str:
 
 
 def _fmt_money(n: int) -> str:
-    s = str(abs(int(n)))
-    parts: list[str] = []
-    while s:
-        parts.append(s[-3:])
-        s = s[:-3]
-    return " ".join(reversed(parts)) if parts else "0"
+    return fmt_money(n)
 
 
 def _pct(part: int, whole: int) -> str:
@@ -199,22 +196,22 @@ def _labels(lang: str) -> dict[str, str]:
             "net": "Net",
             "ops": "Ops",
             "avg_check": "Avg expense",
-            "finance_block": "💰 <b>Finance</b>",
-            "activity_block": "📌 <b>Activity</b>",
-            "compare_yesterday": "🔎 <b>Comparison (yesterday)</b>",
-            "compare_week": "🔎 <b>Comparison (previous week)</b>",
-            "compare_prev": "🔎 <b>Compared to previous</b>",
-            "categories_block": "🧾 <b>Expense categories</b>",
+            "finance_block": "💰 <b>FINANCE</b>\n━━━━━━━━━━━━━━",
+            "activity_block": "📌 <b>ACTIVITY</b>\n━━━━━━━━━━━━━━",
+            "compare_yesterday": "🔎 <b>COMPARISON (YESTERDAY)</b>\n━━━━━━━━━━━━━━",
+            "compare_week": "🔎 <b>COMPARISON (PREV WEEK)</b>\n━━━━━━━━━━━━━━",
+            "compare_prev": "🔎 <b>COMPARED TO PREVIOUS</b>\n━━━━━━━━━━━━━━",
+            "categories_block": "🧾 <b>EXPENSE CATEGORIES</b>\n━━━━━━━━━━━━━━",
             "other": "Other",
             "no_data": "No data",
             "streak": "Streak",
             "best": "Best",
-            "report_day_title": "📊 <b>Report</b>",
-            "report_week_title": "📊 <b>Report</b>",
-            "report_month_title": "📊 <b>Report</b>",
-            "streak_title": "🔥 <b>Streak</b>",
+            "report_day_title": "📊 <b>DAILY REPORT</b>",
+            "report_week_title": "📊 <b>WEEKLY REPORT</b>",
+            "report_month_title": "📊 <b>MONTHLY REPORT</b>",
+            "streak_title": "🔥 <b>DISCIPLINE</b>\n━━━━━━━━━━━━━━",
             "streak_about": "Your current consistency.",
-            "month_plan_block": "🗓 <b>Until month end</b>",
+            "month_plan_block": "🗓 <b>UNTIL MONTH END</b>\n━━━━━━━━━━━━━━",
             "planned_income": "Planned recurring income",
             "planned_expense": "Planned recurring expenses",
             "planned_one_time": "Planned one-time operations",
@@ -244,22 +241,22 @@ def _labels(lang: str) -> dict[str, str]:
             "net": "Нәтиже",
             "ops": "Операция",
             "avg_check": "Орташа шығыс",
-            "finance_block": "💰 <b>Қаржы</b>",
-            "activity_block": "📌 <b>Белсенділік</b>",
-            "compare_yesterday": "🔎 <b>Салыстыру (кеше)</b>",
-            "compare_week": "🔎 <b>Салыстыру (өткен апта)</b>",
-            "compare_prev": "🔎 <b>Өткен кезеңмен салыстыру</b>",
-            "categories_block": "🧾 <b>Шығыс санаттары</b>",
+            "finance_block": "💰 <b>ҚАРЖЫ</b>\n━━━━━━━━━━━━━━",
+            "activity_block": "📌 <b>БЕЛСЕНДІЛІК</b>\n━━━━━━━━━━━━━━",
+            "compare_yesterday": "🔎 <b>САЛЫСТЫРУ (КЕШЕ)</b>\n━━━━━━━━━━━━━━",
+            "compare_week": "🔎 <b>САЛЫСТЫРУ (ӨТКЕН АПТА)</b>\n━━━━━━━━━━━━━━",
+            "compare_prev": "🔎 <b>ӨТКЕН КЕЗЕҢМЕН САЛЫСТЫРУ</b>\n━━━━━━━━━━━━━━",
+            "categories_block": "🧾 <b>ШЫҒЫС САНАТТАРЫ</b>\n━━━━━━━━━━━━━━",
             "other": "Басқа",
             "no_data": "Дерек жоқ",
             "streak": "Серия",
             "best": "Үздік",
-            "report_day_title": "📊 <b>Есеп</b>",
-            "report_week_title": "📊 <b>Есеп</b>",
-            "report_month_title": "📊 <b>Есеп</b>",
-            "streak_title": "🔥 <b>Серия</b>",
+            "report_day_title": "📊 <b>КҮНДІК ЕСЕП</b>",
+            "report_week_title": "📊 <b>АПТАЛЫҚ ЕСЕП</b>",
+            "report_month_title": "📊 <b>АЙЛЫҚ ЕСЕП</b>",
+            "streak_title": "🔥 <b>ДИСЦИПЛИНА</b>\n━━━━━━━━━━━━━━",
             "streak_about": "Қазіргі тұрақтылық көрсеткіші.",
-            "month_plan_block": "🗓 <b>Ай соңына дейін</b>",
+            "month_plan_block": "🗓 <b>АЙ СОҢЫНА ДЕЙІН</b>\n━━━━━━━━━━━━━━",
             "planned_income": "Күтілетін тұрақты кіріс",
             "planned_expense": "Күтілетін тұрақты шығыс",
             "planned_one_time": "Жоспарланған бір реттік операциялар",
@@ -288,22 +285,22 @@ def _labels(lang: str) -> dict[str, str]:
         "net": "Итог",
         "ops": "Операций",
         "avg_check": "Средний чек",
-        "finance_block": "💰 <b>Финансы</b>",
-        "activity_block": "📌 <b>Активность</b>",
-        "compare_yesterday": "🔎 <b>Сравнение (вчера)</b>",
-        "compare_week": "🔎 <b>Сравнение (прошлая неделя)</b>",
-        "compare_prev": "🔎 <b>Сравнение с прошлым периодом</b>",
-        "categories_block": "🧾 <b>Расходы по категориям</b>",
+        "finance_block": "💰 <b>ФИНАНСЫ</b>\n━━━━━━━━━━━━━━",
+        "activity_block": "📌 <b>АКТИВНОСТЬ</b>\n━━━━━━━━━━━━━━",
+        "compare_yesterday": "🔎 <b>СРАВНЕНИЕ (ВЧЕРА)</b>\n━━━━━━━━━━━━━━",
+        "compare_week": "🔎 <b>СРАВНЕНИЕ (ПРОШЛАЯ НЕДЕЛЯ)</b>\n━━━━━━━━━━━━━━",
+        "compare_prev": "🔎 <b>СРАВНЕНИЕ С ПРОШЛЫМ ПЕРИОДОМ</b>\n━━━━━━━━━━━━━━",
+        "categories_block": "🧾 <b>РАСХОДЫ ПО КАТЕГОРИЯМ</b>\n━━━━━━━━━━━━━━",
         "other": "Другое",
         "no_data": "Нет данных",
         "streak": "Серия",
         "best": "Лучшая",
-        "report_day_title": "📊 <b>Отчёт</b>",
-        "report_week_title": "📊 <b>Отчёт</b>",
-        "report_month_title": "📊 <b>Отчёт</b>",
-        "streak_title": "🔥 <b>Серия</b>",
+        "report_day_title": "📊 <b>ОТЧЕТ ЗА ДЕНЬ</b>",
+        "report_week_title": "📊 <b>ОТЧЕТ ЗА НЕДЕЛЮ</b>",
+        "report_month_title": "📊 <b>ОТЧЕТ ЗА МЕСЯЦ</b>",
+        "streak_title": "🔥 <b>ДИСЦИПЛИНА</b>\n━━━━━━━━━━━━━━",
         "streak_about": "Текущая дисциплина по учету финансов.",
-        "month_plan_block": "🗓 <b>До конца месяца</b>",
+        "month_plan_block": "🗓 <b>ДО КОНЦА МЕСЯЦА</b>\n━━━━━━━━━━━━━━",
         "planned_income": "Ожидаемые постоянные доходы",
         "planned_expense": "Ожидаемые постоянные расходы",
         "planned_one_time": "Планируемые разовые операции",
@@ -327,12 +324,11 @@ def _report_kb(lang: str, period: str, show_categories: bool) -> InlineKeyboardM
     kb.button(text=labels["week"], callback_data=f"rp:view:week:{1 if period == 'week' and show_categories else 0}")
     kb.button(text=labels["month"], callback_data=f"rp:view:month:{1 if period == 'month' and show_categories else 0}")
     kb.button(text=labels["hide_categories"] if show_categories else labels["show_categories"], callback_data=f"rp:view:{period}:{0 if show_categories else 1}")
-    kb.button(text=labels["to_menu"], callback_data="rp:to_menu")
-    kb.adjust(3, 1, 1)
+    kb.adjust(3, 1)
     return kb.as_markup()
 
 
-async def _edit_or_answer(m: Message, text: str, *, reply_markup=None, prefer_edit: bool = False):
+async def _edit_or_answer(m: Message, db: aiosqlite.Connection, text: str, *, reply_markup=None, prefer_edit: bool = False):
     if prefer_edit:
         try:
             await m.edit_text(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
@@ -349,6 +345,8 @@ async def _edit_or_answer(m: Message, text: str, *, reply_markup=None, prefer_ed
                 return m
         except Exception:
             return m
+
+    # Standard hub pattern: prefer new message for clean UI
     return await m.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
 
 
@@ -541,50 +539,128 @@ def _period_meta(lang: str, tz_name: str, period: str, now_utc: datetime) -> dic
 async def _open_reports_scope(m: Message, state: FSMContext, db: aiosqlite.Connection) -> str:
     lang = await get_lang(db, m.from_user.id)
     await state.clear()
-    prompt = await m.answer("📊", reply_markup=cancel_kb(lang))
-    await state.update_data(prompt_message_id=prompt.message_id, ui_scope="reports")
+    await state.update_data(ui_scope="reports")
     return lang
 
 
 async def _reports_hub_text(db: aiosqlite.Connection, user_id: int, lang: str) -> str:
-    labels = _labels(lang)
     tz_name = await get_timezone(db, user_id)
     now_utc = datetime.now(timezone.utc)
     meta = _period_meta(lang, tz_name, "month", now_utc)
-    income, expense, _cnt = await report_period(db, user_id, meta["start"], meta["end"])
+    
+    # 1. Cashflow
+    income, expense, cnt = await report_period(db, user_id, meta["start"], meta["end"])
     net = income - expense
+    
+    # 2. Net Worth (Total Balance)
+    accounts = await list_accounts(db, user_id)
+    total_balance = sum(int(row[2] or 0) for row in accounts if len(row) >= 4 and not int(row[3] or 0))
+    
+    # 3. Streak & Activity
+    streak_cur, _, _ = await get_streak(db, user_id)
+    
+    # 4. Smart Suggestion
+    suggestion = await build_smart_suggestion(db, user_id, lang)
+    
+    from app.domain.money import get_user_currency, get_symbol
+    currency_code = await get_user_currency(db, user_id)
+    currency = get_symbol(currency_code)
+    
+    # Let's check i18n
+    if lang == "en":
+        title = "📊 <b>Financial Dashboard</b>"
+        nw_title = "💰 <b>Net Worth</b>"
+        nw_text = f"• Total on accounts: <b>{_fmt_money(total_balance)}</b>"
+        cf_title = "📈 <b>Cashflow (Month)</b>"
+        cf_inc = f"• 🟢 In: +<b>{_fmt_money(income)}</b>"
+        cf_exp = f"• 🔴 Out: -<b>{_fmt_money(expense)}</b>"
+        cf_net = f"• 📐 Net: <b>{_delta_str(net)}</b>"
+        act_title = "🔥 <b>Activity</b>"
+        act_text = f"• Operations: {cnt} | Streak: {streak_cur} days"
+    elif lang == "kk":
+        title = "📊 <b>Қаржылық Дашборд</b>"
+        nw_title = "💰 <b>Жалпы жағдай</b>"
+        nw_text = f"• Шоттарда барлығы: <b>{_fmt_money(total_balance)}</b>"
+        cf_title = "📈 <b>Айлық айналым</b>"
+        cf_inc = f"• 🟢 Кіріс: +<b>{_fmt_money(income)}</b>"
+        cf_exp = f"• 🔴 Шығыс: -<b>{_fmt_money(expense)}</b>"
+        cf_net = f"• 📐 Қалдық: <b>{_delta_str(net)}</b>"
+        act_title = "🔥 <b>Белсенділік</b>"
+        act_text = f"• Операциялар: {cnt} | Серия: {streak_cur} күн"
+    else:
+        title = "📊 <b>Финансовый Дашборд</b>"
+        nw_title = "💰 <b>Состояние</b>"
+        nw_text = f"• Всего на счетах: <b>{_fmt_money(total_balance)}</b>"
+        cf_title = "📈 <b>Денежный поток (Месяц)</b>"
+        cf_inc = f"• 🟢 Пришло: +<b>{_fmt_money(income)}</b>"
+        cf_exp = f"• 🔴 Ушло: -<b>{_fmt_money(expense)}</b>"
+        cf_net = f"• 📐 Итог: <b>{_delta_str(net)}</b>"
+        act_title = "🔥 <b>Активность</b>"
+        act_text = f"• Операций: {cnt} | Дисциплина: {streak_cur} дн."
 
     lines = [
-        labels["menu_title"],
+        title,
         "",
-        labels["hub_text"],
+        nw_title,
+        nw_text,
         "",
-        f"📈 {labels['income']}: <b>{_fmt_money(income)}</b>",
-        f"📉 {labels['expense']}: <b>{_fmt_money(expense)}</b>",
-        f"📐 {labels['net']}: <b>{_delta_str(net)}</b>",
+        cf_title,
+        cf_inc,
+        cf_exp,
+        cf_net,
         "",
-        labels["hub_hint"],
+        act_title,
+        act_text,
+        "",
+        suggestion,
     ]
-
-    hint = await build_section_hint(db, user_id, "reports", lang)
-    if hint:
-        lines += ["", hint]
 
     return "\n".join(lines)
 
 
 async def _show_reports_hub(m: Message, state: FSMContext, db: aiosqlite.Connection) -> None:
-    lang = await _open_reports_scope(m, state, db)
+    data = await state.get_data()
+    lang = await get_lang(db, m.from_user.id)
+    
+    # 1. Cleanup old UI noise
+    await _cleanup_ui(m.bot, m.chat.id, data)
+    try:
+        await m.delete()
+    except Exception:
+        pass
+        
+    await state.clear()
+    
+    # 2. Ensure minimized bottom menu (the 🏠 Menu button)
+    await _ensure_minimized_menu(m, state, lang)
+    
+    # 3. Send fresh report hub
+    text = await _reports_hub_text(db, m.from_user.id, lang)
+    kb = reports_kb(lang)
+    
     rendered = await m.answer(
-        await _reports_hub_text(db, m.from_user.id, lang),
-        reply_markup=reports_kb(lang),
-        parse_mode=PARSE_MODE,
+        text,
+        reply_markup=kb,
+        parse_mode=PARSE_MODE
     )
-    await state.update_data(flow_message_id=rendered.message_id, ui_scope="reports")
+    if rendered:
+        await state.update_data(flow_message_id=rendered.message_id, ui_scope="reports", lang=lang)
 
 
 async def _open_period_report(m: Message, state: FSMContext, db: aiosqlite.Connection, period: str) -> None:
-    await _open_reports_scope(m, state, db)
+    data = await state.get_data()
+    lang = await get_lang(db, m.from_user.id)
+    
+    # Cleanup pattern matching planning hub
+    await _cleanup_ui(m.bot, m.chat.id, data)
+    try:
+        await m.delete()
+    except Exception:
+        pass
+        
+    await state.clear()
+    await _ensure_minimized_menu(m, state, lang)
+    
     await _render_report(
         m,
         db,
@@ -613,7 +689,7 @@ async def _render_streak(m: Message, db: aiosqlite.Connection, user_id: int, *, 
     if hint:
         lines += ["", hint]
 
-    rendered = await _edit_or_answer(m, "\n".join(lines), reply_markup=reports_kb(lang), prefer_edit=prefer_edit)
+    rendered = await _edit_or_answer(m, db, "\n".join(lines), reply_markup=reports_kb(lang), prefer_edit=prefer_edit)
     if state is not None and rendered is not None:
         await state.update_data(flow_message_id=rendered.message_id, ui_scope="reports")
 
@@ -630,12 +706,18 @@ async def report_menu(m: Message, db: aiosqlite.Connection, state: FSMContext):
 @router.message(Command("today"))
 @router.message(F.text.regexp(r"^/сегодня(@\w+)?$"))
 async def today_cmd(m: Message, db: aiosqlite.Connection, state: FSMContext):
+    if not await can_use_feature(db, m.from_user.id, FEATURE_REPORTS):
+        await deny_feature_message(m, db, m.from_user.id)
+        return
     await _open_period_report(m, state, db, "day")
 
 
 @router.message(Command("week"))
 @router.message(F.text.regexp(r"^/неделя(@\w+)?$"))
 async def week_cmd(m: Message, db: aiosqlite.Connection, state: FSMContext):
+    if not await can_use_feature(db, m.from_user.id, FEATURE_REPORTS):
+        await deny_feature_message(m, db, m.from_user.id)
+        return
     await _open_period_report(m, state, db, "week")
 
 
@@ -675,6 +757,19 @@ async def reports_cb(c: CallbackQuery, db: aiosqlite.Connection, state: FSMConte
 
     if c.data == "rp:streak":
         await _render_streak(c.message, db, user_id, prefer_edit=True, state=state)
+        return
+
+    if c.data == "rp:hub":
+        lang = await get_lang(db, c.from_user.id)
+        rendered = await _edit_or_answer(
+            c.message,
+            db,
+            await _reports_hub_text(db, c.from_user.id, lang),
+            reply_markup=reports_kb(lang),
+            prefer_edit=True,
+        )
+        if state is not None and rendered is not None:
+            await state.update_data(flow_message_id=rendered.message_id, ui_scope="reports")
         return
 
     legacy_map = {
@@ -769,10 +864,11 @@ async def _render_report(
     if hint:
         lines += ["", hint]
 
-    lines += ["", _build_streak_line(lang, streak_cur, streak_best)]
+    lines += ["", labels["streak_title"], _build_streak_line(lang, streak_cur, streak_best)]
 
     rendered = await _edit_or_answer(
         m,
+        db,
         "\n".join(lines),
         reply_markup=_report_kb(lang, period, show_categories),
         prefer_edit=prefer_edit,

@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 import aiosqlite
@@ -6,9 +7,10 @@ import aiosqlite
 from app.config.settings import settings
 
 from app.db.repositories.users_repo import get_onboarded
-from app.ui.keyboards import main_menu, recurring_hub_kb, planning_hub_kb, more_hub_kb, newbie_menu, newbie_menu_level2, full_menu, upgrade_info_kb, cancel_kb
+from app.ui.keyboards import main_menu, recurring_hub_kb, planning_hub_kb, more_hub_kb, newbie_menu, newbie_menu_level2, full_menu, upgrade_info_kb, cancel_kb, minimized_menu_kb
 from app.db.repositories.settings_repo import get_lang
 from app.db.repositories.users_repo import grant_full_access
+from app.db.repositories.accounts_repo import list_accounts
 from app.domain.services.ai_consultant_service import build_section_hint, build_main_menu_text
 from app.domain.services.access_service import (
     FEATURE_RECURRING,
@@ -22,6 +24,9 @@ from app.domain.services.access_service import (
     can_use_feature,
     get_menu_context,
 )
+from app.db.repositories.planned_repo import list_planned
+from app.db.repositories.recurring_repo import list_recurring_expenses, list_recurring_incomes
+from app.db.repositories.debts_repo import count_active_debts
 from app.ui.i18n import text_matches_key, t
 router = Router()
 
@@ -30,15 +35,28 @@ async def build_main_menu_markup(db: aiosqlite.Connection | None, user_id: int, 
     if db is None:
         return main_menu(lang)
 
-    variant, progress_level, _full_access = await get_menu_context(db, user_id)
+    variant, progress_level, _full_access, expiration_date = await get_menu_context(db, user_id)
+    
+    days_left = None
+    if expiration_date:
+        from datetime import date as _date
+        from app.domain.time_utils import today_in_user_tz
+        try:
+            exp = _date.fromisoformat(expiration_date)
+            days_left = (exp - await today_in_user_tz(db, user_id)).days
+            # Ensure it's not negative for the UI if we want to show '0' or treat it as expired
+            if days_left < 0:
+                days_left = 0
+        except Exception:
+            pass
 
-    if variant == "full":
-        return full_menu(lang)
+    if variant == "full" or expiration_date is not None:
+        return full_menu(lang, days_left=days_left)
 
     if progress_level >= 2:
-        return newbie_menu_level2(lang)
+        return newbie_menu_level2(lang, days_left=days_left)
 
-    return newbie_menu(lang)
+    return newbie_menu(lang, days_left=days_left)
 
 
 
@@ -46,22 +64,129 @@ async def build_main_menu_markup(db: aiosqlite.Connection | None, user_id: int, 
 async def _build_planning_hub_markup(db: aiosqlite.Connection, user_id: int, lang: str):
     return planning_hub_kb(
         lang,
-        show_planned=await can_use_feature(db, user_id, FEATURE_PLANNED),
-        show_recurring=await can_use_feature(db, user_id, FEATURE_RECURRING),
-        show_debts=await can_use_feature(db, user_id, FEATURE_DEBTS),
+        show_planned=True,
+        show_recurring=True,
+        show_debts=True,
     )
 
 
 async def _build_more_hub_markup(db: aiosqlite.Connection, user_id: int, lang: str):
     return more_hub_kb(
         lang,
-        show_accounts=await can_use_feature(db, user_id, FEATURE_ACCOUNTS),
-        show_transfer=await can_use_feature(db, user_id, FEATURE_TRANSFER),
+        show_accounts=True,
+        show_transfer=True,
     )
+
+
+async def _more_hub_text(db: aiosqlite.Connection, user_id: int, lang: str) -> str:
+    active = await list_accounts(db, user_id)
+    all_rows = await list_accounts(db, user_id, include_archived=True)
+    archived_count = max(0, len(all_rows) - len(active))
+    
+    # row[2] = balance, row[4] = currency, row[5] = is_saving
+    active_regular = [r for r in active if not r[5]]
+    savings = [r for r in active if r[5]]
+    
+    # Calculate totals per currency for regular accounts
+    currency_totals = {}
+    for r in active_regular:
+        curr = r[4] or "KZT"
+        currency_totals[curr] = currency_totals.get(curr, 0) + int(r[2] or 0)
+    
+    # Format the total string
+    from app.domain.money import fmt_money_compact
+    if not currency_totals:
+        fmt_total = fmt_money_compact(0, "KZT")
+    else:
+        fmt_total = ", ".join([fmt_money_compact(val, curr) for curr, val in currency_totals.items()])
+
+    title = t(lang, "MORE_HUB_TITLE")
+    
+    stats = {
+        "ru": f"💰 Общий баланс: <b>{fmt_total}</b>\n💳 Активных счетов: <b>{len(active)}</b>",
+        "en": f"💰 Total balance: <b>{fmt_total}</b>\n💳 Active accounts: <b>{len(active)}</b>",
+        "kk": f"💰 Жалпы баланс: <b>{fmt_total}</b>\n💳 Белсенді шоттар: <b>{len(active)}</b>",
+    }.get(lang, f"💰 Общий баланс: <b>{fmt_total}</b>\n💳 Активных счетов: <b>{len(active)}</b>")
+    
+    if archived_count > 0:
+        arch_text = {
+            "ru": f"\n🗄 В архиве: <b>{archived_count}</b>",
+            "en": f"\n🗄 Archived: <b>{archived_count}</b>",
+            "kk": f"\n🗄 Архивте: <b>{archived_count}</b>",
+        }.get(lang, f"\n🗄 В архиве: <b>{archived_count}</b>")
+        stats += arch_text
+
+    return f"{title}\n\n{stats}"
+
+
+async def _get_planning_hint(db: aiosqlite.Connection, user_id: int, lang: str) -> str:
+    planned = await list_planned(db, user_id)
+    recurring_exp = await list_recurring_expenses(db, user_id)
+    recurring_inc = await list_recurring_incomes(db, user_id)
+    debts_count = await count_active_debts(db, user_id)
+
+    hints = []
+    if lang == "kk":
+        if not planned:
+            hints.append("• 🗓 <b>Жоспарланған шығындарды</b> (жалдау, жазылымдар) қосыңыз, бот оларды еске салады.")
+        if not (recurring_exp or recurring_inc):
+            hints.append("• 🔁 <b>Тұрақты төлемдерді</b> баптаңыз, оларды ай сайын қолмен енгізбеу үшін.")
+        if debts_count == 0:
+            hints.append("• 💳 <b>Қарыздар мен кредиттерді</b> жазыңыз, өтеу кестесін қадағалау үшін.")
+        header = "\n\n💡 <b>Ұсыныс:</b>\n"
+    elif lang == "en":
+        if not planned:
+            hints.append("• 🗓 Add <b>planned expenses</b> (rent, subscriptions) so the bot can remind you.")
+        if not (recurring_exp or recurring_inc):
+            hints.append("• 🔁 Set up <b>recurring payments</b> to avoid manual entry every month.")
+        if debts_count == 0:
+            hints.append("• 💳 Log <b>debts or credits</b> to track the repayment schedule.")
+        header = "\n\n💡 <b>Recommendation:</b>\n"
+    else:
+        if not planned:
+            hints.append("• 🗓 Добавь <b>запланированные траты</b> (аренда, подписки), чтобы бот напомнил о них.")
+        if not (recurring_exp or recurring_inc):
+            hints.append("• 🔁 Настрой <b>регулярные платежи</b>, чтобы не вводить их вручную каждый месяц.")
+        if debts_count == 0:
+            hints.append("• 💳 Запиши <b>долги или кредиты</b>, чтобы следить за графиком погашения.")
+        header = "\n\n💡 <b>Рекомендация:</b>\n"
+
+    if not hints:
+        return ""
+    
+    return header + "\n".join(hints)
 
 
 async def _open_hub(target: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection, *, scope: str):
     data = await state.get_data()
+    lang = await get_lang(db, target.from_user.id)
+
+    if scope == "planning":
+        text = t(lang, "PLANNING_HUB_TITLE")
+        hint = await _get_planning_hint(db, target.from_user.id, lang)
+        text += hint
+        markup = await _build_planning_hub_markup(db, target.from_user.id, lang)
+    else:
+        text = await _more_hub_text(db, target.from_user.id, lang)
+        markup = await _build_more_hub_markup(db, target.from_user.id, lang)
+
+    if isinstance(target, CallbackQuery) and data.get("flow_message_id"):
+        # We are already in an inline flow, just edit the text
+        try:
+            await target.bot.edit_message_text(
+                chat_id=target.message.chat.id,
+                message_id=int(data["flow_message_id"]),
+                text=text,
+                reply_markup=markup,
+                parse_mode="HTML"
+            )
+            await state.update_data(ui_scope=f"hub:{scope}", lang=lang)
+            await target.answer()
+            return
+        except Exception:
+            pass
+
+    # Fallback if no flow_message_id or if called from a Message
     if isinstance(target, CallbackQuery):
         await _cleanup_ui(target.bot, target.message.chat.id, data)
     else:
@@ -70,20 +195,12 @@ async def _open_hub(target: Message | CallbackQuery, state: FSMContext, db: aios
             await target.delete()
         except Exception:
             pass
+
     await state.clear()
-    lang = await get_lang(db, target.from_user.id)
-
-    if scope == "planning":
-        text = t(lang, "PLANNING_HUB_TITLE")
-        markup = await _build_planning_hub_markup(db, target.from_user.id, lang)
-    else:
-        text = t(lang, "MORE_HUB_TITLE")
-        markup = await _build_more_hub_markup(db, target.from_user.id, lang)
-
     sender = target.message.answer if isinstance(target, CallbackQuery) else target.answer
     sent = await sender(text, reply_markup=markup, parse_mode="HTML")
     await state.update_data(flow_message_id=sent.message_id, ui_scope=f"hub:{scope}", lang=lang)
-    await _ensure_scope_reply_keyboard(target, state, lang)
+    await _ensure_minimized_menu(target, state, lang)
     if isinstance(target, CallbackQuery):
         try:
             await target.answer()
@@ -93,18 +210,37 @@ async def _open_hub(target: Message | CallbackQuery, state: FSMContext, db: aios
 
 async def deny_feature_message(ctx: Message | CallbackQuery, db: aiosqlite.Connection, user_id: int) -> None:
     lang = await get_lang(db, user_id)
-    text = t(lang, "ACCESS_LOCKED")
-    markup = await build_main_menu_markup(db, user_id, lang)
+    text = _upgrade_message(lang)
+    markup = upgrade_info_kb(lang, price=_full_access_price())
+    
     if isinstance(ctx, CallbackQuery):
-        await ctx.message.answer(text, reply_markup=markup)
+        # We try to answer the callback so it doesn't spin
         try:
             await ctx.answer()
         except Exception:
             pass
+        # Then we send a new message with the upgrade info
+        await ctx.message.answer(text, reply_markup=markup, parse_mode="HTML")
         return
-    await ctx.answer(text, reply_markup=markup)
+        
+    await ctx.answer(text, reply_markup=markup, parse_mode="HTML")
 
 
+
+
+async def neutralize_keyboard(c: CallbackQuery) -> None:
+    """Drop the inline keyboard of the source message *before* doing any work.
+
+    This is the single most effective defense against double-tap on terminal
+    callbacks (``save``, ``confirm``, ``pay``, ``delete``): once the keyboard
+    is gone, the second tap can't fire the same callback again. We swallow all
+    Telegram errors because the message might already be edited / deleted, in
+    which case there is nothing to neutralize.
+    """
+    try:
+        await c.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
 
 
 def is_cancel_text(text: str | None) -> bool:
@@ -113,6 +249,12 @@ def is_cancel_text(text: str | None) -> bool:
         raw = raw.replace(token, '')
     raw = ' '.join(raw.split())
     return raw in {'отмена', 'отменить', '/cancel', 'cancel', 'болдырмау'}
+
+def is_main_menu_text(text: str | None) -> bool:
+    raw = (text or '').strip().casefold()
+    for token in ('🏠', ' '):
+        raw = raw.replace(token, '')
+    return raw in {'главноеменю', 'mainmenu', 'бастымәзір'}
 
 
 _is_cancel_text = is_cancel_text
@@ -156,19 +298,43 @@ async def _cleanup_ui(bot, chat_id: int, data: dict) -> None:
             pass
 
 
-async def _ensure_scope_reply_keyboard(target: Message | CallbackQuery, state: FSMContext, lang: str) -> None:
+async def _ensure_minimized_menu(target: Message | CallbackQuery, state: FSMContext, lang: str) -> None:
     data = await state.get_data()
     if data.get("settings_reply_message_id"):
         return
     sender = target.message.answer if isinstance(target, CallbackQuery) else target.answer
-    hint = {"ru": "↩️ Отмена → главное меню", "en": "↩️ Cancel → main menu", "kk": "↩️ Болдырмау → басты мәзір"}.get(lang, "↩️ Отмена → главное меню")
-    sent = await sender(hint, reply_markup=cancel_kb(lang), disable_notification=True)
+    text = {"ru": "Меню свернуто для удобства", "en": "Menu minimized for convenience", "kk": "Мәзір ыңғайлылық үшін жиналды"}.get(lang, "Меню свернуто для удобства")
+    sent = await sender(text, reply_markup=minimized_menu_kb(lang), disable_notification=True)
     extra_ids = data.get("extra_prompt_message_ids") or []
     if not isinstance(extra_ids, list):
         extra_ids = [extra_ids]
     extra_ids = [x for x in extra_ids if x]
     extra_ids.append(sent.message_id)
     await state.update_data(settings_reply_message_id=sent.message_id, extra_prompt_message_ids=extra_ids)
+
+
+async def consume_user_input(m: Message, state: FSMContext) -> None:
+    """Clean chat noise after a successful FSM text input.
+
+    Deletes (best-effort) both the message the user just sent and the prompt
+    bot message stored under ``prompt_message_id`` in FSM data. This keeps the
+    "flow window" pinned at the top instead of letting the user's own message
+    push the bot's instructions out of view — the pattern we already use in
+    onboarding/settings, generalized for planning flows.
+    """
+    data = await state.get_data()
+    prompt_id = data.get("prompt_message_id")
+    try:
+        if prompt_id:
+            await m.bot.delete_message(chat_id=m.chat.id, message_id=int(prompt_id))
+    except Exception:
+        pass
+    try:
+        await m.delete()
+    except Exception:
+        pass
+    if prompt_id:
+        await state.update_data(prompt_message_id=None)
 
 
 async def cancel_to_main_menu(ctx: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection | None = None) -> None:
@@ -215,7 +381,14 @@ async def menu_any(m: Message, state: FSMContext, db: aiosqlite.Connection):
     await m.answer(menu_text, reply_markup=await build_main_menu_markup(db, m.from_user.id, lang), parse_mode="HTML")
 
 
+@router.message(Command("cancel"))
+async def cancel_command(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    """Global /cancel — works over any FSM state."""
+    await cancel_to_main_menu(m, state, db)
+
+
 @router.message(lambda m: is_cancel_text(getattr(m, 'text', None)))
+@router.message(lambda m: is_main_menu_text(getattr(m, 'text', None)))
 async def cancel_any(m: Message, state: FSMContext, db: aiosqlite.Connection):
     await cancel_to_main_menu(m, state, db)
 
@@ -238,13 +411,6 @@ async def more_hub_entry(m: Message, state: FSMContext, db: aiosqlite.Connection
 
 @router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_PLANNING"))
 async def planning_hub_entry(m: Message, state: FSMContext, db: aiosqlite.Connection):
-    if not (
-        await can_use_feature(db, m.from_user.id, FEATURE_PLANNED)
-        or await can_use_feature(db, m.from_user.id, FEATURE_RECURRING)
-        or await can_use_feature(db, m.from_user.id, FEATURE_DEBTS)
-    ):
-        await deny_feature_message(m, db, m.from_user.id)
-        return
     await _open_hub(m, state, db, scope="planning")
 
 
@@ -272,7 +438,7 @@ async def more_history(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connec
     lang = await get_lang(db, c.from_user.id)
     await state.set_state(None)
     await state.update_data(ui_scope="history", lang=lang)
-    await _ensure_scope_reply_keyboard(c, state, lang)
+    await _ensure_minimized_menu(c, state, lang)
     await _render_history(c, db, c.from_user.id, offset=0, prefer_edit=True, state=state)
 
 
@@ -300,7 +466,7 @@ async def more_transfer(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conne
     await _clear_flow_message(c.bot, c.message.chat.id, state)
     await state.clear()
     await state.update_data(ui_scope="transfer", lang=lang)
-    await _ensure_scope_reply_keyboard(c, state, lang)
+    await _ensure_minimized_menu(c, state, lang)
     await state.set_state(TransferFlow.amount)
     await _tr_render_amount(c, state)
 
@@ -313,14 +479,15 @@ def _full_access_days() -> int:
     return int(getattr(settings, "full_access_days", 90))
 
 
-def _upgrade_message(lang: str) -> str:
+def _upgrade_message(lang: str, has_full_access: bool = False) -> str:
     price = _full_access_price()
     days = _full_access_days()
 
     if lang == "en":
+        greeting = "🌟 <b>Full access activated!</b>" if has_full_access else "You are currently using the free mode."
         return (
             "✨ <b>Full access</b>\n\n"
-            "You are currently using the free mode.\n\n"
+            f"{greeting}\n\n"
             "<b>Available for free</b>\n"
             "• income and expense tracking\n"
             "• history\n"
@@ -338,13 +505,14 @@ def _upgrade_message(lang: str) -> str:
             "• AI consultant\n\n"
             f"Price: <b>{price} ⭐</b>\n"
             f"Access period: <b>{days} days</b>\n\n"
-            "Press the button below to unlock full access."
+            "Press the button below to renew or unlock full access."
         )
 
     if lang == "kk":
+        greeting = "🌟 <b>Толық қолжетімділік белсенді!</b>" if has_full_access else "Қазір сен тегін режимді қолданып отырсың."
         return (
             "✨ <b>Толық қолжетімділік</b>\n\n"
-            "Қазір сен тегін режимді қолданып отырсың.\n\n"
+            f"{greeting}\n\n"
             "<b>Тегін режимде қолжетімді</b>\n"
             "• кіріс пен шығысты енгізу\n"
             "• тарих\n"
@@ -362,12 +530,13 @@ def _upgrade_message(lang: str) -> str:
             "• AI-кеңесші\n\n"
             f"Бағасы: <b>{price} ⭐</b>\n"
             f"Қолжетімділік мерзімі: <b>{days} күн</b>\n\n"
-            "Толық қолжетімділікті ашу үшін төмендегі батырманы бас."
+            "Толық қолжетімділікті ашу немесе ұзарту үшін төмендегі батырманы бас."
         )
 
+    greeting = "🌟 <b>У тебя активирован полный доступ!</b>" if has_full_access else "Сейчас у тебя бесплатный режим."
     return (
         "✨ <b>Полный доступ</b>\n\n"
-        "Сейчас у тебя бесплатный режим.\n\n"
+        f"{greeting}\n\n"
         "<b>Что доступно бесплатно</b>\n"
         "• учёт доходов и расходов\n"
         "• история\n"
@@ -385,7 +554,7 @@ def _upgrade_message(lang: str) -> str:
         "• AI-консультант\n\n"
         f"Цена: <b>{price} ⭐</b>\n"
         f"Срок доступа: <b>{days} дней</b>\n\n"
-        "Нажми кнопку ниже, чтобы открыть полный доступ."
+        "Нажми кнопку ниже, чтобы продлить или открыть доступ."
     )
 
 
@@ -401,7 +570,7 @@ def _invoice_description(lang: str) -> str:
     return f"Полный доступ ко всем разделам бота на {days} дней."
 
 
-@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_UPGRADE_FULL"))
+@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_UPGRADE_FULL") or (m.text and any(x in m.text for x in ["🌟 Полный режим", "🌟 Full Mode", "🌟 Толық режим", "💎 Продлить подписку", "💎 Upgrade / Renew", "💎 Жаңарту"])))
 async def upgrade_info_message(m: Message, state: FSMContext, db: aiosqlite.Connection):
     lang = await get_lang(db, m.from_user.id)
 
@@ -415,8 +584,13 @@ async def upgrade_info_message(m: Message, state: FSMContext, db: aiosqlite.Conn
 
     await state.clear()
 
+    await _ensure_minimized_menu(m, state, lang)
+
+    from app.domain.services.access_service import get_user_context
+    ctx = await get_user_context(db, m.from_user.id)
+
     sent = await m.answer(
-        _upgrade_message(lang),
+        _upgrade_message(lang, has_full_access=ctx.full_access),
         parse_mode="HTML",
         reply_markup=upgrade_info_kb(
             lang,
@@ -438,6 +612,8 @@ async def upgrade_info_callback(c: CallbackQuery, state: FSMContext, db: aiosqli
     data = await state.get_data()
     await _cleanup_ui(c.bot, c.message.chat.id, data)
     await state.clear()
+
+    await _ensure_minimized_menu(c, state, lang)
 
     sent = await c.message.answer(
         _upgrade_message(lang),

@@ -1,6 +1,6 @@
 import asyncio
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeDefault
 from aiogram.fsm.storage.memory import SimpleEventIsolation
 from loguru import logger
 
@@ -9,7 +9,64 @@ from app.db.connection import open_db
 from app.db.migrate import run_migrations
 from app.handlers import get_routers
 from app.logging.setup import setup_logging
+from app.middlewares import ThrottlingMiddleware
+from app.middlewares.access import AccessContextMiddleware
+from app.middlewares_notification_quiet import NotificationQuietMiddleware
 from app.scheduler.notify_scheduler import setup_notify_scheduler
+
+
+BOT_COMMANDS: dict[str, list[BotCommand]] = {
+    "ru": [
+        BotCommand(command="start", description="Запуск"),
+        BotCommand(command="today", description="Отчёт: сегодня"),
+        BotCommand(command="week", description="Отчёт: неделя"),
+        BotCommand(command="month", description="Отчёт: месяц"),
+        BotCommand(command="cats_today", description="Категории: сегодня"),
+        BotCommand(command="cats_month", description="Категории: месяц"),
+        BotCommand(command="q", description="Быстрая запись (напр. 500 кофе)"),
+        BotCommand(command="undo", description="Отменить последнюю запись"),
+        BotCommand(command="export", description="Экспорт XLSX за месяц"),
+        BotCommand(command="cancel", description="Сбросить текущее действие"),
+    ],
+    "en": [
+        BotCommand(command="start", description="Start"),
+        BotCommand(command="today", description="Report: today"),
+        BotCommand(command="week", description="Report: week"),
+        BotCommand(command="month", description="Report: month"),
+        BotCommand(command="cats_today", description="Categories: today"),
+        BotCommand(command="cats_month", description="Categories: month"),
+        BotCommand(command="q", description="Quick add (e.g. 500 coffee)"),
+        BotCommand(command="undo", description="Undo last entry"),
+        BotCommand(command="export", description="Export XLSX for the month"),
+        BotCommand(command="cancel", description="Cancel current action"),
+    ],
+    "kk": [
+        BotCommand(command="start", description="Бастау"),
+        BotCommand(command="today", description="Есеп: бүгін"),
+        BotCommand(command="week", description="Есеп: апта"),
+        BotCommand(command="month", description="Есеп: ай"),
+        BotCommand(command="cats_today", description="Санаттар: бүгін"),
+        BotCommand(command="cats_month", description="Санаттар: ай"),
+        BotCommand(command="q", description="Жылдам жазу (мыс. 500 кофе)"),
+        BotCommand(command="undo", description="Соңғы жазуды болдырмау"),
+        BotCommand(command="export", description="Айдың XLSX-экспорты"),
+        BotCommand(command="cancel", description="Ағымдағы әрекетті бас тарту"),
+    ],
+}
+
+
+async def _set_bot_commands(bot: Bot) -> None:
+    """Register bot menu commands per language (RU as default)."""
+    await bot.set_my_commands(BOT_COMMANDS["ru"], scope=BotCommandScopeDefault())
+    for lang_code in ("en", "kk"):
+        try:
+            await bot.set_my_commands(
+                BOT_COMMANDS[lang_code],
+                scope=BotCommandScopeDefault(),
+                language_code=lang_code,
+            )
+        except Exception:
+            pass
 
 
 async def main():
@@ -18,14 +75,19 @@ async def main():
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher(events_isolation=SimpleEventIsolation())
 
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Запуск"),
-        BotCommand(command="today", description="Отчёт: сегодня"),
-        BotCommand(command="week", description="Отчёт: неделя"),
-        BotCommand(command="month", description="Отчёт: месяц"),
-        BotCommand(command="cats_today", description="Категории: сегодня"),
-        BotCommand(command="cats_month", description="Категории: месяц"),
-    ])
+    # Anti-double-tap on inline buttons (see audit 1.3) and noise suppression
+    # for scheduled notifications while the user is actively chatting.
+    throttling = ThrottlingMiddleware(rate=0.7)
+    dp.callback_query.middleware(throttling)
+    dp.message.middleware(throttling)
+    # Inject lang / access_ctx once per update so handlers don't refetch.
+    access_mw = AccessContextMiddleware()
+    dp.message.middleware(access_mw)
+    dp.callback_query.middleware(access_mw)
+    dp.message.middleware(NotificationQuietMiddleware(seconds=1800))
+    dp.callback_query.middleware(NotificationQuietMiddleware(seconds=1800))
+
+    await _set_bot_commands(bot)
 
     db = await open_db(settings.db_path)
 

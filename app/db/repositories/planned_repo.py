@@ -67,7 +67,24 @@ async def get_planned(db, user_id:int, planned_id:int):
 
 async def set_planned_archived(db, user_id:int, planned_id:int, archived:bool, ts:str):
     await ensure_schema(db)
-    await db.execute("UPDATE planned_transactions SET is_archived=?, updated_at=? WHERE user_id=? AND id=?", (1 if archived else 0, ts, user_id, planned_id))
+    if archived:
+        await db.execute(
+            "UPDATE planned_transactions SET is_archived=1, updated_at=? WHERE user_id=? AND id=?",
+            (ts, user_id, planned_id),
+        )
+    else:
+        # Restoring a planned operation: clear the stale ``last_reminded_on``
+        # so the user can get a reminder again if the date is still ahead.
+        await db.execute(
+            """
+            UPDATE planned_transactions
+            SET is_archived=0,
+                last_reminded_on=NULL,
+                updated_at=?
+            WHERE user_id=? AND id=?
+            """,
+            (ts, user_id, planned_id),
+        )
 
 async def mark_planned_done(db, user_id:int, planned_id:int, ts:str):
     await ensure_schema(db)

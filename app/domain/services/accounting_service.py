@@ -30,7 +30,8 @@ async def get_balance_after(db: aiosqlite.Connection, user_id: int, account_id: 
     acc = await get_account(db, user_id, account_id)
     if not acc:
         return None
-    _, name, bal, arch = acc
+    name = acc['name']
+    bal = int(acc['balance'])
     return bal, bal + delta, name
 
 async def add_expense(db: aiosqlite.Connection, user_id: int, amount_positive: int, account_id: int, category_id: int, note: str | None):

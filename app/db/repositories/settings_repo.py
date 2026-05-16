@@ -66,8 +66,9 @@ async def list_notify_targets(db: aiosqlite.Connection):
         "SELECT user_id, currency, timezone, lang, "
         "daily_report_enabled, daily_report_time, "
         "daily_report_last_sent_date, daily_report_pre_last_sent_date, "
-        "nudge_enabled, nudge_interval_min, nudge_last_sent_at, debts_enabled, debts_days_before "
-        "FROM settings WHERE daily_report_enabled=1 OR nudge_enabled=1 OR debts_enabled=1"
+        "nudge_enabled, nudge_interval_min, nudge_last_sent_at, debts_enabled, debts_days_before, "
+        "recurring_inc_enabled, recurring_inc_days, recurring_exp_enabled, recurring_exp_days "
+        "FROM settings WHERE daily_report_enabled=1 OR nudge_enabled=1 OR debts_enabled=1 OR recurring_inc_enabled=1 OR recurring_exp_enabled=1"
     )
     return await cur.fetchall()
 
@@ -151,3 +152,26 @@ async def list_debt_notify_targets(db: aiosqlite.Connection):
         "SELECT user_id, currency, timezone, lang, debts_enabled, debts_days_before FROM settings WHERE debts_enabled=1"
     )
     return await cur.fetchall()
+
+async def get_recurring_settings(db: aiosqlite.Connection, user_id: int):
+    cur = await db.execute(
+        "SELECT recurring_inc_enabled, recurring_inc_days, recurring_exp_enabled, recurring_exp_days "
+        "FROM settings WHERE user_id=?",
+        (user_id,),
+    )
+    row = await cur.fetchone()
+    if not row:
+        return 1, 0, 1, 1
+    return tuple(int(x or 0) for x in row)
+
+async def update_recurring_inc_settings(db: aiosqlite.Connection, user_id: int, enabled: int, days: int, updated_at: str):
+    await db.execute(
+        "UPDATE settings SET recurring_inc_enabled=?, recurring_inc_days=?, updated_at=? WHERE user_id=?",
+        (int(enabled), int(days), updated_at, user_id),
+    )
+
+async def update_recurring_exp_settings(db: aiosqlite.Connection, user_id: int, enabled: int, days: int, updated_at: str):
+    await db.execute(
+        "UPDATE settings SET recurring_exp_enabled=?, recurring_exp_days=?, updated_at=? WHERE user_id=?",
+        (int(enabled), int(days), updated_at, user_id),
+    )

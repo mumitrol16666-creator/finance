@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import aiosqlite
 
@@ -83,7 +83,9 @@ async def ensure_schema(db: aiosqlite.Connection) -> None:
 
 
 async def _create_item(db, table, user_id, title, amount, category_id, account_id, day_of_month, comment, ts):
-    next_run = calc_next_run_date(int(day_of_month))
+    from app.domain.time_utils import today_in_user_tz
+    today = await today_in_user_tz(db, int(user_id))
+    next_run = calc_next_run_date(int(day_of_month), today)
     cur = await db.execute(
         f"""
         INSERT INTO {table}(
@@ -110,7 +112,8 @@ async def _list_items(db, table, user_id, archived=False):
         SELECT r.id, r.title, r.amount, r.day_of_month, r.comment, r.next_run_date,
                c.name AS category_name,
                a.name AS account_name,
-               r.is_archived
+               r.is_archived,
+               r.{'last_paid_at' if table == 'recurring_expenses' else 'last_received_at'}
         FROM {table} r
         JOIN categories c ON c.id = r.category_id
         JOIN accounts a ON a.id = r.account_id
@@ -164,12 +167,41 @@ async def _set_archived(db, table, user_id, recurring_id, archived, ts):
     )
 
 
+async def _restore_item(db, table, user_id, recurring_id, ts):
+    """Restoring a recurring template: clear stale ``last_reminded_on`` and
+    recalc ``next_run_date`` for the user's current local date so we don't
+    accidentally fire (or skip) reminders for a date that is already in the
+    past while the row was archived."""
+    from app.domain.time_utils import today_in_user_tz
+    cur = await db.execute(
+        f"SELECT day_of_month FROM {table} WHERE user_id=? AND id=? LIMIT 1",
+        (user_id, recurring_id),
+    )
+    row = await cur.fetchone()
+    if not row:
+        return
+    day_of_month = int(row[0] if not hasattr(row, "keys") else row["day_of_month"])
+    today = await today_in_user_tz(db, int(user_id))
+    next_run = calc_next_run_date(day_of_month, today)
+    await db.execute(
+        f"""
+        UPDATE {table}
+        SET is_archived=0,
+            next_run_date=?,
+            last_reminded_on=NULL,
+            updated_at=?
+        WHERE user_id=? AND id=?
+        """,
+        (next_run, ts, user_id, recurring_id),
+    )
+
+
 async def archive_recurring_expense(db, user_id, recurring_id, ts):
     await _set_archived(db, 'recurring_expenses', user_id, recurring_id, True, ts)
 
 
 async def restore_recurring_expense(db, user_id, recurring_id, ts):
-    await _set_archived(db, 'recurring_expenses', user_id, recurring_id, False, ts)
+    await _restore_item(db, 'recurring_expenses', user_id, recurring_id, ts)
 
 
 async def archive_recurring_income(db, user_id, recurring_id, ts):
@@ -177,7 +209,7 @@ async def archive_recurring_income(db, user_id, recurring_id, ts):
 
 
 async def restore_recurring_income(db, user_id, recurring_id, ts):
-    await _set_archived(db, 'recurring_incomes', user_id, recurring_id, False, ts)
+    await _restore_item(db, 'recurring_incomes', user_id, recurring_id, ts)
 
 
 async def _mark_done(db, table, user_id, recurring_id, ts):
@@ -187,7 +219,8 @@ async def _mark_done(db, table, user_id, recurring_id, ts):
     try:
         anchor = datetime.fromisoformat(str(ts)).date()
     except Exception:
-        anchor = date.today()
+        from app.domain.time_utils import today_in_user_tz
+        anchor = await today_in_user_tz(db, user_id)
     next_run = calc_next_run_after(int(row['day_of_month']), anchor)
     done_col = 'last_paid_at' if table == 'recurring_expenses' else 'last_received_at'
     await db.execute(
@@ -212,7 +245,8 @@ async def skip_recurring_income(db, user_id, recurring_id, ts):
     try:
         anchor = datetime.fromisoformat(str(ts)).date()
     except Exception:
-        anchor = date.today()
+        from app.domain.time_utils import today_in_user_tz
+        anchor = await today_in_user_tz(db, user_id)
     next_run = calc_next_run_after(int(row['day_of_month']), anchor)
     await db.execute(
         "UPDATE recurring_incomes SET next_run_date=?, updated_at=? WHERE user_id=? AND id=?",
@@ -253,7 +287,7 @@ async def list_due_recurring_incomes(db, user_id, local_date, days_ahead=3):
 async def _mark_reminded(db, table, user_id, recurring_id, local_date):
     await db.execute(
         f"UPDATE {table} SET last_reminded_on=?, updated_at=? WHERE user_id=? AND id=?",
-        (local_date, datetime.utcnow().isoformat(), user_id, recurring_id),
+        (local_date, datetime.now(timezone.utc).isoformat(), user_id, recurring_id),
     )
 
 

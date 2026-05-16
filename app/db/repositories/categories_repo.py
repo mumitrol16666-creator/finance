@@ -29,9 +29,31 @@ async def ensure_default_categories(db: aiosqlite.Connection, user_id: int, ts: 
         )
 
 async def list_categories(db: aiosqlite.Connection, user_id: int, kind: str):
+    """Return categories ordered by recent usage (last 30 days) DESC, then id ASC.
+
+    "Popular first" is a much friendlier default than creation order, especially
+    once users have 15+ categories. The window is intentionally short (30 days)
+    so the keyboard reflects *current* habits, not ancient history.
+    """
+    from datetime import datetime, timedelta, timezone
+    window_start = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     cur = await db.execute(
-        "SELECT id, name, emoji FROM categories WHERE user_id=? AND kind=? AND is_archived=0 ORDER BY id",
-        (user_id, kind),
+        """
+        SELECT id, name, emoji
+        FROM (
+            SELECT c.id, c.name, c.emoji,
+                   COALESCE(SUM(CASE WHEN t.ts >= ? AND t.deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS uses
+            FROM categories c
+            LEFT JOIN transactions t
+              ON t.category_id = c.id
+             AND t.user_id = c.user_id
+             AND t.type = c.kind
+            WHERE c.user_id=? AND c.kind=? AND c.is_archived=0
+            GROUP BY c.id, c.name, c.emoji
+        )
+        ORDER BY uses DESC, id ASC
+        """,
+        (window_start, user_id, kind),
     )
     return await cur.fetchall()
 
@@ -149,6 +171,7 @@ async def get_category_spent_month(
         WHERE user_id=?
           AND category_id=?
           AND type='expense'
+          AND deleted_at IS NULL
           AND strftime('%Y-%m', created_at)=?
         """,
         (user_id, category_id, month),

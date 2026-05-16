@@ -23,10 +23,13 @@ from app.db.repositories.planned_repo import (
 )
 from app.db.repositories.settings_repo import get_lang
 from app.db.repositories.tx_repo import create_tx, apply_expense_income
+from app.domain.money import parse_money_for_user
+from app.domain.time_utils import today_in_user_tz
+from app.domain.validators import parse_friendly_date
 from app.fsm.states import PlannedFlow
-from app.handlers.common import deny_feature_message,  cancel_to_main_menu, is_cancel_text
+from app.handlers.common import deny_feature_message,  cancel_to_main_menu, consume_user_input, is_cancel_text
 from app.ui.i18n import text_matches_key, t
-from app.ui.keyboards import main_menu, cancel_kb
+from app.ui.keyboards import main_menu, cancel_kb, flow_done_actions_kb, inline_cancel_kb
 from app.domain.services.ai_consultant_service import build_section_hint
 
 router = Router()
@@ -38,14 +41,11 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def fmt_money(value: int) -> str:
-    s = str(abs(int(value)))
-    parts: list[str] = []
-    while s:
-        parts.append(s[-3:])
-        s = s[:-3]
-    out = " ".join(reversed(parts)) if parts else "0"
-    return f"{'-' if value < 0 else ''}{out} тг"
+def fmt_money(value: int, currency: str = "KZT") -> str:
+    """Thin wrapper around ``app.domain.money.fmt_money`` so 'тг' is no longer
+    hardcoded — see ``app.domain.money.CURRENCY_SYMBOL``."""
+    from app.domain.money import fmt_money as _fmt_money
+    return _fmt_money(value, currency=currency)
 
 
 def _chat_and_bot(target: Message | CallbackQuery):
@@ -143,7 +143,6 @@ async def _render_screen(
                 reply_markup=reply_markup,
                 parse_mode=PARSE_MODE,
             )
-            await _ensure_planned_reply_keyboard(target, state, (await state.get_data()).get("lang") or "ru")
             return
         except Exception:
             pass
@@ -156,14 +155,12 @@ async def _render_screen(
                 parse_mode=PARSE_MODE,
             )
             await state.update_data(flow_message_id=current_message.message_id)
-            await _ensure_planned_reply_keyboard(target, state, (await state.get_data()).get("lang") or "ru")
             return
         except Exception:
             pass
 
     sent = await target.message.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
     await state.update_data(flow_message_id=sent.message_id)
-    await _ensure_planned_reply_keyboard(target, state, (await state.get_data()).get("lang") or "ru")
 
 
 async def _show_input_prompt(
@@ -174,10 +171,36 @@ async def _show_input_prompt(
 ):
     await _clear_prompt(target, state)
     sent = await (
-        target.message.answer(text, reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        target.message.answer(text, reply_markup=inline_cancel_kb(lang), parse_mode=PARSE_MODE)
         if isinstance(target, CallbackQuery)
-        else target.answer(text, reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        else target.answer(text, reply_markup=inline_cancel_kb(lang), parse_mode=PARSE_MODE)
     )
+    await state.update_data(prompt_message_id=sent.message_id)
+
+
+async def _input_error(m: Message, state: FSMContext, lang: str, text: str):
+    """Show a validation error on the current prompt without spamming new
+    messages: delete the user's bad input, then edit the prompt in place.
+    Falls back to a fresh prompt if editing is no longer possible."""
+    try:
+        await m.delete()
+    except Exception:
+        pass
+    data = await state.get_data()
+    prompt_id = data.get("prompt_message_id")
+    if prompt_id:
+        try:
+            await m.bot.edit_message_text(
+                chat_id=m.chat.id,
+                message_id=int(prompt_id),
+                text=text,
+                reply_markup=inline_cancel_kb(lang),
+                parse_mode=PARSE_MODE,
+            )
+            return
+        except Exception:
+            pass
+    sent = await m.answer(text, reply_markup=inline_cancel_kb(lang), parse_mode=PARSE_MODE)
     await state.update_data(prompt_message_id=sent.message_id)
 
 
@@ -185,18 +208,9 @@ def planned_menu_kb(lang: str = "ru"):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(
-        text="➕ Добавить" if lang == "ru" else ("➕ Add" if lang == "en" else "➕ Қосу"),
-        callback_data="pl:add",
-    )
-    kb.button(
-        text="📋 Активные" if lang == "ru" else ("📋 Active" if lang == "en" else "📋 Белсенді"),
-        callback_data="pl:list",
-    )
-    kb.button(
-        text="🗄 Архив" if lang == "ru" else ("🗄 Archive" if lang == "en" else "🗄 Архив"),
-        callback_data="pl:archived",
-    )
+    kb.button(text=t(lang, "BTN_ADD"), callback_data="pl:add")
+    kb.button(text=t(lang, "BTN_LIST_ACTIVE"), callback_data="pl:list")
+    kb.button(text=t(lang, "BTN_ARCHIVE"), callback_data="pl:archived")
     kb.button(text=t(lang, "BTN_BACK"), callback_data="hub:planning")
     kb.adjust(2, 1, 1)
     return kb.as_markup()
@@ -206,14 +220,8 @@ def planned_kind_kb(lang: str = "ru"):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(
-        text="➖ Расход" if lang == "ru" else ("➖ Expense" if lang == "en" else "➖ Шығыс"),
-        callback_data="pl:kind:expense",
-    )
-    kb.button(
-        text="➕ Доход" if lang == "ru" else ("➕ Income" if lang == "en" else "➕ Кіріс"),
-        callback_data="pl:kind:income",
-    )
+    kb.button(text=t(lang, "PL_KIND_EXPENSE"), callback_data="pl:kind:expense")
+    kb.button(text=t(lang, "PL_KIND_INCOME"), callback_data="pl:kind:income")
     kb.button(text=t(lang, "BTN_BACK"), callback_data="pl:menu")
     kb.adjust(2, 1)
     return kb.as_markup()
@@ -223,14 +231,8 @@ def planned_importance_kb(lang: str = "ru"):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(
-        text="🧱 Обязательная" if lang == "ru" else ("🧱 Required" if lang == "en" else "🧱 Міндетті"),
-        callback_data="pl:req:1",
-    )
-    kb.button(
-        text="🫧 Гибкая" if lang == "ru" else ("🫧 Flexible" if lang == "en" else "🫧 Икемді"),
-        callback_data="pl:req:0",
-    )
+    kb.button(text=t(lang, "PL_IMPORTANCE_REQUIRED"), callback_data="pl:req:1")
+    kb.button(text=t(lang, "PL_IMPORTANCE_FLEXIBLE"), callback_data="pl:req:0")
     kb.button(text=t(lang, "BTN_BACK"), callback_data="pl:add")
     kb.adjust(1)
     return kb.as_markup()
@@ -257,24 +259,12 @@ def planned_actions_kb(item_id: int, archived: bool, lang: str = "ru", back_cb: 
 
     kb = InlineKeyboardBuilder()
     if archived:
-        kb.button(
-            text="♻️ Восстановить" if lang == "ru" else ("♻️ Restore" if lang == "en" else "♻️ Қалпына келтіру"),
-            callback_data=f"pl:restore:{item_id}",
-        )
+        kb.button(text=t(lang, "BTN_RESTORE"), callback_data=f"pl:restore:{item_id}")
         back = back_cb or "pl:archived"
     else:
-        kb.button(
-            text="✅ Проведено" if lang == "ru" else ("✅ Mark done" if lang == "en" else "✅ Өтті деп белгілеу"),
-            callback_data=f"pl:done:{item_id}",
-        )
-        kb.button(
-            text="📅 Перенести дату" if lang == "ru" else ("📅 Move date" if lang == "en" else "📅 Күнін жылжыту"),
-            callback_data=f"pl:move:{item_id}",
-        )
-        kb.button(
-            text="🗂 В архив" if lang == "ru" else ("🗂 Archive" if lang == "en" else "🗂 Архив"),
-            callback_data=f"pl:archive:{item_id}",
-        )
+        kb.button(text=t(lang, "PL_BTN_DONE"), callback_data=f"pl:done:{item_id}")
+        kb.button(text=t(lang, "PL_BTN_MOVE"), callback_data=f"pl:move:{item_id}")
+        kb.button(text=t(lang, "BTN_TO_ARCHIVE"), callback_data=f"pl:archive:{item_id}")
         back = back_cb or "pl:list"
     kb.button(text=t(lang, "BTN_BACK"), callback_data=back)
     kb.adjust(1)
@@ -312,10 +302,10 @@ def planned_reminder_actions_kb(item_id: int, lang: str = "ru"):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Проведено" if lang == "ru" else ("✅ Done" if lang == "en" else "✅ Өтті"), callback_data=f"pl:done:{item_id}")
-    kb.button(text="🕒 Завтра" if lang == "ru" else ("🕒 Tomorrow" if lang == "en" else "🕒 Ертең"), callback_data=f"pl:remindsnooze:{item_id}")
-    kb.button(text="🔗 Уже внёс вручную" if lang == "ru" else ("🔗 Already added manually" if lang == "en" else "🔗 Қолмен енгізіп қойдым"), callback_data=f"pl:remindmanual:{item_id}")
-    kb.button(text="📂 Детали" if lang == "ru" else ("📂 Details" if lang == "en" else "📂 Толығырақ"), callback_data=f"pl:remdetail:{item_id}")
+    kb.button(text=t(lang, "PL_BTN_REMINDER_DONE"), callback_data=f"pl:done:{item_id}")
+    kb.button(text=t(lang, "BTN_TOMORROW"), callback_data=f"pl:remindsnooze:{item_id}")
+    kb.button(text=t(lang, "BTN_ADDED_MANUALLY"), callback_data=f"pl:remindmanual:{item_id}")
+    kb.button(text=t(lang, "BTN_DETAILS"), callback_data=f"pl:remdetail:{item_id}")
     kb.adjust(2, 2)
     return kb.as_markup()
 
@@ -327,49 +317,23 @@ async def _menu_text(db, user_id: int, lang: str) -> str:
     nearest = active[0] if active else None
 
     lines = [
-        "🗓 <b>Планируемые платежи</b>"
-        if lang == "ru"
-        else ("🗓 <b>Planned payments</b>" if lang == "en" else "🗓 <b>Жоспарланған операциялар</b>"),
+        t(lang, "PL_MENU_TITLE"),
         "",
-        "Разовые будущие доходы и расходы для прогноза."
-        if lang == "ru"
-        else (
-            "Future one-time income and expenses for forecast."
-            if lang == "en"
-            else "Болжамға арналған бір реттік болашақ кірістер мен шығыстар."
-        ),
-        f"Активных: <b>{len(active)}</b>"
-        if lang == "ru"
-        else (f"Active: <b>{len(active)}</b>" if lang == "en" else f"Белсенді: <b>{len(active)}</b>"),
+        t(lang, "PL_MENU_DESCRIPTION"),
+        t(lang, "PL_ACTIVE_COUNT").format(n=len(active)),
     ]
 
     if archived:
-        lines.append(
-            f"В архиве: <b>{len(archived)}</b>"
-            if lang == "ru"
-            else (f"Archived: <b>{len(archived)}</b>" if lang == "en" else f"Архивте: <b>{len(archived)}</b>")
-        )
+        lines.append(t(lang, "PL_ARCHIVED_COUNT").format(n=len(archived)))
 
     if nearest:
         nearest_kind = str(nearest["kind"] or "expense")
-
-        kind_ru = "доход" if nearest_kind == "income" else "расход"
-        kind_en = "income" if nearest_kind == "income" else "expense"
-        kind_kz = "кіріс" if nearest_kind == "income" else "шығыс"
-
+        kind_label = t(lang, "PL_KIND_LABEL_INCOME" if nearest_kind == "income" else "PL_KIND_LABEL_EXPENSE")
         lines.extend(
             [
                 "",
-                "Ближайшая:" if lang == "ru" else ("Nearest:" if lang == "en" else "Жақын арада:"),
-                (
-                    f"• <b>{escape(str(nearest['title']))}</b> — {fmt_money(int(nearest['amount']))} — {nearest['planned_date']} — {kind_ru}"
-                    if lang == "ru"
-                    else (
-                        f"• <b>{escape(str(nearest['title']))}</b> — {fmt_money(int(nearest['amount']))} — {nearest['planned_date']} — {kind_en}"
-                        if lang == "en"
-                        else f"• <b>{escape(str(nearest['title']))}</b> — {fmt_money(int(nearest['amount']))} — {nearest['planned_date']} — {kind_kz}"
-                    )
-                ),
+                t(lang, "PL_NEAREST"),
+                f"• <b>{escape(str(nearest['title']))}</b> — {fmt_money(int(nearest['amount']))} — {nearest['planned_date']} — {kind_label}",
             ]
         )
 
@@ -394,9 +358,6 @@ async def _show_menu(target: Message | CallbackQuery, state: FSMContext, db):
 
 @router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_PLANNED"))
 async def planned_entry(m: Message, state: FSMContext, db: aiosqlite.Connection):
-    if not await can_use_feature(db, m.from_user.id, FEATURE_PLANNED):
-        await deny_feature_message(m, db, m.from_user.id)
-        return
     await ensure_schema(db)
     await _show_menu(m, state, db)
 
@@ -409,52 +370,37 @@ async def planned_menu_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Con
 
 
 @router.callback_query(F.data == "pl:list")
-async def planned_list(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
-    lang = await get_lang(db, c.from_user.id)
+async def planned_list(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     rows = await list_planned(db, c.from_user.id, False)
-    text = (
-        "📋 <b>Активные планируемые операции</b>"
-        if lang == "ru"
-        else ("📋 <b>Active planned operations</b>" if lang == "en" else "📋 <b>Белсенді жоспарланған операциялар</b>")
-    )
+    text = t(lang, "PL_LIST_TITLE_ACTIVE")
     if not rows:
-        text += "\n\n" + ("Пока пусто." if lang == "ru" else ("No items yet." if lang == "en" else "Әзірге бос."))
+        text += "\n\n" + t(lang, "PL_LIST_EMPTY")
     await _render_screen(c, state, text, reply_markup=planned_rows_kb(rows, False, lang))
     await c.answer()
 
 
 @router.callback_query(F.data == "pl:archived")
-async def planned_archived(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
-    lang = await get_lang(db, c.from_user.id)
+async def planned_archived(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     rows = await list_planned(db, c.from_user.id, True)
-    text = (
-        "🗄 <b>Архив планируемых операций</b>"
-        if lang == "ru"
-        else ("🗄 <b>Planned archive</b>" if lang == "en" else "🗄 <b>Жоспарланған операциялар архиві</b>")
-    )
+    text = t(lang, "PL_LIST_TITLE_ARCHIVED")
     if not rows:
-        text += "\n\n" + (
-            "Архив пуст." if lang == "ru" else ("Archive is empty." if lang == "en" else "Архив бос.")
-        )
+        text += "\n\n" + t(lang, "PL_ARCHIVE_EMPTY")
     await _render_screen(c, state, text, reply_markup=planned_rows_kb(rows, True, lang))
     await c.answer()
 
 
 @router.callback_query(F.data == "pl:add")
 async def planned_add(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    if not await can_use_feature(db, c.from_user.id, FEATURE_PLANNED):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     lang = await get_lang(db, c.from_user.id)
     await _reset_flow_ui(c, state)
     await state.set_state(PlannedFlow.kind)
     await _render_screen(
         c,
         state,
-        "🗓 <b>Новая планируемая операция</b>\n\nВыбери тип."
-        if lang == "ru"
-        else (
-            "🗓 <b>New planned operation</b>\n\nChoose type."
-            if lang == "en"
-            else "🗓 <b>Жаңа жоспарланған операция</b>\n\nТүрін таңдаңыз."
-        ),
+        t(lang, "PL_NEW_PICK_KIND"),
         reply_markup=planned_kind_kb(lang),
     )
     await c.answer()
@@ -468,59 +414,46 @@ async def planned_kind(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connec
     await state.update_data(pl_kind=kind)
     await state.set_state(PlannedFlow.title)
 
-    await _render_screen(
-        c,
-        state,
-        "Введи название операции." if lang == "ru" else ("Enter title." if lang == "en" else "Операция атауын енгізіңіз."),
-    )
-    await _show_input_prompt(
-        c,
-        state,
-        "Пример: <code>Реклама 15 апреля</code>"
-        if lang == "ru"
-        else ("Example: <code>Laptop on 15 Apr</code>" if lang == "en" else "Мысал: <code>15 сәуір жарнама</code>"),
-        lang,
-    )
+    await _render_screen(c, state, t(lang, "PL_TITLE_PROMPT"))
+    await _show_input_prompt(c, state, t(lang, "PL_TITLE_PROMPT"), lang)
     await c.answer()
 
 
 @router.message(PlannedFlow.title, F.text)
-async def planned_title(m: Message, state: FSMContext, db: aiosqlite.Connection):
+async def planned_title(m: Message, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
 
     title = (m.text or "").strip()
     if len(title) < 2 or len(title) > 60:
-        await m.answer("Название должно быть от 2 до 60 символов.")
+        await _input_error(m, state, lang, t(lang, "PL_TITLE_LEN_ERROR"))
         return
 
-    lang = await get_lang(db, m.from_user.id)
+    await consume_user_input(m, state)
     await state.update_data(pl_title=title)
     await state.set_state(PlannedFlow.amount)
-    await _show_input_prompt(m, state, "Введи сумму. Пример: <code>50000</code>", lang)
+    await _show_input_prompt(m, state, t(lang, "AMOUNT_PROMPT_PLANNED"), lang)
 
 
 @router.message(PlannedFlow.amount, F.text)
-async def planned_amount(m: Message, state: FSMContext, db: aiosqlite.Connection):
+async def planned_amount(m: Message, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
 
-    raw = (m.text or "").strip().replace(" ", "")
-    if not raw.isdigit():
-        await m.answer("Нужны только цифры.")
+    amt = await parse_money_for_user(db, m.from_user.id, m.text)
+    if amt is None or amt <= 0:
+        await _input_error(m, state, lang, t(lang, "AMOUNT_INVALID"))
         return
 
-    await state.update_data(pl_amount=int(raw))
-    lang = await get_lang(db, m.from_user.id)
+    await consume_user_input(m, state)
+    await state.update_data(pl_amount=int(amt))
     await state.set_state(PlannedFlow.importance)
     await _render_screen(
         m,
         state,
-        "Это обязательная операция или гибкая?"
-        if lang == "ru"
-        else ("Is it required or flexible?" if lang == "en" else "Бұл міндетті ме әлде икемді ме?"),
+        t(lang, "PL_PICK_IMPORTANCE"),
         reply_markup=planned_importance_kb(lang),
     )
 
@@ -538,7 +471,7 @@ async def planned_importance(c: CallbackQuery, state: FSMContext, db: aiosqlite.
     await _render_screen(
         c,
         state,
-        "Выбери категорию." if lang == "ru" else ("Choose category." if lang == "en" else "Санатты таңдаңыз."),
+        t(lang, "PL_PICK_CATEGORY"),
         reply_markup=planned_categories_pick_kb(cats, lang),
     )
     await c.answer()
@@ -551,9 +484,7 @@ async def planned_step_importance(c: CallbackQuery, state: FSMContext, db: aiosq
     await _render_screen(
         c,
         state,
-        "Это обязательная операция или гибкая?"
-        if lang == "ru"
-        else ("Is it required or flexible?" if lang == "en" else "Бұл міндетті ме әлде икемді ме?"),
+        t(lang, "PL_PICK_IMPORTANCE"),
         reply_markup=planned_importance_kb(lang),
     )
     await c.answer()
@@ -569,7 +500,7 @@ async def planned_step_category(c: CallbackQuery, state: FSMContext, db: aiosqli
     await _render_screen(
         c,
         state,
-        "Выбери категорию." if lang == "ru" else ("Choose category." if lang == "en" else "Санатты таңдаңыз."),
+        t(lang, "PL_PICK_CATEGORY"),
         reply_markup=planned_categories_pick_kb(cats, lang),
     )
     await c.answer()
@@ -587,7 +518,7 @@ async def planned_cat(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     await _render_screen(
         c,
         state,
-        "Выбери счёт." if lang == "ru" else ("Choose account." if lang == "en" else "Шотты таңдаңыз."),
+        t(lang, "PL_PICK_ACCOUNT"),
         reply_markup=planned_accounts_pick_kb(accs, lang),
     )
     await c.answer()
@@ -601,45 +532,38 @@ async def planned_acc(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     await state.update_data(pl_account_id=aid)
     await state.set_state(PlannedFlow.date)
 
-    await _render_screen(
-        c,
-        state,
-        "Введи дату в формате YYYY-MM-DD."
-        if lang == "ru"
-        else ("Enter date in YYYY-MM-DD." if lang == "en" else "Күнді YYYY-MM-DD форматында енгізіңіз."),
-    )
-    await _show_input_prompt(c, state, "Пример: <code>2026-04-15</code>", lang)
+    await _render_screen(c, state, t(lang, "DATE_PROMPT_PLANNED"))
+    await _show_input_prompt(c, state, t(lang, "DATE_PROMPT_PLANNED"), lang)
     await c.answer()
 
 
 @router.message(PlannedFlow.date, F.text)
-async def planned_date(m: Message, state: FSMContext, db: aiosqlite.Connection):
+async def planned_date(m: Message, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
 
-    raw = (m.text or "").strip()
-    try:
-        datetime.strptime(raw, "%Y-%m-%d")
-    except Exception:
-        await m.answer("Нужна дата в формате YYYY-MM-DD.")
+    iso = parse_friendly_date(m.text)
+    if not iso:
+        await _input_error(m, state, lang, t(lang, "DATE_INVALID"))
         return
 
-    lang = await get_lang(db, m.from_user.id)
-    await state.update_data(pl_date=raw)
+    await consume_user_input(m, state)
+    await state.update_data(pl_date=iso)
     await state.set_state(PlannedFlow.comment)
-    await _show_input_prompt(m, state, "Комментарий или <code>-</code>, чтобы пропустить.", lang)
+    await _show_input_prompt(m, state, t(lang, "PL_COMMENT_HINT"), lang)
 
 
 @router.message(PlannedFlow.comment, F.text)
-async def planned_comment(m: Message, state: FSMContext, db: aiosqlite.Connection):
+async def planned_comment(m: Message, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
 
-    data = await state.get_data()
     comment = (m.text or "").strip()
     comment = None if comment == "-" else comment
+    await consume_user_input(m, state)
+    data = await state.get_data()
 
     try:
         await create_planned(
@@ -661,50 +585,51 @@ async def planned_comment(m: Message, state: FSMContext, db: aiosqlite.Connectio
         raise
 
     await _show_menu(m, state, db)
-    lang = await get_lang(db, m.from_user.id)
-    await m.answer(
-        "✅ <b>Планируемая операция сохранена</b>"
-        if lang == "ru"
-        else (
-            "✅ <b>Planned operation saved</b>"
-            if lang == "en"
-            else "✅ <b>Жоспарланған операция сақталды</b>"
-        ),
-        parse_mode=PARSE_MODE,
-    )
+    await m.answer(t(lang, "PLANNED_SAVED"), parse_mode=PARSE_MODE)
 
 
-@router.callback_query(F.data.startswith("pl:item:"))
-async def planned_item(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
-    item_id = int(c.data.split(":")[-1])
-    row = await get_planned(db, c.from_user.id, item_id)
-    lang = await get_lang(db, c.from_user.id)
-
-    if not row:
-        await c.answer("Не найдено", show_alert=True)
-        return
-
+def _planned_card_lines(row, lang: str, *, with_reminder_head: bool = False) -> list[str]:
     sign = "+" if str(row["kind"]) == "income" else "−"
-    required = "Обязательная" if int(row["is_required"] or 0) == 1 else "Гибкая"
+    type_label = t(lang, "PL_CARD_TYPE_INCOME" if str(row["kind"]) == "income" else "PL_CARD_TYPE_EXPENSE")
+    imp_label = t(
+        lang,
+        "PL_CARD_IMPORTANCE_REQUIRED" if int(row["is_required"] or 0) == 1 else "PL_CARD_IMPORTANCE_FLEXIBLE",
+    )
 
     lines = [
         f"🗓 <b>{escape(str(row['title']))}</b>",
         "",
-        f"• Тип: <b>{'Доход' if str(row['kind']) == 'income' else 'Расход'}</b>",
-        f"• Сумма: <b>{sign}{fmt_money(int(row['amount']))}</b>",
-        f"• Дата: <b>{row['planned_date']}</b>",
-        f"• Важность: <b>{required}</b>",
-        f"• Категория: <b>{escape(str(row['category_name']))}</b>",
-        f"• Счёт: <b>{escape(str(row['account_name']))}</b>",
     ]
-
+    if with_reminder_head:
+        lines.append(t(lang, "PL_REMINDER_HEAD"))
+    lines.extend(
+        [
+            t(lang, "PL_CARD_TYPE").format(value=type_label),
+            t(lang, "PL_CARD_AMOUNT").format(value=f"{sign}{fmt_money(int(row['amount']))}"),
+            t(lang, "PL_CARD_DATE").format(value=row["planned_date"]),
+            t(lang, "PL_CARD_IMPORTANCE").format(value=imp_label),
+            t(lang, "PL_CARD_CATEGORY").format(value=escape(str(row["category_name"]))),
+            t(lang, "PL_CARD_ACCOUNT").format(value=escape(str(row["account_name"]))),
+        ]
+    )
     if row["comment"]:
-        lines.append(f"• Комментарий: <b>{escape(str(row['comment']))}</b>")
+        lines.append(t(lang, "PL_CARD_COMMENT").format(value=escape(str(row["comment"]))))
+    return lines
+
+
+@router.callback_query(F.data.startswith("pl:item:"))
+async def planned_item(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
+    item_id = int(c.data.split(":")[-1])
+    row = await get_planned(db, c.from_user.id, item_id)
+
+    if not row:
+        await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
+        return
 
     await _render_screen(
         c,
         state,
-        "\n".join(lines),
+        "\n".join(_planned_card_lines(row, lang)),
         reply_markup=planned_actions_kb(item_id, bool(row["is_archived"]), lang),
     )
     await c.answer()
@@ -713,109 +638,75 @@ async def planned_item(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connec
 
 
 @router.callback_query(F.data.startswith("pl:remdetail:"))
-async def planned_reminder_detail(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+async def planned_reminder_detail(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     item_id = int(c.data.split(":")[-1])
     row = await get_planned(db, c.from_user.id, item_id)
-    lang = await get_lang(db, c.from_user.id)
 
     if not row:
-        await c.answer("Не найдено", show_alert=True)
+        await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
         return
 
-    sign = "+" if str(row["kind"]) == "income" else "−"
-    required = "Обязательная" if int(row["is_required"] or 0) == 1 else "Гибкая"
-
-    lines = [
-        f"🗓 <b>{escape(str(row['title']))}</b>",
-        "",
-        f"• Тип: <b>{'Доход' if str(row['kind']) == 'income' else 'Расход'}</b>",
-        f"• Сумма: <b>{sign}{fmt_money(int(row['amount']))}</b>",
-        f"• Дата: <b>{row['planned_date']}</b>",
-        f"• Важность: <b>{required}</b>",
-        f"• Категория: <b>{escape(str(row['category_name']))}</b>",
-        f"• Счёт: <b>{escape(str(row['account_name']))}</b>",
-    ]
-
-    if row["comment"]:
-        lines.append(f"• Комментарий: <b>{escape(str(row['comment']))}</b>")
-
-    await _render_screen(c, state, "\n".join(lines), reply_markup=planned_actions_kb(item_id, bool(row["is_archived"]), lang, back_cb=f"pl:remcard:{item_id}"))
+    await _render_screen(
+        c,
+        state,
+        "\n".join(_planned_card_lines(row, lang)),
+        reply_markup=planned_actions_kb(item_id, bool(row["is_archived"]), lang, back_cb=f"pl:remcard:{item_id}"),
+    )
     await c.answer()
 
 
 @router.callback_query(F.data.startswith("pl:remcard:"))
-async def planned_reminder_card(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+async def planned_reminder_card(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     item_id = int(c.data.split(":")[-1])
     row = await get_planned(db, c.from_user.id, item_id)
-    lang = await get_lang(db, c.from_user.id)
 
     if not row:
-        await c.answer("Не найдено", show_alert=True)
+        await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
         return
 
-    sign = "+" if str(row["kind"]) == "income" else "−"
-    required = "Обязательная" if int(row["is_required"] or 0) == 1 else "Гибкая"
-
-    lines = [
-        f"🗓 <b>{escape(str(row['title']))}</b>",
-        "",
-        ("Напоминание по планируемой операции." if lang == "ru" else ("Planned operation reminder." if lang == "en" else "Жоспарланған операция туралы еске салу.")),
-        f"• Тип: <b>{'Доход' if str(row['kind']) == 'income' else 'Расход'}</b>",
-        f"• Сумма: <b>{sign}{fmt_money(int(row['amount']))}</b>",
-        f"• Дата: <b>{row['planned_date']}</b>",
-        f"• Важность: <b>{required}</b>",
-        f"• Категория: <b>{escape(str(row['category_name']))}</b>",
-        f"• Счёт: <b>{escape(str(row['account_name']))}</b>",
-    ]
-
-    if row["comment"]:
-        lines.append(f"• Комментарий: <b>{escape(str(row['comment']))}</b>")
-
-    await _render_screen(c, state, '\n'.join(lines), reply_markup=planned_reminder_actions_kb(item_id, lang))
+    await _render_screen(
+        c,
+        state,
+        "\n".join(_planned_card_lines(row, lang, with_reminder_head=True)),
+        reply_markup=planned_reminder_actions_kb(item_id, lang),
+    )
     await c.answer()
 
 
 @router.callback_query(F.data.startswith("pl:remindsnooze:"))
-async def planned_snooze_from_reminder(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+async def planned_snooze_from_reminder(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     item_id = int(c.data.split(":")[-1])
-    tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+    today_local = (await today_in_user_tz(db, c.from_user.id)).isoformat()
     try:
-        await mark_planned_reminded(db, c.from_user.id, item_id, tomorrow)
+        await mark_planned_reminded(db, c.from_user.id, item_id, today_local)
         await db.commit()
     except Exception:
         await db.rollback()
         raise
-    lang = await get_lang(db, c.from_user.id)
-    text = (
-        "🕒 <b>Напомню завтра</b>\\nСегодня больше не трогаю эту операцию."
-        if lang == "ru" else
-        ("🕒 <b>I will remind you tomorrow</b>\\nI will not bother you about this operation again today." if lang == "en" else "🕒 <b>Ертең еске саламын</b>\\nБүгін бұл операция туралы қайта мазаламаймын.")
-    )
+    text = t(lang, "REMINDER_SNOOZED_PLANNED")
+    actions = flow_done_actions_kb(lang, list_cb="pl:list", menu_cb="hub:planning")
     try:
-        await c.message.edit_text(text, parse_mode=PARSE_MODE)
+        await c.message.edit_text(text, parse_mode=PARSE_MODE, reply_markup=actions)
     except Exception:
-        await c.message.answer(text, parse_mode=PARSE_MODE)
+        await c.message.answer(text, parse_mode=PARSE_MODE, reply_markup=actions)
     await c.answer()
 
 
 @router.callback_query(F.data.startswith("pl:remindmanual:"))
-async def planned_manual_from_reminder(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+async def planned_manual_from_reminder(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     item_id = int(c.data.split(":")[-1])
     row = await mark_planned_done(db, c.from_user.id, item_id, now_iso())
     if not row:
-        await c.answer("Не найдено", show_alert=True)
+        await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
         return
     await db.commit()
     lang = await get_lang(db, c.from_user.id)
-    text = (
-        "🔗 <b>Отмечено как уже внесённое вручную</b>\\nНовый факт не создан, операция закрыта без дубля."
-        if lang == "ru" else
-        ("🔗 <b>Marked as already added manually</b>\\nNo new record was created, the operation was closed without duplicates." if lang == "en" else "🔗 <b>Қолмен бұрын енгізілген деп белгіленді</b>\\nЖаңа жазба жасалмады, операция дубльсіз жабылды.")
-    )
+    text = t(lang, "REMINDER_MANUAL_PLANNED")
+    actions = flow_done_actions_kb(lang, list_cb="pl:list", menu_cb="hub:planning")
     try:
-        await c.message.edit_text(text, parse_mode=PARSE_MODE)
+        await c.message.edit_text(text, parse_mode=PARSE_MODE, reply_markup=actions)
     except Exception:
-        await c.message.answer(text, parse_mode=PARSE_MODE)
+        await c.message.answer(text, parse_mode=PARSE_MODE, reply_markup=actions)
     await c.answer()
 
 @router.callback_query(F.data.startswith("pl:archive:"))
@@ -836,40 +727,35 @@ async def planned_restore(c: CallbackQuery, state: FSMContext, db: aiosqlite.Con
 
 @router.callback_query(F.data.startswith("pl:move:"))
 async def planned_move(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    if not await can_use_feature(db, c.from_user.id, FEATURE_PLANNED):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     await _reset_flow_ui(c, state)
 
     item_id = int(c.data.split(":")[-1])
+    lang = await get_lang(db, c.from_user.id)
     row = await get_planned(db, c.from_user.id, item_id)
     if not row:
-        await c.answer("Не найдено", show_alert=True)
+        await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
         return
-
-    lang = await get_lang(db, c.from_user.id)
     await state.update_data(pl_move_id=item_id)
     await state.set_state(PlannedFlow.move_date)
 
-    await _render_screen(
-        c,
-        state,
-        "Введи новую дату в формате YYYY-MM-DD."
-        if lang == "ru"
-        else ("Enter new date in YYYY-MM-DD." if lang == "en" else "Жаңа күнді YYYY-MM-DD форматында енгізіңіз."),
-    )
-    await _show_input_prompt(c, state, f"Сейчас стоит: <code>{row['planned_date']}</code>", lang)
+    move_prompt = t(lang, "DATE_PROMPT_PLANNED_MOVE").format(current=row["planned_date"])
+    await _render_screen(c, state, move_prompt)
+    await _show_input_prompt(c, state, move_prompt, lang)
     await c.answer()
 
 
 @router.message(PlannedFlow.move_date, F.text)
-async def planned_move_date(m: Message, state: FSMContext, db: aiosqlite.Connection):
+async def planned_move_date(m: Message, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
 
-    raw = (m.text or "").strip()
-    try:
-        datetime.strptime(raw, "%Y-%m-%d")
-    except Exception:
-        await m.answer("Нужна дата в формате YYYY-MM-DD.")
+    iso = parse_friendly_date(m.text)
+    if not iso:
+        await _input_error(m, state, lang, t(lang, "DATE_INVALID"))
         return
 
     item_id = (await state.get_data()).get("pl_move_id")
@@ -878,23 +764,24 @@ async def planned_move_date(m: Message, state: FSMContext, db: aiosqlite.Connect
         return
 
     try:
-        await update_planned_date(db, m.from_user.id, int(item_id), raw, now_iso())
+        await update_planned_date(db, m.from_user.id, int(item_id), iso, now_iso())
         await db.commit()
     except Exception:
         await db.rollback()
         raise
 
-    await m.answer("✅ <b>Дата операции обновлена</b>", parse_mode=PARSE_MODE)
+    await consume_user_input(m, state)
+    await m.answer(t(lang, "PLANNED_DATE_UPDATED"), parse_mode=PARSE_MODE)
     await cancel_to_main_menu(m, state, db)
     return
 
 
 @router.callback_query(F.data.startswith("pl:done:"))
-async def planned_done(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+async def planned_done(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     item_id = int(c.data.split(":")[-1])
     row = await mark_planned_done(db, c.from_user.id, item_id, now_iso())
     if not row:
-        await c.answer("Не найдено", show_alert=True)
+        await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
         return
 
     amount = int(row["amount"] or 0)
@@ -911,6 +798,7 @@ async def planned_done(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connec
     await _render_screen(
         c,
         state,
-        "✅ <b>Операция проведена</b>\n\nФакт создан и перенесён в историю.",
+        t(lang, "PL_DONE_OK"),
+        reply_markup=flow_done_actions_kb(lang, list_cb="pl:list", menu_cb="hub:planning"),
     )
     await c.answer()

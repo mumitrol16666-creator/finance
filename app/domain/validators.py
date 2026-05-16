@@ -1,13 +1,39 @@
 import re
+from datetime import datetime
+
+from app.domain.money import parse_money
+
+
+DATE_OUT_FMT = "%Y-%m-%d"
+_DATE_INPUT_FORMATS = ("%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%Y.%m.%d", "%Y/%m/%d")
+
+
+def parse_friendly_date(text: str | None) -> str | None:
+    """Accept human dates in several common formats and return ISO ``YYYY-MM-DD``.
+
+    Supported inputs: ``25.03.2026``, ``25-03-2026``, ``25/03/2026``,
+    ``2026-03-25``, ``2026.03.25``, ``2026/03/25``. Returns ``None`` on
+    anything we couldn't recognise — callers decide how to react.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    for fmt in _DATE_INPUT_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt).strftime(DATE_OUT_FMT)
+        except Exception:
+            pass
+    return None
+
 
 def parse_positive_int(text: str, max_value: int = 9_999_999) -> int | None:
-    t = text.strip().replace(" ", "")
-    if not t.isdigit():
-        return None
-    v = int(t)
-    if v <= 0 or v > max_value:
-        return None
-    return v
+    """Legacy entry point — delegates to ``parse_money``.
+
+    Kept so existing handlers keep working unchanged; new handlers should call
+    ``parse_money(text, currency=user_currency)`` directly so cents/тиын
+    are supported per-user.
+    """
+    return parse_money(text, currency="KZT", max_minor=max_value)
 
 def parse_hhmm(text: str) -> str | None:
     t = text.strip()

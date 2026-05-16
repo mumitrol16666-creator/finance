@@ -90,11 +90,29 @@ async def set_mode(db: aiosqlite.Connection, user_id: int, mode: str):
 
 
 async def grant_full_access(db: aiosqlite.Connection, user_id: int, days: int = 90):
-    from datetime import datetime, timedelta, timezone
-    until = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
+    from datetime import datetime, timedelta, timezone, date
+    
+    # Get current state
+    cur = await db.execute("SELECT full_access_until FROM users WHERE user_id=?", (user_id,))
+    row = await cur.fetchone()
+    
+    now = datetime.now(timezone.utc)
+    base_date = now.date()
+    
+    if row and row[0]:
+        try:
+            current_until = date.fromisoformat(row[0])
+            if current_until > base_date:
+                base_date = current_until
+        except Exception:
+            pass
+            
+    until_date = base_date + timedelta(days=days)
+    until_str = until_date.strftime("%Y-%m-%d")
+    
     await db.execute(
         "UPDATE users SET full_access=1, mode='full', full_access_until=? WHERE user_id=?",
-        (until, user_id),
+        (until_str, user_id),
     )
 
 

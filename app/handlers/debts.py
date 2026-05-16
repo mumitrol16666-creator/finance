@@ -28,10 +28,10 @@ from app.db.repositories.debts_repo import (
 from app.domain.services.accounting_service import add_expense, add_income
 from app.fsm.debt_states import DebtAdd, DebtPay
 from app.ui.formatters import fmt_money
-from app.ui.keyboards import cancel_kb, debts_menu_kb, main_menu, debt_reminders_settings_kb
-from app.ui.i18n import text_matches_key
+from app.ui.keyboards import cancel_kb, debts_menu_kb, flow_done_actions_kb, inline_cancel_kb, main_menu, debt_reminders_settings_kb
+from app.ui.i18n import text_matches_key, t as _i18n_t
 from app.db.repositories.settings_repo import get_lang
-from app.handlers.common import deny_feature_message,  cancel_to_main_menu, is_cancel_text
+from app.handlers.common import deny_feature_message,  cancel_to_main_menu, is_cancel_text, neutralize_keyboard
 from app.domain.services.ai_consultant_service import build_section_hint
 
 router = Router()
@@ -48,7 +48,18 @@ def _is_cancel(text: str | None) -> bool:
 
 
 def _today() -> date:
+    """Legacy default; prefer ``await _today_for_user(db, user_id)`` in handlers.
+
+    Kept synchronous so existing helpers that just need a *baseline* date
+    (e.g. parsing default values) keep working. Anything that should respect
+    the user's timezone should use ``today_in_user_tz`` directly.
+    """
     return date.today()
+
+
+async def _today_for_user(db, user_id: int) -> date:
+    from app.domain.time_utils import today_in_user_tz
+    return await today_in_user_tz(db, user_id)
 
 
 def _date_human(ymd: str | None) -> str:
@@ -60,6 +71,17 @@ def _date_human(ymd: str | None) -> str:
         return ymd
 
 
+def _draw_progress_bar(remaining: int, total: int, width: int = 10) -> str:
+    if total <= 0:
+        return ""
+    # Progress is how much we ALREADY PAID
+    paid = max(0, total - remaining)
+    percent = min(100, int((paid / total) * 100))
+    filled = int((percent / 100) * width)
+    bar = "█" * filled + "░" * (width - filled)
+    return f"<code>{bar}</code> {percent}%"
+
+
 def _status_label(status: str) -> str:
     return {
         "active": "🟢 Активен",
@@ -68,31 +90,19 @@ def _status_label(status: str) -> str:
     }.get(status, "🟢 Активен")
 
 
-def _parse_money(text: str | None) -> int | None:
-    raw = (text or "").strip().replace(" ", "")
-    if not raw:
-        return None
-    if raw.startswith("+"):
-        raw = raw[1:]
-    if not raw.isdigit():
-        return None
-    value = int(raw)
-    if value < 0:
-        return None
-    return value
+async def _parse_money(db, user_id: int, text: str | None) -> int | None:
+    """Parse amount using the user's currency scale.
+
+    Backward-compatible name; now async so we can fetch the user's currency.
+    Returns minor units (1 KZT == 1, 1 USD == 100).
+    """
+    from app.domain.money import parse_money_for_user
+    return await parse_money_for_user(db, user_id, text)
 
 
 def _parse_friendly_date(text: str | None) -> str | None:
-    raw = (text or "").strip()
-    if not raw:
-        return None
-
-    for fmt in ("%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(raw, fmt).strftime(DATE_FMT)
-        except Exception:
-            pass
-    return None
+    from app.domain.validators import parse_friendly_date
+    return parse_friendly_date(text)
 
 
 def _normalize_row(row) -> dict:
@@ -149,11 +159,16 @@ def _account_pick_text(direction: str) -> str:
 
 def _debt_card_text(debt: dict) -> str:
     status_text = _status_label(debt.get("status", "active"))
+    total = int(debt.get("total_amount") or 0)
+    remaining = int(debt.get("remaining_amount") or 0)
+    progress_bar = _draw_progress_bar(remaining, total)
+    
     return (
         f"<b>{debt['title']}</b>\n"
+        f"{progress_bar}\n\n"
         f"{_direction_label(debt['direction'])} • {_dtype_label(debt['dtype'])}\n"
         f"Статус: <b>{status_text}</b>\n\n"
-        f"Остаток: <b>{fmt_money(int(debt.get('remaining_amount') or 0))}</b>\n"
+        f"Остаток: <b>{fmt_money(remaining)}</b> из <b>{fmt_money(total)}</b>\n"
         f"{_pay_label(debt['direction'], debt['dtype'])}: "
         f"<b>{fmt_money(int(debt.get('payment_amount') or 0))}</b>\n"
         f"{_due_label(debt['direction'], debt['dtype'])}: "
@@ -180,7 +195,7 @@ async def _menu_screen_text(db: aiosqlite.Connection, user_id: int, lang: str = 
     summary = await debts_summary(db, user_id)
     return _menu_summary_text(summary) + await build_section_hint(db, user_id, "debts", lang)
 
-def _confirm_add_text(data: dict) -> str:
+def _confirm_add_text(data: dict, lang: str = "ru") -> str:
     direction = data.get("direction")
     dtype = data.get("dtype")
     title = data.get("title") or "—"
@@ -237,7 +252,8 @@ def _debt_list_kb(rows: list, direction: str):
 
     for row in rows:
         debt = _normalize_row(row)
-        rem = fmt_money(int(debt.get("remaining_amount") or 0))
+        rem_val = int(debt.get("remaining_amount") or 0)
+        rem_str = fmt_money(rem_val)
         title = debt["title"]
         status = debt.get("status")
 
@@ -247,13 +263,21 @@ def _debt_list_kb(rows: list, direction: str):
         elif status == "due_today":
             prefix = "🟡 "
 
-        label = f"{prefix}{title} · {rem}"
+        total = int(debt.get("total_amount") or 0)
+        if total <= 0:
+            total = rem_val
+
+        percent = 0
+        if total > 0:
+            percent = min(100, int(((total - rem_val) / total) * 100))
+
+        label = f"{prefix}{title} · {percent}% · {rem_str}"
         if len(label) > 46:
             label = label[:43] + "..."
 
         kb.button(text=label, callback_data=f"debt:open:{debt['id']}:{direction}")
 
-    kb.button(text="➕ Добавить", callback_data=f"debt:add:{direction}")
+    kb.button(text="➕ Добавить", callback_data="debt:add")
     kb.button(text="⬅️ Назад", callback_data="debt:menu")
     kb.adjust(1)
     return kb.as_markup()
@@ -318,10 +342,10 @@ def _due_date_kb(direction: str, dtype: str):
     return kb.as_markup()
 
 
-def _confirm_add_kb():
+def _confirm_add_kb(lang: str = "ru"):
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Сохранить", callback_data="debt:add:save")
-    kb.button(text="❌ Отмена", callback_data="debt:menu")
+    kb.button(text=_i18n_t(lang, "BTN_SAVE"), callback_data="debt:add:save")
+    kb.button(text=_i18n_t(lang, "BTN_CANCEL"), callback_data="debt:menu")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -457,6 +481,64 @@ async def _enter_chat_mode(
     return sent
 
 
+async def _delete_debt_message(bot, chat_id: int, message_id: int | None):
+    if not message_id:
+        return
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=int(message_id))
+    except Exception:
+        pass
+
+
+async def _debt_input_step(
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    text: str,
+    lang: str,
+):
+    """Send a fresh text-input prompt for the debts flow. Deletes the
+    previous prompt entirely (not just its markup) so the chat doesn't
+    accumulate orphan ask-screens, and attaches an inline Cancel button."""
+    if isinstance(target, CallbackQuery):
+        bot = target.bot
+        chat_id = target.message.chat.id
+        send = target.message.answer
+    else:
+        bot = target.bot
+        chat_id = target.chat.id
+        send = target.answer
+    data = await state.get_data()
+    await _delete_debt_message(bot, chat_id, data.get("debt_screen_msg_id"))
+    sent = await send(text, reply_markup=inline_cancel_kb(lang), parse_mode="HTML")
+    await _remember_debt_screen(state, sent)
+    return sent
+
+
+async def _debt_input_error(m: Message, state: FSMContext, lang: str, text: str):
+    """Validation error: drop the bad user input and rewrite the current
+    prompt in place. Falls back to a new prompt if editing fails."""
+    try:
+        await m.delete()
+    except Exception:
+        pass
+    data = await state.get_data()
+    msg_id = data.get("debt_screen_msg_id")
+    if msg_id:
+        try:
+            await m.bot.edit_message_text(
+                chat_id=m.chat.id,
+                message_id=int(msg_id),
+                text=text,
+                reply_markup=inline_cancel_kb(lang),
+                parse_mode="HTML",
+            )
+            return
+        except Exception:
+            pass
+    sent = await m.answer(text, reply_markup=inline_cancel_kb(lang), parse_mode="HTML")
+    await _remember_debt_screen(state, sent)
+
+
 # =========================================================
 # Domain helpers
 # =========================================================
@@ -557,9 +639,6 @@ async def _get_operation_category_id(
 
 @router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_DEBTS"))
 async def debts_entry(m: Message, db: aiosqlite.Connection, state: FSMContext):
-    if not await can_use_feature(db, m.from_user.id, FEATURE_DEBTS):
-        await deny_feature_message(m, db, m.from_user.id)
-        return
     await state.clear()
     lang = await get_lang(db, m.from_user.id)
 
@@ -610,17 +689,21 @@ async def debts_settings(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conn
 
 @router.callback_query(F.data == "debt:settings:toggle")
 async def debts_settings_toggle(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    from app.domain.time_utils import now_in_user_tz
     enabled, days_before = await get_debt_settings(db, c.from_user.id)
-    await update_debt_settings(db, c.from_user.id, 0 if enabled else 1, days_before, datetime.now().isoformat())
+    now_iso = (await now_in_user_tz(db, c.from_user.id)).isoformat()
+    await update_debt_settings(db, c.from_user.id, 0 if enabled else 1, days_before, now_iso)
     await db.commit()
     await debts_settings(c, state, db)
 
 
 @router.callback_query(F.data.startswith("debt:settings:days:"))
 async def debts_settings_days(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    from app.domain.time_utils import now_in_user_tz
     days = int(c.data.split(":")[-1])
     enabled, _days_before = await get_debt_settings(db, c.from_user.id)
-    await update_debt_settings(db, c.from_user.id, enabled, days, datetime.now().isoformat())
+    now_iso = (await now_in_user_tz(db, c.from_user.id)).isoformat()
+    await update_debt_settings(db, c.from_user.id, enabled, days, now_iso)
     await db.commit()
     await debts_settings(c, state, db)
 
@@ -630,29 +713,34 @@ async def debts_settings_days(c: CallbackQuery, state: FSMContext, db: aiosqlite
 # =========================================================
 
 @router.callback_query(F.data == "debt:add")
-async def debt_add_start(c: CallbackQuery, state: FSMContext):
+async def debt_add_start(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    if not await can_use_feature(db, c.from_user.id, FEATURE_DEBTS):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     await state.clear()
     await state.set_state(DebtAdd.direction)
     logger.debug("Starting debt add flow for user %s", c.from_user.id)
+    lang = await get_lang(db, c.from_user.id)
     await _edit_debt_screen(
         c,
         state,
-        "Создаём запись 👇\n\nВыбери, что это:",
+        _i18n_t(lang, "DEBT_ADD_PICK_KIND"),
         _direction_kb(),
     )
     await c.answer()
 
 
 @router.callback_query(F.data.startswith("debt:adddir:"))
-async def debt_add_direction(c: CallbackQuery, state: FSMContext):
+async def debt_add_direction(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     direction = c.data.split(":")[-1]
     await state.update_data(direction=direction)
     await state.set_state(DebtAdd.dtype)
 
+    lang = await get_lang(db, c.from_user.id)
     await _edit_debt_screen(
         c,
         state,
-        "Что именно это?\n\nВыбери вариант 👇",
+        _i18n_t(lang, "DEBT_ADD_PICK_TYPE"),
         _type_kb(direction),
     )
     await c.answer()
@@ -678,24 +766,15 @@ async def debt_add_type(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conne
     await state.update_data(dtype=dtype)
     await state.set_state(DebtAdd.title)
 
-    if dtype == "bank":
-        prompt = (
-            "Как назвать кредит?\n\n"
-            "Например:\n"
-            "<b>Kaspi кредит</b>\n\n"
-            "Напиши так, как тебе будет понятно в списке."
-        )
-    else:
-        example = "Ильяс" if direction == "out" else "Руслан"
-        prompt = (
-            "Кто это?\n\n"
-            "Например:\n"
-            f"<b>{example}</b>\n\n"
-            "Можно написать имя или короткое описание."
-        )
-
     lang = await get_lang(db, c.from_user.id)
-    await _enter_chat_mode(c, state, prompt, reply_markup=cancel_kb(lang))
+    if dtype == "bank":
+        prompt = _i18n_t(lang, "DEBT_ADD_TITLE_BANK")
+    elif direction == "out":
+        prompt = _i18n_t(lang, "DEBT_ADD_TITLE_OUT")
+    else:
+        prompt = _i18n_t(lang, "DEBT_ADD_TITLE_IN")
+
+    await _debt_input_step(c, state, prompt, lang)
     await c.answer()
 
 
@@ -705,27 +784,21 @@ async def debt_add_title(m: Message, state: FSMContext, db: aiosqlite.Connection
         await cancel_to_main_menu(m, state, db)
         return
 
+    lang = await get_lang(db, m.from_user.id)
     title = (m.text or "").strip()
     if len(title) < 2:
-        lang = await get_lang(db, m.from_user.id)
-        await m.answer(
-            "Слишком коротко.\n\nНапиши имя, банк или понятную пометку.",
-            reply_markup=cancel_kb(lang),
-        )
+        await _debt_input_error(m, state, lang, _i18n_t(lang, "DEBT_ADD_TITLE_SHORT"))
         return
+
+    try:
+        await m.delete()
+    except Exception:
+        pass
 
     await state.update_data(title=title)
     await state.set_state(DebtAdd.remaining)
 
-    lang = await get_lang(db, m.from_user.id)
-    await _enter_chat_mode(
-        m,
-        state,
-        "Сколько осталось по этому долгу?\n\n"
-        "Напиши сумму цифрами.\n"
-        "Например: <b>250000</b>",
-        reply_markup=cancel_kb(lang),
-    )
+    await _debt_input_step(m, state, _i18n_t(lang, "DEBT_ADD_REMAINING"), lang)
 
 
 @router.message(DebtAdd.remaining, F.text)
@@ -734,15 +807,16 @@ async def debt_add_remaining(m: Message, state: FSMContext, db: aiosqlite.Connec
         await cancel_to_main_menu(m, state, db)
         return
 
-    remaining = _parse_money(m.text)
+    lang = await get_lang(db, m.from_user.id)
+    remaining = await _parse_money(db, m.from_user.id, m.text)
     if remaining is None or remaining <= 0:
-        lang = await get_lang(db, m.from_user.id)
-        await m.answer(
-            "Нужна сумма больше 0.\n\nПример: <b>250000</b>",
-            reply_markup=cancel_kb(lang),
-            parse_mode="HTML",
-        )
+        await _debt_input_error(m, state, lang, _i18n_t(lang, "AMOUNT_INVALID"))
         return
+
+    try:
+        await m.delete()
+    except Exception:
+        pass
 
     data = await state.get_data()
     direction = data["direction"]
@@ -752,23 +826,13 @@ async def debt_add_remaining(m: Message, state: FSMContext, db: aiosqlite.Connec
     await state.set_state(DebtAdd.payment)
 
     if direction == "out" and dtype == "bank":
-        prompt = (
-            "Сколько платишь в месяц?\n\n"
-            "Напиши сумму цифрами."
-        )
+        prompt = _i18n_t(lang, "DEBT_ADD_PAYMENT_BANK")
     elif direction == "out":
-        prompt = (
-            "Сколько обычно отдаёшь за раз?\n\n"
-            "Если сумма каждый раз разная — напиши <b>0</b>."
-        )
+        prompt = _i18n_t(lang, "DEBT_ADD_PAYMENT_OUT")
     else:
-        prompt = (
-            "Сколько обычно тебе возвращают за раз?\n\n"
-            "Если фиксированной суммы нет — напиши <b>0</b>."
-        )
+        prompt = _i18n_t(lang, "DEBT_ADD_PAYMENT_IN")
 
-    lang = await get_lang(db, m.from_user.id)
-    await _enter_chat_mode(m, state, prompt, reply_markup=cancel_kb(lang))
+    await _debt_input_step(m, state, prompt, lang)
 
 
 @router.message(DebtAdd.payment, F.text)
@@ -777,14 +841,10 @@ async def debt_add_payment(m: Message, state: FSMContext, db: aiosqlite.Connecti
         await cancel_to_main_menu(m, state, db)
         return
 
-    payment = _parse_money(m.text)
+    lang = await get_lang(db, m.from_user.id)
+    payment = await _parse_money(db, m.from_user.id, m.text)
     if payment is None:
-        lang = await get_lang(db, m.from_user.id)
-        await m.answer(
-            "Нужны только цифры.\n\nПример: <b>20000</b>",
-            reply_markup=cancel_kb(lang),
-            parse_mode="HTML",
-        )
+        await _debt_input_error(m, state, lang, _i18n_t(lang, "AMOUNT_INVALID"))
         return
 
     data = await state.get_data()
@@ -792,38 +852,40 @@ async def debt_add_payment(m: Message, state: FSMContext, db: aiosqlite.Connecti
     dtype = data["dtype"]
 
     if direction == "out" and dtype == "bank" and payment <= 0:
-        lang = await get_lang(db, m.from_user.id)
-        await m.answer(
-            "Для кредита платёж должен быть больше 0.",
-            reply_markup=cancel_kb(lang),
-        )
+        await _debt_input_error(m, state, lang, _i18n_t(lang, "DEBT_ADD_PAYMENT_BANK_REQUIRED"))
         return
+
+    try:
+        await m.delete()
+    except Exception:
+        pass
 
     await state.update_data(payment_amount=payment)
     await state.set_state(DebtAdd.confirm)
 
     if direction == "out" and dtype == "bank":
-        text = "Когда следующий платёж?"
+        text = _i18n_t(lang, "DEBT_ADD_DATE_BANK")
     elif direction == "out":
-        text = "Когда напомнить про этот долг?"
+        text = _i18n_t(lang, "DEBT_ADD_DATE_OUT")
     else:
-        text = "Когда ждёшь возврат?"
+        text = _i18n_t(lang, "DEBT_ADD_DATE_IN")
 
     await _enter_chat_mode(m, state, text, reply_markup=_due_date_kb(direction, dtype))
 
 
 @router.callback_query(F.data == "debt:due:none", DebtAdd.confirm)
-async def debt_due_none(c: CallbackQuery, state: FSMContext):
+async def debt_due_none(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     data = await state.get_data()
+    lang = await get_lang(db, c.from_user.id)
 
     if data["direction"] == "out" and data["dtype"] == "bank":
-        await c.answer("Для кредита дата обязательна.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_ADD_DATE_BANK_REQUIRED_TOAST"), show_alert=True)
         return
 
     await state.update_data(next_payment_date=None)
     data = await state.get_data()
 
-    await _edit_debt_screen(c, state, _confirm_add_text(data), _confirm_add_kb())
+    await _edit_debt_screen(c, state, _confirm_add_text(data, lang), _confirm_add_kb(lang))
     await c.answer()
 
 
@@ -831,20 +893,12 @@ async def debt_due_none(c: CallbackQuery, state: FSMContext):
 async def debt_due_custom(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     await state.set_state(DebtAdd.custom_due_date)
     lang = await get_lang(db, c.from_user.id)
-    await _enter_chat_mode(
-        c,
-        state,
-        "Введи дату 👇\n\n"
-        "<b>25.03.2026</b>\n"
-        "или\n"
-        "<code>2026-03-25</code>",
-        reply_markup=cancel_kb(lang),
-    )
+    await _debt_input_step(c, state, _i18n_t(lang, "DEBT_ADD_DATE_PROMPT"), lang)
     await c.answer()
 
 
 @router.callback_query(F.data.startswith("debt:due:"), DebtAdd.confirm)
-async def debt_due_quick(c: CallbackQuery, state: FSMContext):
+async def debt_due_quick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     ymd = c.data.split(":", 2)[-1]
     if ymd in {"custom", "none"}:
         await c.answer()
@@ -852,8 +906,9 @@ async def debt_due_quick(c: CallbackQuery, state: FSMContext):
 
     await state.update_data(next_payment_date=ymd)
     data = await state.get_data()
+    lang = await get_lang(db, c.from_user.id)
 
-    await _edit_debt_screen(c, state, _confirm_add_text(data), _confirm_add_kb())
+    await _edit_debt_screen(c, state, _confirm_add_text(data, lang), _confirm_add_kb(lang))
     await c.answer()
 
 
@@ -863,26 +918,22 @@ async def debt_due_custom_save(m: Message, state: FSMContext, db: aiosqlite.Conn
         await cancel_to_main_menu(m, state, db)
         return
 
+    lang = await get_lang(db, m.from_user.id)
     ymd = _parse_friendly_date(m.text)
     data = await state.get_data()
 
     if not ymd and data["direction"] == "out" and data["dtype"] == "bank":
-        lang = await get_lang(db, m.from_user.id)
-        await m.answer(
-            "Для кредита дата обязательна.\n\nФормат: <b>25.03.2026</b>",
-            reply_markup=cancel_kb(lang),
-            parse_mode="HTML",
-        )
+        await _debt_input_error(m, state, lang, _i18n_t(lang, "DEBT_ADD_DATE_BANK_REQUIRED"))
         return
 
     if not ymd and (m.text or "").strip().lower() not in {"0", "-", "нет"}:
-        lang = await get_lang(db, m.from_user.id)
-        await m.answer(
-            "Не понял дату.\n\nНапиши так: <b>25.03.2026</b>",
-            reply_markup=cancel_kb(lang),
-            parse_mode="HTML",
-        )
+        await _debt_input_error(m, state, lang, _i18n_t(lang, "DEBT_ADD_DATE_INVALID"))
         return
+
+    try:
+        await m.delete()
+    except Exception:
+        pass
 
     await state.update_data(next_payment_date=ymd)
     await state.set_state(DebtAdd.confirm)
@@ -891,20 +942,22 @@ async def debt_due_custom_save(m: Message, state: FSMContext, db: aiosqlite.Conn
     await _enter_chat_mode(
         m,
         state,
-        _confirm_add_text(data),
-        reply_markup=_confirm_add_kb(),
+        _confirm_add_text(data, lang),
+        reply_markup=_confirm_add_kb(lang),
     )
 
 
 @router.callback_query(F.data == "debt:add:save")
 async def debt_add_save(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
     data = await state.get_data()
     if not data:
-        await c.answer("Сессия устарела.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_SESSION_EXPIRED"), show_alert=True)
         return
+    await neutralize_keyboard(c)
 
     if data["direction"] == "out" and data["dtype"] == "bank" and not data.get("next_payment_date"):
-        await c.answer("Для кредита нужна дата платежа.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_DATE_REQUIRED_FOR_CREDIT"), show_alert=True)
         return
 
     await add_debt(
@@ -924,10 +977,8 @@ async def debt_add_save(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conne
     await _edit_debt_screen(
         c,
         state,
-        "✅ <b>Запись добавлена</b>\n\n"
-        "Долг сохранён. Вот актуальная сводка:\n\n"
-        + _menu_summary_text(summary),
-        debts_menu_kb(),
+        _i18n_t(lang, "DEBT_ADD_SAVED") + _menu_summary_text(summary),
+        debts_menu_kb(lang),
     )
     await c.answer()
 
@@ -1074,6 +1125,8 @@ async def debt_pay_start(c: CallbackQuery, db: aiosqlite.Connection, state: FSMC
 @router.callback_query(F.data.startswith("debt:paysum:"), DebtPay.amount)
 async def debt_pay_amount_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     amount_raw = c.data.split(":")[-1]
+    if amount_raw != "custom":
+        await neutralize_keyboard(c)
     data = await state.get_data()
     debt_id = int(data["pay_debt_id"])
 
@@ -1087,11 +1140,11 @@ async def debt_pay_amount_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
 
     if amount_raw == "custom":
         lang = await get_lang(db, c.from_user.id)
-        await _enter_chat_mode(
+        await _debt_input_step(
             c,
             state,
             "Введи сумму цифрами.\n\nПример: <b>25000</b>",
-            reply_markup=cancel_kb(lang),
+            lang,
         )
         await c.answer()
         return
@@ -1121,15 +1174,16 @@ async def debt_pay_amount_custom(m: Message, state: FSMContext, db: aiosqlite.Co
         await cancel_to_main_menu(m, state, db)
         return
 
-    amount = _parse_money(m.text)
+    lang = await get_lang(db, m.from_user.id)
+    amount = await _parse_money(db, m.from_user.id, m.text)
     if amount is None or amount <= 0:
-        lang = await get_lang(db, m.from_user.id)
-        await m.answer(
-            "Нужна сумма больше 0.\n\nПример: <b>25000</b>",
-            reply_markup=cancel_kb(lang),
-            parse_mode="HTML",
-        )
+        await _debt_input_error(m, state, lang, _i18n_t(lang, "AMOUNT_INVALID"))
         return
+
+    try:
+        await m.delete()
+    except Exception:
+        pass
 
     data = await state.get_data()
     debt_id = int(data["pay_debt_id"])
@@ -1249,4 +1303,18 @@ async def debt_pick_account(c: CallbackQuery, db: aiosqlite.Connection, state: F
         reply_markup=await build_main_menu_markup(db, c.from_user.id, await get_lang(db, c.from_user.id)),
         parse_mode="HTML",
     )
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("debt:remindsnooze:"))
+async def debt_reminder_snooze(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext):
+    lang = await get_lang(db, c.from_user.id)
+    # The reminder is already marked as sent for today in the scheduler logic
+    # so we just show a confirmation.
+    text = _i18n_t(lang, "REMINDER_SNOOZED_DEBT") or "Окей, напомню завтра!"
+    actions = flow_done_actions_kb(lang, list_cb="debt:menu", menu_cb="hub:main")
+    try:
+        await c.message.edit_text(text, parse_mode="HTML", reply_markup=actions)
+    except Exception:
+        await c.message.answer(text, parse_mode="HTML", reply_markup=actions)
     await c.answer()

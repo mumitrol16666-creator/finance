@@ -13,6 +13,7 @@ class ExpenseFlow(StatesGroup):
     note = State()
     confirm = State()
     confirm_overdraft = State()
+    add_category = State()
 
 
 class IncomeFlow(StatesGroup):
@@ -22,6 +23,7 @@ class IncomeFlow(StatesGroup):
     need_note = State()
     note = State()
     confirm = State()
+    add_category = State()
 
 class TransferFlow(StatesGroup):
     amount = State()
@@ -43,6 +45,8 @@ class SettingsFlow(StatesGroup):
     archived_pick = State()
     add_name = State()
     add_balance = State()
+    add_currency = State()
+    add_type = State()
 
 
 class QuickAddFlow(StatesGroup):
@@ -50,6 +54,7 @@ class QuickAddFlow(StatesGroup):
     pick_type = State()
     edit_amount = State()
     new_cat_name = State()
+    batch_confirm = State()
 
 class CategoriesFlow(StatesGroup):
     add_name = State()

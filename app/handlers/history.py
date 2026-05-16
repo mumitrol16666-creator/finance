@@ -16,7 +16,7 @@ from app.db.repositories.tx_repo import delete_tx, list_last
 from app.ui.formatters import fmt_money
 from app.ui.i18n import text_matches_key
 from app.ui.keyboards import cancel_kb
-from app.handlers.common import build_main_menu_markup
+from app.handlers.common import build_main_menu_markup, neutralize_keyboard
 
 router = Router()
 PARSE_MODE = "HTML"
@@ -197,7 +197,7 @@ def _history_kb(lang: str, rows: list[tuple], offset: int) -> InlineKeyboardMark
     for text, cb in nav:
         kb.button(text=text, callback_data=cb)
     kb.button(text=L["refresh"], callback_data=f"hist:page:{offset}")
-    kb.button(text=L["back"], callback_data="hub:more")
+    kb.button(text=L["back"], callback_data="rp:hub")
     kb.adjust(*([1] * len(rows)), len(nav) if nav else 1, 2)
     return kb.as_markup()
 
@@ -221,7 +221,16 @@ async def _safe_edit_text(msg: Message, text: str, *, reply_markup=None) -> bool
         return False
 
 
-async def _render_history(target: Message | CallbackQuery, db: aiosqlite.Connection, user_id: int, *, offset: int = 0, prefer_edit: bool = False, state: FSMContext | None = None):
+async def _render_history(
+    target: Message | CallbackQuery,
+    db: aiosqlite.Connection,
+    user_id: int,
+    *,
+    offset: int = 0,
+    prefer_edit: bool = False,
+    state: FSMContext | None = None,
+    already_answered: bool = False,
+):
     rows = await list_last(db, user_id, PAGE_SIZE + offset)
     rows = rows[offset: offset + PAGE_SIZE] if offset > 0 else rows[:PAGE_SIZE]
     lang = await get_lang(db, user_id)
@@ -237,7 +246,11 @@ async def _render_history(target: Message | CallbackQuery, db: aiosqlite.Connect
         else:
             if state is not None:
                 await state.update_data(flow_message_id=target.message.message_id, ui_scope="history")
-        await target.answer()
+        if not already_answered:
+            try:
+                await target.answer()
+            except Exception:
+                pass
         return
 
     sent = await target.answer(text, reply_markup=kb, parse_mode=PARSE_MODE)
@@ -325,6 +338,7 @@ async def hist_del(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext
     _, _, tx_id, offset = (c.data or "").split(":")
     tx_id = int(tx_id)
     offset = int(offset)
+    await neutralize_keyboard(c)
     lang = await get_lang(db, c.from_user.id)
     L = _L(lang)
     try:
@@ -344,4 +358,5 @@ async def hist_del(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext
     remain = rows[offset: offset + PAGE_SIZE]
     if offset > 0 and not remain:
         offset = max(0, offset - PAGE_SIZE)
-    await _render_history(c, db, c.from_user.id, offset=offset, prefer_edit=True, state=state)
+    # Callback already answered above (deleted_alert) — don't answer twice.
+    await _render_history(c, db, c.from_user.id, offset=offset, prefer_edit=True, state=state, already_answered=True)
