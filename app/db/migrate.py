@@ -7,8 +7,15 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 async def _apply_sql_migration(db: aiosqlite.Connection, file: Path) -> None:
+    import sqlite3
     sql = file.read_text(encoding="utf-8")
-    await db.executescript(sql)
+    try:
+        await db.executescript(sql)
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e).lower():
+            # Это нормально, если миграция прервалась или колонка добавлена вручную
+            return
+        raise e
 
 
 async def _apply_py_migration(db: aiosqlite.Connection, file: Path) -> None:
