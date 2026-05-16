@@ -3,16 +3,16 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from app.ui.i18n import t
 
 
-def newbie_menu(lang: str = "ru") -> ReplyKeyboardMarkup:
-    return main_menu(lang, show_reports=False, show_planning=False, show_settings=True, show_upgrade=True)
+def newbie_menu(lang: str = "ru", days_left: int | None = None) -> ReplyKeyboardMarkup:
+    return main_menu(lang, show_reports=False, show_planning=False, show_settings=True, show_upgrade=True, days_left=days_left)
 
 
-def newbie_menu_level2(lang: str = "ru") -> ReplyKeyboardMarkup:
-    return main_menu(lang, show_reports=True, show_planning=False, show_settings=True, show_upgrade=True)
+def newbie_menu_level2(lang: str = "ru", days_left: int | None = None) -> ReplyKeyboardMarkup:
+    return main_menu(lang, show_reports=True, show_planning=False, show_settings=True, show_upgrade=True, days_left=days_left)
 
 
-def full_menu(lang: str = "ru") -> ReplyKeyboardMarkup:
-    return main_menu(lang, show_reports=True, show_planning=True, show_settings=True, show_upgrade=False)
+def full_menu(lang: str = "ru", days_left: int | None = None) -> ReplyKeyboardMarkup:
+    return main_menu(lang, show_reports=True, show_planning=True, show_settings=True, show_upgrade=False, days_left=days_left)
 
 
 def main_menu(
@@ -22,6 +22,7 @@ def main_menu(
     show_planning: bool = False,
     show_settings: bool = False,
     show_upgrade: bool = False,
+    days_left: int | None = None,
 ) -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardBuilder()
     button_order = [
@@ -38,13 +39,31 @@ def main_menu(
 
     for key in button_order:
         kb.add(KeyboardButton(text=t(lang, key)))
-    if show_upgrade:
+    
+    # Subscription status button
+    if days_left is not None:
+        if days_left > 0:
+            if lang == "en":
+                status_text = f"🌟 Full Mode ({days_left}d)"
+            elif lang == "kk":
+                status_text = f"🌟 Толық режим ({days_left} күн)"
+            else:
+                status_text = f"🌟 Полный режим ({days_left} дн.)"
+        else:
+            if lang == "en":
+                status_text = "💎 Upgrade / Renew"
+            elif lang == "kk":
+                status_text = "💎 Жаңарту / Продлить"
+            else:
+                status_text = "💎 Продлить подписку"
+        kb.add(KeyboardButton(text=status_text))
+    elif show_upgrade:
         kb.add(KeyboardButton(text=t(lang, "BTN_UPGRADE_FULL")))
 
     rows = [2] * (len(button_order) // 2)
     if len(button_order) % 2:
         rows.append(1)
-    if show_upgrade:
+    if show_upgrade or days_left is not None:
         rows.append(1)
     kb.adjust(*rows)
     return kb.as_markup(resize_keyboard=True)
@@ -53,6 +72,49 @@ def main_menu(
 def cancel_kb(lang: str = "ru") -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardBuilder()
     kb.add(KeyboardButton(text=t(lang, "BTN_CANCEL")))
+    return kb.as_markup(resize_keyboard=True)
+
+
+def inline_cancel_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    """Single inline cancel button attached to any prompt that expects text
+    input. Lets the user bail out without scrolling back to the reply keyboard.
+    All flows share the ``flow:cancel`` callback handler (see common.py)."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text=t(lang, "BTN_CANCEL"), callback_data="flow:cancel")
+    return kb.as_markup()
+
+
+def flow_done_actions_kb(
+    lang: str = "ru",
+    *,
+    list_cb: str | None = None,
+    menu_cb: str = "hub:planning",
+) -> InlineKeyboardMarkup:
+    """Compact ``[📋 List] [🏠 Menu]`` keyboard shown after we finalize a
+    planning flow (done / paid / received / snooze / manual). Without it the
+    user is left on a bare message with no obvious next step."""
+    kb = InlineKeyboardBuilder()
+    if list_cb:
+        if lang == "en":
+            list_label = "📋 List"
+        elif lang == "kk":
+            list_label = "📋 Тізім"
+        else:
+            list_label = "📋 Список"
+        kb.button(text=list_label, callback_data=list_cb)
+    if lang == "en":
+        menu_label = "🏠 Menu"
+    elif lang == "kk":
+        menu_label = "🏠 Мәзір"
+    else:
+        menu_label = "🏠 Меню"
+    kb.button(text=menu_label, callback_data=menu_cb)
+    kb.adjust(2 if list_cb else 1)
+    return kb.as_markup()
+
+def minimized_menu_kb(lang: str = "ru") -> ReplyKeyboardMarkup:
+    kb = ReplyKeyboardBuilder()
+    kb.add(KeyboardButton(text=t(lang, "BTN_RETURN_TO_MAIN_MENU")))
     return kb.as_markup(resize_keyboard=True)
 
 
@@ -74,20 +136,21 @@ def planning_hub_kb(lang: str = "ru", *, show_planned: bool = True, show_recurri
         kb.button(text=t(lang, "BTN_RECURRING_INCOMES"), callback_data="ri:menu")
     if show_debts:
         kb.button(text=t(lang, "BTN_DEBTS"), callback_data="debt:menu")
-    kb.button(text=t(lang, "BTN_BACK"), callback_data="hub:main")
+    
+    # Smart suggestions button (always visible in Planning hub if full access)
+    kb.button(text=t(lang, "BTN_SMART_SUGGEST"), callback_data="hub:smart_suggest")
+    
     kb.adjust(1, 1, 1, 1, 1)
     return kb.as_markup()
 
 
 def more_hub_kb(lang: str = "ru", *, show_accounts: bool = True, show_transfer: bool = True) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text=t(lang, "BTN_HISTORY"), callback_data="more:history")
     if show_accounts:
         kb.button(text=t(lang, "BTN_ACCOUNTS"), callback_data="more:accounts")
     if show_transfer:
         kb.button(text=t(lang, "BTN_TRANSFER"), callback_data="more:transfer")
-    kb.button(text=t(lang, "BTN_BACK"), callback_data="hub:main")
-    kb.adjust(1, 1, 1, 1)
+    kb.adjust(1, 1)
     return kb.as_markup()
 
 def onboarding_start_kb(lang: str = "ru") -> InlineKeyboardMarkup:
@@ -122,23 +185,72 @@ def daily_time_quick_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb.adjust(2,2,1)
     return kb.as_markup()
 
-def accounts_kb(accounts: list[tuple[int,str,int,int]], prefix: str, lang: str = "ru") -> InlineKeyboardMarkup:
+def accounts_kb(accounts: list[tuple[int, str, int, int, str | None, int]], prefix: str, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Account rows from ``list_accounts`` are 6-tuple: id, name, balance, is_archived, currency, is_saving."""
     kb = InlineKeyboardBuilder()
-    for acc_id, name, bal, arch in accounts:
+    for row in accounts:
+        acc_id, name, bal, arch = int(row[0]), row[1], int(row[2] or 0), int(row[3] or 0)
+        currency = (row[4] or "KZT") if len(row) > 4 else "KZT"
         if arch:
             continue
-        kb.button(text=f"{name} ({bal})", callback_data=f"{prefix}:{acc_id}")
+        kb.button(
+            text=f"{name} — {_fmt_balance_compact(bal, currency)}",
+            callback_data=f"{prefix}:{acc_id}",
+        )
     kb.button(text=t(lang, "BTN_CANCEL"), callback_data="cancel")
     kb.adjust(1)
     return kb.as_markup()
 
-def categories_kb(cats: list[tuple[int,str,str|None]], prefix: str, lang: str = "ru") -> InlineKeyboardMarkup:
+CATEGORIES_PAGE_SIZE = 12
+
+
+def categories_kb(
+    cats: list[tuple[int, str, str | None]],
+    prefix: str,
+    lang: str = "ru",
+    *,
+    page: int = 0,
+    page_size: int = CATEGORIES_PAGE_SIZE,
+    nav_prefix: str | None = None,
+    add_cb: str | None = None,
+) -> InlineKeyboardMarkup:
+    """Render a paginated category picker.
+
+    ``cats`` is already ordered "popular first" by ``list_categories``. We just
+    slice the page and append Prev / Next nav rows when there's more than one
+    page. ``nav_prefix`` is the callback prefix used for paging — defaults to
+    ``prefix`` so a single inline flow doesn't have to register extra callbacks.
+    """
+    nav_prefix = nav_prefix or prefix
+    total = len(cats)
+    page = max(0, int(page))
+    start = page * page_size
+    end = start + page_size
+    visible = cats[start:end]
+
     kb = InlineKeyboardBuilder()
-    for cid, name, emoji in cats:
-        label = f"{emoji+' ' if emoji else ''}{name}"
+    for cid, name, emoji in visible:
+        label = f"{emoji + ' ' if emoji else ''}{name}"
         kb.button(text=label, callback_data=f"{prefix}:{cid}")
+
+    rows = [2] * ((len(visible) + 1) // 2)
+
+    if total > page_size:
+        if page > 0:
+            kb.button(text="◀️", callback_data=f"{nav_prefix}:page:{page - 1}")
+        kb.button(text=f"{page + 1}/{(total + page_size - 1) // page_size}", callback_data=f"{nav_prefix}:page:{page}")
+        if end < total:
+            kb.button(text="▶️", callback_data=f"{nav_prefix}:page:{page + 1}")
+        nav_count = (1 if page > 0 else 0) + 1 + (1 if end < total else 0)
+        rows.append(nav_count)
+
+    if add_cb:
+        kb.button(text=t(lang, "BTN_ADD_CATEGORY"), callback_data=add_cb)
+        rows.append(1)
+
     kb.button(text=t(lang, "BTN_CANCEL"), callback_data="cancel")
-    kb.adjust(2)
+    rows.append(1)
+    kb.adjust(*rows)
     return kb.as_markup()
 
 def categories_kb_with_add(cats: list[tuple[int,str,str|None]], prefix: str, add_cb: str, lang: str = "ru") -> InlineKeyboardMarkup:
@@ -153,12 +265,11 @@ def categories_kb_with_add(cats: list[tuple[int,str,str|None]], prefix: str, add
 
 def settings_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text=t(lang, "BTN_SETTINGS_ACCOUNTS"), callback_data="st:accounts")
     kb.button(text=t(lang, "BTN_SETTINGS_CAT_LIMITS"), callback_data="st:catlim")
     kb.button(text=t(lang, "BTN_SETTINGS_NOTIFS"), callback_data="st:notifs")
     kb.button(text=t(lang, "BTN_LANGUAGE"), callback_data="st:lang")
     kb.button(text=t(lang, "BTN_SETTINGS_RESET"), callback_data="st:reset")
-    kb.adjust(2, 2, 1)
+    kb.adjust(1, 1, 1, 1)
     return kb.as_markup()
 
 def settings_accounts_kb(lang: str = "ru") -> InlineKeyboardMarkup:
@@ -176,26 +287,28 @@ def settings_accounts_kb(lang: str = "ru") -> InlineKeyboardMarkup:
 
 
 
-def _fmt_balance_compact(value: int) -> str:
-    try:
-        n = int(value or 0)
-    except Exception:
-        n = 0
-    s = str(abs(n))
-    parts = []
-    while s:
-        parts.append(s[-3:])
-        s = s[:-3]
-    out = " ".join(reversed(parts)) if parts else "0"
-    if n < 0:
-        out = f"-{out}"
-    return f"{out} тг"
+def _fmt_balance_compact(value: int, currency: str = "KZT") -> str:
+    from app.domain.money import fmt_money_compact
+    return fmt_money_compact(value, currency)
 
 
 def active_accounts_kb(accs, action_prefix: str, lang: str = "ru", back_cb: str = "st:accounts") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for acc_id, name, balance, _archived in accs:
-        kb.button(text=f"{name} — {_fmt_balance_compact(balance)}", callback_data=f"{action_prefix}:{acc_id}")
+    
+    # Split accs into regular and savings
+    regular = [a for a in accs if not a[5]] # is_saving is at index 5
+    savings = [a for a in accs if a[5]]
+    
+    for row in regular:
+        acc_id, name, balance, _archived, currency, _is_saving = row
+        kb.button(text=f"💳 {name} — {_fmt_balance_compact(balance, currency)}", callback_data=f"{action_prefix}:{acc_id}")
+    
+    if savings:
+        # Visual separator or just a list of savings
+        for row in savings:
+            acc_id, name, balance, _archived, currency, _is_saving = row
+            kb.button(text=f"🎯 {name} — {_fmt_balance_compact(balance, currency)}", callback_data=f"{action_prefix}:{acc_id}")
+            
     kb.button(text=t(lang, "BTN_BACK"), callback_data=back_cb)
     kb.adjust(1)
     return kb.as_markup()
@@ -203,16 +316,22 @@ def active_accounts_kb(accs, action_prefix: str, lang: str = "ru", back_cb: str 
 
 def account_actions_kb(account_id: int, lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    change_cur = {"ru": "💱 Сменить валюту", "en": "💱 Change currency", "kk": "💱 Валютаны өзгерту"}.get(lang, "💱 Change currency")
+    change_type = {"ru": "📌 Сменить тип (Копилка/Обычный)", "en": "📌 Switch type (Saving/Regular)", "kk": "📌 Түрін өзгерту"}.get(lang, "📌 Switch type")
+    
     kb.button(text=t(lang, "BTN_RENAME"), callback_data=f"st:acc:view:rename:{account_id}")
     kb.button(text=t(lang, "BTN_EDIT_BALANCE"), callback_data=f"st:acc:view:balance:{account_id}")
+    kb.button(text=change_cur, callback_data=f"st:acc:view:currency:{account_id}")
+    kb.button(text=change_type, callback_data=f"st:acc:view:type_toggle:{account_id}")
     kb.button(text=t(lang, "BTN_ARCHIVE"), callback_data=f"st:acc:view:archive:{account_id}")
     kb.button(text=t(lang, "BTN_BACK"), callback_data="st:acc:open")
     kb.adjust(1)
     return kb.as_markup()
 def archived_accounts_kb(accs, action_prefix: str, lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for acc_id, name, balance, _archived in accs:
-        kb.button(text=f"{name} — {_fmt_balance_compact(balance)}", callback_data=f"{action_prefix}:{acc_id}")
+    for row in accs:
+        acc_id, name, balance, _archived, currency, _is_saving = row
+        kb.button(text=f"📁 {name} — {_fmt_balance_compact(balance, currency)}", callback_data=f"{action_prefix}:{acc_id}")
     kb.button(text=t(lang, "BTN_BACK"), callback_data="st:accounts")
     kb.adjust(1)
     return kb.as_markup()
@@ -240,15 +359,15 @@ def lang_kb(back_cb: str | None = None, lang: str = "ru") -> InlineKeyboardMarku
 
 def reports_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text=t(lang, "BTN_TODAY"), callback_data="rp:view:day:0")
-    kb.button(text=t(lang, "BTN_WEEK"), callback_data="rp:view:week:0")
+    # Row 1: Period details
     kb.button(text=t(lang, "BTN_MONTH"), callback_data="rp:view:month:0")
+    kb.button(text=t(lang, "BTN_TODAY"), callback_data="rp:view:day:0")
+    # Row 2: History and Streak
+    kb.button(text=t(lang, "BTN_HISTORY"), callback_data="more:history")
     kb.button(text=t(lang, "BTN_STREAK"), callback_data="rp:streak")
-    kb.button(text=t(lang, "BTN_CATS_TODAY"), callback_data="rp:view:day:1")
-    kb.button(text=t(lang, "BTN_CATS_MONTH"), callback_data="rp:view:month:1")
+    # Row 3: AI Report
     kb.button(text=t(lang, "BTN_AI_REPORT"), callback_data="ai:open")
-    kb.button(text=t(lang, "BTN_BACK"), callback_data="rp:to_menu")
-    kb.adjust(2, 2, 2, 1, 1)
+    kb.adjust(2, 2, 1)
     return kb.as_markup()
 
 
@@ -263,8 +382,7 @@ def upgrade_info_kb(lang: str, price: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     text = t(lang, "BTN_UNLOCK_FULL")
     kb.button(text=f"{text} ({price} ⭐️)", callback_data="upgrade:activate")
-    kb.button(text=t(lang, "BTN_BACK"), callback_data="hub:main")
-    kb.adjust(1, 1)
+    kb.adjust(1)
     return kb.as_markup()
 
 def cats_kind_kb(lang: str = "ru") -> InlineKeyboardMarkup:
@@ -318,7 +436,7 @@ def undo_kb(tx_id: int) -> InlineKeyboardMarkup:
     kb.button(text="🔴➖ Отменить", callback_data=f"qa:undo:{tx_id}")
     return kb.as_markup()
 
-def budgets_categories_kb(cats, right_map: dict[int, str] | None = None, badge_map: dict[int, str] | None = None, prefix: str = "bud:cat", cancel_cb: str = "cancel", lang: str = "ru") -> InlineKeyboardMarkup:
+def budgets_categories_kb(cats, right_map: dict[int, str] | None = None, badge_map: dict[int, str] | None = None, prefix: str = "bud:cat", cancel_cb: str = "cancel", lang: str = "ru", add_cb: str | None = None) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     right_map = right_map or {}
     badge_map = badge_map or {}
@@ -329,6 +447,8 @@ def budgets_categories_kb(cats, right_map: dict[int, str] | None = None, badge_m
             badge = badge_prefix.get(badge_map.get(cid, "plain"), "")
             title = f"{title} — {badge}{right_map[cid]}"
         kb.button(text=title, callback_data=f"{prefix}:{cid}")
+    if add_cb:
+        kb.button(text=t(lang, "BTN_ADD_CATEGORY"), callback_data=add_cb)
     kb.button(text=t(lang, "BTN_CANCEL"), callback_data=cancel_cb)
     kb.adjust(1)
     return kb.as_markup()
@@ -355,28 +475,77 @@ def budget_over_kb(prefix: str, lang: str = "ru"):
     kb.adjust(1)
     return kb.as_markup()
 
-def notifications_kb(daily_enabled: int, daily_time: str, nudge_enabled: int, nudge_interval_min: int, lang: str = "ru") -> InlineKeyboardMarkup:
+def notifications_kb(
+    daily_enabled: int, 
+    daily_time: str, 
+    nudge_enabled: int, 
+    nudge_interval_min: int, 
+    inc_enabled: int, 
+    inc_days: int, 
+    exp_enabled: int, 
+    exp_days: int, 
+    lang: str = "ru"
+) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     de = "✅" if int(daily_enabled or 0) == 1 else "❌"
     ne = "✅" if int(nudge_enabled or 0) == 1 else "❌"
     interval_h = int(nudge_interval_min or 180) // 60
+    
+    # Days labels
+    def _days_label(enabled, days, l):
+        if not enabled:
+            return "❌"
+        if days == 0:
+            return "🎯 " + ("Today" if l=="en" else ("Бүгін" if l=="kk" else "В день события"))
+        return f"⏳ {days} " + ("d." if l=="en" else ("күн" if l=="kk" else "дн."))
+
+    inc_label = _days_label(inc_enabled, inc_days, lang)
+    exp_label = _days_label(exp_enabled, exp_days, lang)
+
     if lang=="en":
         kb.button(text=f"📅 Daily report: {de}", callback_data="st:notifs:daily:toggle")
         kb.button(text=f"⏰ Report time: {daily_time or '21:00'}", callback_data="st:notifs:daily:time")
         kb.button(text=f"🔁 Nudges: {ne}", callback_data="st:notifs:nudge:toggle")
         kb.button(text=f"🕒 Interval: {interval_h}h", callback_data="st:notifs:nudge:interval")
+        kb.button(text=f"💰 Salary: {inc_label}", callback_data="st:notifs:inc:menu")
+        kb.button(text=f"💳 Expenses: {exp_label}", callback_data="st:notifs:exp:menu")
     elif lang=="kk":
         kb.button(text=f"📅 Күндік есеп: {de}", callback_data="st:notifs:daily:toggle")
         kb.button(text=f"⏰ Есеп уақыты: {daily_time or '21:00'}", callback_data="st:notifs:daily:time")
         kb.button(text=f"🔁 Еске салу: {ne}", callback_data="st:notifs:nudge:toggle")
         kb.button(text=f"🕒 Аралық: {interval_h} сағ", callback_data="st:notifs:nudge:interval")
+        kb.button(text=f"💰 Жалақы: {inc_label}", callback_data="st:notifs:inc:menu")
+        kb.button(text=f"💳 Шығыстар: {exp_label}", callback_data="st:notifs:exp:menu")
     else:
         kb.button(text=f"📅 Ежедневный отчёт: {de}", callback_data="st:notifs:daily:toggle")
         kb.button(text=f"⏰ Время отчёта: {daily_time or '21:00'}", callback_data="st:notifs:daily:time")
         kb.button(text=f"🔁 Напоминания днём: {ne}", callback_data="st:notifs:nudge:toggle")
         kb.button(text=f"🕒 Интервал: {interval_h}ч", callback_data="st:notifs:nudge:interval")
+        kb.button(text=f"💰 Зарплата/Доход: {inc_label}", callback_data="st:notifs:inc:menu")
+        kb.button(text=f"💳 Подписки/Траты: {exp_label}", callback_data="st:notifs:exp:menu")
+    
     kb.button(text=t(lang, "BTN_NOTIFS_BACK"), callback_data="st:root")
-    kb.adjust(2,2,1)
+    kb.adjust(2, 2, 1, 1, 1)
+    return kb.as_markup()
+
+def recurring_days_kb(kind: str, current_enabled: int, current_days: int, lang: str = "ru") -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    # Options: 0 (Today), 1, 3, 5, 7
+    options = [0, 1, 3, 5, 7]
+    for d in options:
+        mark = "✅ " if (current_enabled and current_days == d) else ""
+        if d == 0:
+            label = "День в день" if lang=="ru" else ("Today" if lang=="en" else "Бүгін")
+        else:
+            label = f"{d} " + ("дн." if lang=="ru" else ("d." if lang=="en" else "күн"))
+        kb.button(text=f"{mark}{label}", callback_data=f"st:notifs:{kind}:set:{d}")
+    
+    off_mark = "✅ " if not current_enabled else ""
+    off_label = "Выключить" if lang=="ru" else ("Turn off" if lang=="en" else "Өшіру")
+    kb.button(text=f"{off_mark}{off_label}", callback_data=f"st:notifs:{kind}:set:off")
+    
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="st:notifs:menu")
+    kb.adjust(2, 3, 1, 1)
     return kb.as_markup()
 
 def nudge_interval_kb(current_min: int, lang: str = "ru") -> InlineKeyboardMarkup:
@@ -447,7 +616,8 @@ def ai_consultant_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb.button(text=t(lang, "AI_CLARIFY"), callback_data="ai:clarify")
     kb.button(text=t(lang, "AI_EDIT_GOAL"), callback_data="ai:goal:edit")
     kb.button(text=t(lang, "AI_BACK"), callback_data="ai:back")
-    kb.adjust(1, 1, 1, 1, 1)
+    kb.button(text=t(lang, "BTN_RETURN_TO_MAIN_MENU"), callback_data="rp:to_menu")
+    kb.adjust(1, 1, 1, 1, 1, 1)
     return kb.as_markup()
 
 
@@ -469,7 +639,8 @@ def ai_report_actions_kb(lang: str = "ru", *, can_download: bool = True) -> Inli
     kb.button(text=t(lang, "AI_IMPROVE_AFTER_REPORT"), callback_data="ai:clarify")
     kb.button(text=t(lang, "AI_NEW_REPORT"), callback_data="ai:report:start")
     kb.button(text=t(lang, "AI_BACK_TO_AI"), callback_data="ai:menu")
-    kb.adjust(1, 1, 1, 1, 1)
+    kb.button(text=t(lang, "BTN_RETURN_TO_MAIN_MENU"), callback_data="rp:to_menu")
+    kb.adjust(1, 1, 1, 1, 1, 1)
     return kb.as_markup()
 
 
@@ -478,5 +649,27 @@ def ai_question_actions_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb.button(text=t(lang, "AI_ASK_ANOTHER"), callback_data="ai:question")
     kb.button(text=t(lang, "AI_REPORT_START"), callback_data="ai:report:start")
     kb.button(text=t(lang, "AI_BACK_TO_AI"), callback_data="ai:menu")
-    kb.adjust(1, 1, 1)
+    kb.button(text=t(lang, "BTN_RETURN_TO_MAIN_MENU"), callback_data="rp:to_menu")
+    kb.adjust(1, 1, 1, 1)
+    return kb.as_markup()
+
+
+def account_currency_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🇰🇿 KZT", callback_data="acc:cur:KZT")
+    kb.button(text="🇺🇸 USD", callback_data="acc:cur:USD")
+    kb.button(text="🇷🇺 RUB", callback_data="acc:cur:RUB")
+    kb.button(text="🇪🇺 EUR", callback_data="acc:cur:EUR")
+    kb.adjust(2, 2)
+    return kb.as_markup()
+
+
+def account_type_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    regular = {"ru": "💳 Обычный счёт", "en": "💳 Regular account", "kk": "💳 Қалыпты шот"}.get(lang, "💳 Regular account")
+    saving = {"ru": "🎯 Копилка / Сбережения", "en": "🎯 Savings / Goal", "kk": "🎯 Копилка / Жинақ"}.get(lang, "🎯 Savings / Goal")
+    
+    kb.button(text=regular, callback_data="acc:type:regular")
+    kb.button(text=saving, callback_data="acc:type:saving")
+    kb.adjust(1)
     return kb.as_markup()

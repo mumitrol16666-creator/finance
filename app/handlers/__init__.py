@@ -14,6 +14,9 @@ from app.handlers.ai_consultant import router as ai_consultant_router
 from app.handlers.recurring_expenses import router as recurring_expenses_router
 from app.handlers.recurring_incomes import router as recurring_incomes_router
 from app.handlers.planned import router as planned_router
+from app.handlers.planning_smart import router as planning_smart_router
+from app.handlers.export import router as export_router
+from app.handlers.charts import router as charts_router
 
 def get_routers():
     return [
@@ -24,11 +27,14 @@ def get_routers():
         recurring_expenses_router,
         recurring_incomes_router,
         planned_router,
+        planning_smart_router,
         transactions_router,
         settings_categories_limits_router,
         budgets_router,
         reports_router,
         history_router,
+        export_router,
+        charts_router,
         settings_router,
         lang_router,
         quick_add_router,

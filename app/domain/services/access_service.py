@@ -32,6 +32,7 @@ NEWBIE_LEVEL0_FEATURES = {
     FEATURE_INCOME,
     FEATURE_HISTORY,
     FEATURE_SETTINGS,
+    FEATURE_ACCOUNTS,
     FEATURE_UPGRADE,
 }
 
@@ -66,6 +67,7 @@ class UserAccessContext:
     current_streak: int
     max_streak: int
     last_activity_date: str | None
+    expiration_date: str | None = None
 
 
 async def get_user_context(db: aiosqlite.Connection, user_id: int) -> UserAccessContext:
@@ -102,7 +104,7 @@ async def get_user_context(db: aiosqlite.Connection, user_id: int) -> UserAccess
                 full_access = False
                 stored_mode = "newbie"
                 await db.execute(
-                    "UPDATE users SET full_access=0, mode='newbie', full_access_until=NULL WHERE user_id=?",
+                    "UPDATE users SET full_access=0, mode='newbie' WHERE user_id=?",
                     (user_id,),
                 )
                 await db.commit()
@@ -126,6 +128,7 @@ async def get_user_context(db: aiosqlite.Connection, user_id: int) -> UserAccess
         current_streak=current_streak,
         max_streak=max_streak,
         last_activity_date=last_activity_date,
+        expiration_date=full_access_until,
     )
 
 
@@ -149,9 +152,9 @@ async def should_offer_upgrade(db: aiosqlite.Connection, user_id: int) -> bool:
     return ctx.mode != "full"
 
 
-async def get_menu_context(db: aiosqlite.Connection, user_id: int) -> tuple[MenuVariant, int, bool]:
+async def get_menu_context(db: aiosqlite.Connection, user_id: int) -> tuple[MenuVariant, int, bool, str | None]:
     ctx = await get_user_context(db, user_id)
-    return ("full" if ctx.mode == "full" else "newbie", ctx.progress_level, ctx.full_access)
+    return ("full" if ctx.mode == "full" else "newbie", ctx.progress_level, ctx.full_access, ctx.expiration_date)
 
 
 

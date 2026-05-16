@@ -24,9 +24,9 @@ from app.db.repositories.recurring_repo import (
 from app.db.repositories.settings_repo import get_lang
 from app.db.repositories.tx_repo import create_tx, apply_expense_income
 from app.fsm.states import RecurringExpenseFlow
-from app.handlers.common import cancel_to_main_menu, is_cancel_text, build_main_menu_markup
+from app.handlers.common import cancel_to_main_menu, consume_user_input, is_cancel_text, build_main_menu_markup, neutralize_keyboard
 from app.ui.i18n import text_matches_key, t
-from app.ui.keyboards import main_menu, cancel_kb, categories_kb, accounts_kb
+from app.ui.keyboards import main_menu, cancel_kb, categories_kb, accounts_kb, flow_done_actions_kb, inline_cancel_kb
 
 router = Router()
 PARSE_MODE = 'HTML'
@@ -36,14 +36,11 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def fmt_money(value: int) -> str:
-    s = str(abs(int(value)))
-    parts = []
-    while s:
-        parts.append(s[-3:])
-        s = s[:-3]
-    out = ' '.join(reversed(parts)) if parts else '0'
-    return f"{'-' if value < 0 else ''}{out} тг"
+def fmt_money(value: int, currency: str = "KZT") -> str:
+    """Thin wrapper around the central formatter so the user's currency
+    is rendered consistently (KZT/RUB/USD/etc.) instead of a hardcoded 'тг'."""
+    from app.domain.money import fmt_money as _fmt_money
+    return _fmt_money(value, currency=currency)
 
 
 async def _safe_remove_markup(bot, chat_id: int, message_id: int | None):
@@ -69,6 +66,56 @@ async def _clear_last_screen(target: Message | CallbackQuery, state: FSMContext,
         await _safe_remove_markup(bot, chat_id, target.message.message_id)
     if forget:
         await _remember_screen(state, None)
+
+
+async def _delete_message(bot, chat_id: int, message_id: int | None):
+    if not message_id:
+        return
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=int(message_id))
+    except Exception:
+        pass
+
+
+async def _enter_input_step(target: Message | CallbackQuery, state: FSMContext, text: str, lang: str):
+    """Send a fresh prompt for a text input step. Removes the previous flow
+    message entirely (not just its markup) so the chat doesn't accumulate
+    stale ask-screens; attaches an inline Cancel button right under the
+    prompt for users whose reply keyboard is collapsed."""
+    data = await state.get_data()
+    bot = target.bot
+    chat_id = target.chat.id if isinstance(target, Message) else target.message.chat.id
+    prev = data.get('flow_message_id')
+    await _delete_message(bot, chat_id, prev)
+    sender = target.answer if isinstance(target, Message) else target.message.answer
+    sent = await sender(text, reply_markup=inline_cancel_kb(lang), parse_mode=PARSE_MODE)
+    await _remember_screen(state, sent.message_id)
+    return sent
+
+
+async def _show_input_error(m: Message, state: FSMContext, lang: str, text: str):
+    """Validation error variant: drop the user's input and rewrite the current
+    flow message in place. Falls back to a fresh prompt if editing fails."""
+    try:
+        await m.delete()
+    except Exception:
+        pass
+    data = await state.get_data()
+    flow_id = data.get('flow_message_id')
+    if flow_id:
+        try:
+            await m.bot.edit_message_text(
+                chat_id=m.chat.id,
+                message_id=int(flow_id),
+                text=text,
+                reply_markup=inline_cancel_kb(lang),
+                parse_mode=PARSE_MODE,
+            )
+            return
+        except Exception:
+            pass
+    sent = await m.answer(text, reply_markup=inline_cancel_kb(lang), parse_mode=PARSE_MODE)
+    await _remember_screen(state, sent.message_id)
 
 
 async def _send_screen(target: Message | CallbackQuery, state: FSMContext, text: str, reply_markup=None):
@@ -127,9 +174,9 @@ async def _render_screen(target: Message | CallbackQuery, state: FSMContext, tex
 def recurring_menu_kb(lang: str = 'ru'):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
-    kb.button(text='➕ Добавить' if lang == 'ru' else ('➕ Add' if lang == 'en' else '➕ Қосу'), callback_data='re:add')
-    kb.button(text='📋 Активные' if lang == 'ru' else ('📋 Active' if lang == 'en' else '📋 Белсенді'), callback_data='re:list')
-    kb.button(text='🗄 Архив' if lang == 'ru' else ('🗄 Archive' if lang == 'en' else '🗄 Архив'), callback_data='re:archived')
+    kb.button(text=t(lang, 'BTN_ADD'), callback_data='re:add')
+    kb.button(text=t(lang, 'BTN_LIST_ACTIVE'), callback_data='re:list')
+    kb.button(text=t(lang, 'BTN_ARCHIVE'), callback_data='re:archived')
     kb.button(text=t(lang, 'BTN_BACK'), callback_data='hub:planning')
     kb.adjust(2, 1, 1)
     return kb.as_markup()
@@ -151,10 +198,10 @@ def recurring_actions_kb(recurring_id: int, archived: bool, lang: str = 'ru', ba
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
     if archived:
-        kb.button(text='♻️ Восстановить' if lang == 'ru' else ('♻️ Restore' if lang == 'en' else '♻️ Қалпына келтіру'), callback_data=f're:restore:{recurring_id}')
+        kb.button(text=t(lang, 'BTN_RESTORE'), callback_data=f're:restore:{recurring_id}')
     else:
-        kb.button(text='✅ Отметить как оплачено' if lang == 'ru' else ('✅ Mark paid' if lang == 'en' else '✅ Төленді деп белгілеу'), callback_data=f're:paid:{recurring_id}')
-        kb.button(text='🗂 В архив' if lang == 'ru' else ('🗂 Archive' if lang == 'en' else '🗂 Архив'), callback_data=f're:archive:{recurring_id}')
+        kb.button(text=t(lang, 'RE_BTN_PAID'), callback_data=f're:paid:{recurring_id}')
+        kb.button(text=t(lang, 'BTN_TO_ARCHIVE'), callback_data=f're:archive:{recurring_id}')
     kb.button(text=t(lang, 'BTN_BACK'), callback_data=back_cb or ('re:list' if not archived else 're:archived'))
     kb.adjust(1)
     return kb.as_markup()
@@ -163,10 +210,10 @@ def recurring_actions_kb(recurring_id: int, archived: bool, lang: str = 'ru', ba
 def recurring_reminder_actions_kb(recurring_id: int, lang: str = 'ru'):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
-    kb.button(text='✅ Оплачено' if lang == 'ru' else ('✅ Paid' if lang == 'en' else '✅ Төленді'), callback_data=f're:remindpay:{recurring_id}')
-    kb.button(text='🕒 Завтра' if lang == 'ru' else ('🕒 Tomorrow' if lang == 'en' else '🕒 Ертең'), callback_data=f're:remindsnooze:{recurring_id}')
-    kb.button(text='🔗 Уже внёс вручную' if lang == 'ru' else ('🔗 Already added manually' if lang == 'en' else '🔗 Қолмен енгізіп қойдым'), callback_data=f're:remindmanual:{recurring_id}')
-    kb.button(text='📂 Детали' if lang == 'ru' else ('📂 Details' if lang == 'en' else '📂 Толығырақ'), callback_data=f're:remdetail:{recurring_id}')
+    kb.button(text=t(lang, 'RE_BTN_PAID_SHORT'), callback_data=f're:remindpay:{recurring_id}')
+    kb.button(text=t(lang, 'BTN_TOMORROW'), callback_data=f're:remindsnooze:{recurring_id}')
+    kb.button(text=t(lang, 'BTN_ADDED_MANUALLY'), callback_data=f're:remindmanual:{recurring_id}')
+    kb.button(text=t(lang, 'BTN_DETAILS'), callback_data=f're:remdetail:{recurring_id}')
     kb.adjust(2, 2)
     return kb.as_markup()
 
@@ -174,8 +221,8 @@ def recurring_reminder_actions_kb(recurring_id: int, lang: str = 'ru'):
 def recurring_confirm_kb(lang: str = 'ru'):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
-    kb.button(text='✅ Сохранить' if lang == 'ru' else ('✅ Save' if lang == 'en' else '✅ Сақтау'), callback_data='re:save')
-    kb.button(text='❌ Отмена' if lang == 'ru' else ('❌ Cancel' if lang == 'en' else '❌ Болдырмау'), callback_data='re:menu')
+    kb.button(text=t(lang, 'BTN_SAVE'), callback_data='re:save')
+    kb.button(text=t(lang, 'BTN_CANCEL'), callback_data='re:menu')
     kb.adjust(1)
     return kb.as_markup()
 
@@ -186,15 +233,19 @@ async def _menu_text(db: aiosqlite.Connection, user_id: int, lang: str) -> str:
     archived = await list_recurring_expenses(db, user_id, archived=True)
     nearest = active[0] if active else None
     lines = [
-        '🔁 <b>Постоянные расходы</b>' if lang == 'ru' else ('🔁 <b>Recurring expenses</b>' if lang == 'en' else '🔁 <b>Тұрақты шығыстар</b>'),
+        t(lang, 'RE_MENU_EXPENSES_TITLE'),
         '',
-        'Регулярные платежи для напоминаний и прогноза.' if lang == 'ru' else ('Recurring payments for reminders and forecast.' if lang == 'en' else 'Еске салу мен болжамға арналған тұрақты төлемдер.'),
-        f"Активных: <b>{len(active)}</b>" if lang == 'ru' else (f"Active: <b>{len(active)}</b>" if lang == 'en' else f"Белсенді: <b>{len(active)}</b>"),
+        t(lang, 'RE_MENU_EXPENSES_DESC'),
+        t(lang, 'PL_ACTIVE_COUNT').format(n=len(active)),
     ]
     if archived:
-        lines.append((f"В архиве: <b>{len(archived)}</b>" if lang == 'ru' else (f"Archived: <b>{len(archived)}</b>" if lang == 'en' else f"Архивте: <b>{len(archived)}</b>")))
+        lines.append(t(lang, 'PL_ARCHIVED_COUNT').format(n=len(archived)))
     if nearest:
-        lines.extend(['', ('Ближайший:' if lang == 'ru' else ('Nearest:' if lang == 'en' else 'Жақын арада:')), f"• <b>{escape(str(nearest['title']))}</b> — {fmt_money(int(nearest['amount']))} — {nearest['next_run_date']}"])
+        lines.extend([
+            '',
+            t(lang, 'NEAREST'),
+            f"• <b>{escape(str(nearest['title']))}</b> — {fmt_money(int(nearest['amount']))} — {nearest['next_run_date']}",
+        ])
     return '\n'.join(lines)
 
 
@@ -207,46 +258,32 @@ async def _show_menu(target: Message | CallbackQuery, state: FSMContext, db: aio
 
 async def _ask_title(target: Message | CallbackQuery, state: FSMContext, lang: str):
     await state.set_state(RecurringExpenseFlow.title)
-    text = (
-        '➕ <b>Новый постоянный расход</b>\n\nВведи название расхода.\nНапример: <code>Аренда школы</code>'
-        if lang == 'ru' else
-        ('➕ <b>New recurring expense</b>\n\nEnter the expense title.\nExample: <code>Studio rent</code>' if lang == 'en' else '➕ <b>Жаңа тұрақты шығыс</b>\n\nШығыс атауын енгізіңіз.\nМысалы: <code>Мектеп жалдау</code>')
-    )
-    await _enter_chat_mode(target, state, text, reply_markup=cancel_kb(lang))
+    await _enter_input_step(target, state, t(lang, 'RE_EXP_TITLE_PROMPT'), lang)
 
 
 async def _ask_amount(target: Message | CallbackQuery, state: FSMContext, lang: str, title: str):
     await state.set_state(RecurringExpenseFlow.amount)
-    text = (
-        f'➕ <b>{escape(title)}</b>\n\n💰 Введи сумму в тенге.\nПример: <code>170000</code>'
-        if lang == 'ru' else
-        (f'➕ <b>{escape(title)}</b>\n\n💰 Enter the amount in KZT.\nExample: <code>170000</code>' if lang == 'en' else f'➕ <b>{escape(title)}</b>\n\n💰 Соманы теңгемен енгізіңіз.\nМысалы: <code>170000</code>')
+    await _enter_input_step(
+        target, state, t(lang, 'RE_AMOUNT_PROMPT').format(title=escape(title)), lang
     )
-    await _enter_chat_mode(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _ask_day(target: Message | CallbackQuery, state: FSMContext, lang: str, data: dict):
     await state.set_state(RecurringExpenseFlow.day)
     title = escape(str(data.get('re_title') or '—'))
     amount = fmt_money(int(data.get('re_amount') or 0))
-    text = (
-        f'📅 <b>День списания</b>\n\n<b>{title}</b>\n💰 {amount}\n\nВведи число от <b>1</b> до <b>31</b>.'
-        if lang == 'ru' else
-        (f'📅 <b>Billing day</b>\n\n<b>{title}</b>\n💰 {amount}\n\nEnter a number from <b>1</b> to <b>31</b>.' if lang == 'en' else f'📅 <b>Төлем күні</b>\n\n<b>{title}</b>\n💰 {amount}\n\n<b>1</b>-ден <b>31</b>-ге дейін сан енгізіңіз.')
+    await _enter_input_step(
+        target, state, t(lang, 'RE_DAY_PROMPT').format(title=title, amount=amount), lang
     )
-    await _enter_chat_mode(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _ask_comment(target: Message | CallbackQuery, state: FSMContext, lang: str, data: dict):
     await state.set_state(RecurringExpenseFlow.comment)
     title = escape(str(data.get('re_title') or '—'))
     amount = fmt_money(int(data.get('re_amount') or 0))
-    text = (
-        f'📝 <b>Комментарий</b>\n\n<b>{title}</b>\n💰 {amount}\n\nДобавь комментарий для истории и AI.\nЕсли не нужен — отправь <code>-</code>.'
-        if lang == 'ru' else
-        (f'📝 <b>Comment</b>\n\n<b>{title}</b>\n💰 {amount}\n\nAdd a comment for history and AI.\nSend <code>-</code> to skip.' if lang == 'en' else f'📝 <b>Пікір</b>\n\n<b>{title}</b>\n💰 {amount}\n\nТарих пен AI үшін пікір жазыңыз.\nӨткізіп жіберу үшін <code>-</code> жіберіңіз.')
+    await _enter_input_step(
+        target, state, t(lang, 'RE_COMMENT_PROMPT').format(title=title, amount=amount), lang
     )
-    await _enter_chat_mode(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _show_confirm(target: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
@@ -259,35 +296,13 @@ async def _show_confirm(target: Message | CallbackQuery, state: FSMContext, db: 
     acc_name = next((escape(str(a[1])) for a in accounts if int(a[0]) == int(data.get('re_account_id') or 0)), '—')
     comment = data.get('re_comment')
 
-    text = (
-        'Проверь данные 👇\n\n'
-        f"Название: <b>{escape(str(data.get('re_title') or '—'))}</b>\n"
-        f"Сумма: <b>{fmt_money(int(data.get('re_amount') or 0))}</b>\n"
-        f"Категория: <b>{cat_name}</b>\n"
-        f"Счёт: <b>{acc_name}</b>\n"
-        f"День месяца: <b>{int(data.get('re_day') or 0)}</b>\n"
-        f"Комментарий: <b>{escape(str(comment)) if comment else '—'}</b>\n\n"
-        'Сохраняем?'
-        if lang == 'ru' else
-        (
-            'Check the details 👇\n\n'
-            f"Title: <b>{escape(str(data.get('re_title') or '—'))}</b>\n"
-            f"Amount: <b>{fmt_money(int(data.get('re_amount') or 0))}</b>\n"
-            f"Category: <b>{cat_name}</b>\n"
-            f"Account: <b>{acc_name}</b>\n"
-            f"Day of month: <b>{int(data.get('re_day') or 0)}</b>\n"
-            f"Comment: <b>{escape(str(comment)) if comment else '—'}</b>\n\n"
-            'Save it?'
-            if lang == 'en' else
-            'Деректерді тексеріңіз 👇\n\n'
-            f"Атауы: <b>{escape(str(data.get('re_title') or '—'))}</b>\n"
-            f"Сома: <b>{fmt_money(int(data.get('re_amount') or 0))}</b>\n"
-            f"Санат: <b>{cat_name}</b>\n"
-            f"Шот: <b>{acc_name}</b>\n"
-            f"Ай күні: <b>{int(data.get('re_day') or 0)}</b>\n"
-            f"Пікір: <b>{escape(str(comment)) if comment else '—'}</b>\n\n"
-            'Сақтаймыз ба?'
-        )
+    text = t(lang, 'RE_CONFIRM').format(
+        title=escape(str(data.get('re_title') or '—')),
+        amount=fmt_money(int(data.get('re_amount') or 0)),
+        category=cat_name,
+        account=acc_name,
+        day=int(data.get('re_day') or 0),
+        comment=escape(str(comment)) if comment else '—',
     )
     await _render_screen(target, state, text, reply_markup=recurring_confirm_kb(lang))
 
@@ -297,18 +312,12 @@ from app.handlers.common import cancel_to_main_menu, is_cancel_text, deny_featur
 
 @router.message(lambda m: text_matches_key(getattr(m, 'text', None), 'BTN_RECURRING_EXPENSES'))
 async def recurring_entry(m: Message, state: FSMContext, db: aiosqlite.Connection):
-    if not await can_use_feature(db, m.from_user.id, FEATURE_RECURRING):
-        await deny_feature_message(m, db, m.from_user.id)
-        return
     await ensure_schema(db)
     await _show_menu(m, state, db)
 
 
 @router.callback_query(F.data == 're:menu')
 async def recurring_menu_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
-    if not await can_use_feature(db, c.from_user.id, FEATURE_RECURRING):
-        await deny_feature_message(c, db, c.from_user.id)
-        return
     await _show_menu(c, state, db)
     await c.answer()
 
@@ -318,9 +327,9 @@ async def recurring_menu_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.C
 async def recurring_list(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     lang = await get_lang(db, c.from_user.id)
     rows = await list_recurring_expenses(db, c.from_user.id, archived=False)
-    text = '📋 <b>Активные постоянные расходы</b>' if lang == 'ru' else ('📋 <b>Active recurring expenses</b>' if lang == 'en' else '📋 <b>Белсенді тұрақты шығыстар</b>')
+    text = t(lang, 'RE_LIST_EXPENSES_ACTIVE')
     if not rows:
-        text += '\n\n' + ('Пока пусто.' if lang == 'ru' else ('No items yet.' if lang == 'en' else 'Әзірге бос.'))
+        text += '\n\n' + t(lang, 'PL_LIST_EMPTY')
     await _render_screen(c, state, text, reply_markup=recurring_rows_kb(rows, archived=False, lang=lang))
     await c.answer()
 
@@ -329,15 +338,18 @@ async def recurring_list(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conn
 async def recurring_archived(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     lang = await get_lang(db, c.from_user.id)
     rows = await list_recurring_expenses(db, c.from_user.id, archived=True)
-    text = '🗄 <b>Архив постоянных расходов</b>' if lang == 'ru' else ('🗄 <b>Recurring archive</b>' if lang == 'en' else '🗄 <b>Тұрақты шығыстар архиві</b>')
+    text = t(lang, 'RE_LIST_EXPENSES_ARCHIVED')
     if not rows:
-        text += '\n\n' + ('Архив пуст.' if lang == 'ru' else ('Archive is empty.' if lang == 'en' else 'Архив бос.'))
+        text += '\n\n' + t(lang, 'PL_ARCHIVE_EMPTY')
     await _render_screen(c, state, text, reply_markup=recurring_rows_kb(rows, archived=True, lang=lang))
     await c.answer()
 
 
 @router.callback_query(F.data == 're:add')
 async def recurring_add(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    if not await can_use_feature(db, c.from_user.id, FEATURE_RECURRING):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     lang = await get_lang(db, c.from_user.id)
     await _clear_recurring_flow_data(state)
     await _ask_title(c, state, lang)
@@ -349,12 +361,17 @@ async def recurring_title(m: Message, state: FSMContext, db: aiosqlite.Connectio
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
+    lang = await get_lang(db, m.from_user.id)
     title = (m.text or '').strip()
     if len(title) < 2 or len(title) > 60:
-        await m.answer('Название должно быть от 2 до 60 символов.')
+        await _show_input_error(m, state, lang, t(lang, 'RE_TITLE_LEN_ERROR'))
         return
+    try:
+        await m.delete()
+    except Exception:
+        pass
     await state.update_data(re_title=title)
-    await _ask_amount(m, state, await get_lang(db, m.from_user.id), title)
+    await _ask_amount(m, state, lang, title)
 
 
 @router.message(RecurringExpenseFlow.amount, F.text)
@@ -362,24 +379,46 @@ async def recurring_amount(m: Message, state: FSMContext, db: aiosqlite.Connecti
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
-    raw = (m.text or '').replace(' ', '').strip()
-    if not raw.isdigit() or int(raw) <= 0:
-        await m.answer('Нужна положительная сумма цифрами.')
+    from app.domain.money import parse_money_for_user
+    lang = await get_lang(db, m.from_user.id)
+    amt = await parse_money_for_user(db, m.from_user.id, m.text)
+    if amt is None or amt <= 0:
+        await _show_input_error(m, state, lang, t(lang, "AMOUNT_INVALID"))
         return
-    await state.update_data(re_amount=int(raw))
+    try:
+        await m.delete()
+    except Exception:
+        pass
+    await state.update_data(re_amount=amt)
     cats = await list_categories(db, m.from_user.id, 'expense')
     await state.set_state(RecurringExpenseFlow.category)
-    text = '🗂 <b>Выбери категорию расхода</b>' if await get_lang(db, m.from_user.id) == 'ru' else ('🗂 <b>Choose expense category</b>' if await get_lang(db, m.from_user.id) == 'en' else '🗂 <b>Шығыс санатын таңдаңыз</b>')
-    await _enter_chat_mode(m, state, text, reply_markup=categories_kb(cats, 're:cat', await get_lang(db, m.from_user.id)))
+    text = t(lang, 'RE_PICK_CATEGORY_EXPENSE')
+    data = await state.get_data()
+    page = int(data.get('re_cat_page', 0) or 0)
+    # Category picker is a fresh inline screen — drop the previous prompt entirely.
+    await _delete_message(m.bot, m.chat.id, data.get('flow_message_id'))
+    sent = await m.answer(text, reply_markup=categories_kb(cats, 're:cat', lang, page=page), parse_mode=PARSE_MODE)
+    await _remember_screen(state, sent.message_id)
 
 
-@router.callback_query(RecurringExpenseFlow.category, F.data.startswith('re:cat:'))
+@router.callback_query(RecurringExpenseFlow.category, F.data.regexp(r'^re:cat:page:\d+$'))
+async def recurring_cat_page(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    page = int(c.data.split(':')[3])
+    await state.update_data(re_cat_page=page)
+    cats = await list_categories(db, c.from_user.id, 'expense')
+    lang = await get_lang(db, c.from_user.id)
+    text = t(lang, 'RE_PICK_CATEGORY_EXPENSE')
+    await _edit_screen(c, state, text, reply_markup=categories_kb(cats, 're:cat', lang, page=page))
+    await c.answer()
+
+
+@router.callback_query(RecurringExpenseFlow.category, F.data.regexp(r'^re:cat:\d+$'))
 async def recurring_cat(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     await state.update_data(re_category_id=int(c.data.split(':')[-1]))
     accs = await list_accounts(db, c.from_user.id)
     await state.set_state(RecurringExpenseFlow.account)
     lang = await get_lang(db, c.from_user.id)
-    await _edit_screen(c, state, '🏦 <b>Выбери счёт</b>' if lang == 'ru' else ('🏦 <b>Choose account</b>' if lang == 'en' else '🏦 <b>Шотты таңдаңыз</b>'), reply_markup=accounts_kb(accs, 're:acc', lang))
+    await _edit_screen(c, state, t(lang, 'RE_PICK_ACCOUNT'), reply_markup=accounts_kb(accs, 're:acc', lang))
     await c.answer()
 
 
@@ -396,13 +435,18 @@ async def recurring_day(m: Message, state: FSMContext, db: aiosqlite.Connection)
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
+    lang = await get_lang(db, m.from_user.id)
     raw = (m.text or '').strip()
     if not raw.isdigit() or not (1 <= int(raw) <= 31):
-        await m.answer('Нужно число от 1 до 31.')
+        await _show_input_error(m, state, lang, t(lang, 'RE_DAY_INVALID'))
         return
+    try:
+        await m.delete()
+    except Exception:
+        pass
     await state.update_data(re_day=int(raw))
     data = await state.get_data()
-    await _ask_comment(m, state, await get_lang(db, m.from_user.id), data)
+    await _ask_comment(m, state, lang, data)
 
 
 @router.message(RecurringExpenseFlow.comment, F.text)
@@ -413,12 +457,17 @@ async def recurring_comment(m: Message, state: FSMContext, db: aiosqlite.Connect
     comment = (m.text or '').strip()
     if comment == '-':
         comment = None
+    try:
+        await m.delete()
+    except Exception:
+        pass
     await state.update_data(re_comment=comment)
     await _show_confirm(m, state, db)
 
 
 @router.callback_query(F.data == 're:save')
 async def recurring_save(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     data = await state.get_data()
     try:
         await create_recurring_expense(
@@ -438,125 +487,108 @@ async def recurring_save(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conn
         raise
     lang = await get_lang(db, c.from_user.id)
     try:
-        await c.answer('Сохранено' if lang == 'ru' else ('Saved' if lang == 'en' else 'Сақталды'))
+        await c.answer(t(lang, 'TOAST_SAVED'))
     except Exception:
         pass
     await _clear_last_screen(c, state, forget=True)
     await _clear_recurring_flow_data(state)
-    await c.message.answer(
-        '✅ Постоянный расход сохранён.' if lang == 'ru' else ('✅ Recurring expense saved.' if lang == 'en' else '✅ Тұрақты шығыс сақталды.'),
-        parse_mode=PARSE_MODE,
-    )
+    await c.message.answer(t(lang, 'RE_SAVED_EXPENSE'), parse_mode=PARSE_MODE)
     await cancel_to_main_menu(c, state, db)
 
 
-@router.callback_query(F.data.startswith('re:item:'))
-async def recurring_item(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
-    lang = await get_lang(db, c.from_user.id)
-    recurring_id = int(c.data.split(':')[-1])
-    row = await get_recurring_expense(db, c.from_user.id, recurring_id)
-    if not row:
-        await c.answer('Не найдено', show_alert=True)
-        return
-    archived = int(row['is_archived'] or 0) == 1
+def _recurring_card_lines(row, lang: str, *, reminder_head_key: str | None = None) -> list[str]:
     lines = [
         f"🔁 <b>{escape(str(row['title']))}</b>",
         '',
-        f"💰 {fmt_money(int(row['amount']))}",
-        f"🗂 {escape(str(row['category_name']))}",
-        f"🏦 {escape(str(row['account_name']))}",
-        f"📅 День месяца: <b>{int(row['day_of_month'])}</b>",
-        f"⏭ Следующая дата: <b>{escape(str(row['next_run_date']))}</b>",
     ]
+    if reminder_head_key:
+        lines.append(t(lang, reminder_head_key))
+    lines.extend([
+        t(lang, 'RE_CARD_AMOUNT').format(value=fmt_money(int(row['amount']))),
+        t(lang, 'RE_CARD_CATEGORY').format(value=escape(str(row['category_name']))),
+        t(lang, 'RE_CARD_ACCOUNT').format(value=escape(str(row['account_name']))),
+        t(lang, 'RE_CARD_DAY').format(value=int(row['day_of_month'])),
+        t(lang, 'RE_CARD_NEXT_RUN').format(value=escape(str(row['next_run_date']))),
+    ])
     if row['comment']:
-        lines.append(f"📝 {escape(str(row['comment']))}")
+        lines.append(t(lang, 'RE_CARD_COMMENT').format(value=escape(str(row['comment']))))
     if row['last_paid_at']:
-        lines.append(f"✅ Последняя отметка: <b>{escape(str(row['last_paid_at']))[:10]}</b>")
-    await _render_screen(c, state, '\n'.join(lines), reply_markup=recurring_actions_kb(recurring_id, archived=archived, lang=lang))
+        lines.append(t(lang, 'RE_CARD_LAST_PAID').format(value=escape(str(row['last_paid_at']))[:10]))
+    return lines
+
+
+@router.callback_query(F.data.startswith('re:item:'))
+async def recurring_item(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = 'ru'):
+    recurring_id = int(c.data.split(':')[-1])
+    row = await get_recurring_expense(db, c.from_user.id, recurring_id)
+    if not row:
+        await c.answer(t(lang, 'NOT_FOUND'), show_alert=True)
+        return
+    archived = int(row['is_archived'] or 0) == 1
+    await _render_screen(
+        c, state, '\n'.join(_recurring_card_lines(row, lang)),
+        reply_markup=recurring_actions_kb(recurring_id, archived=archived, lang=lang),
+    )
     await c.answer()
 
 
-
-
 @router.callback_query(F.data.startswith('re:remdetail:'))
-async def recurring_reminder_detail(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
-    lang = await get_lang(db, c.from_user.id)
+async def recurring_reminder_detail(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = 'ru'):
     recurring_id = int(c.data.split(':')[-1])
     row = await get_recurring_expense(db, c.from_user.id, recurring_id)
     if not row:
-        await c.answer('Не найдено', show_alert=True)
+        await c.answer(t(lang, 'NOT_FOUND'), show_alert=True)
         return
     archived = int(row['is_archived'] or 0) == 1
-    lines = [
-        f"🔁 <b>{escape(str(row['title']))}</b>",
-        '',
-        f"💰 {fmt_money(int(row['amount']))}",
-        f"🗂 {escape(str(row['category_name']))}",
-        f"🏦 {escape(str(row['account_name']))}",
-        f"📅 День месяца: <b>{int(row['day_of_month'])}</b>",
-        f"⏭ Следующая дата: <b>{escape(str(row['next_run_date']))}</b>",
-    ]
-    if row['comment']:
-        lines.append(f"📝 {escape(str(row['comment']))}")
-    if row['last_paid_at']:
-        lines.append(f"✅ Последняя отметка: <b>{escape(str(row['last_paid_at']))[:10]}</b>")
-    await _render_screen(c, state, '\n'.join(lines), reply_markup=recurring_actions_kb(recurring_id, archived=archived, lang=lang, back_cb=f're:remcard:{recurring_id}'))
+    await _render_screen(
+        c, state, '\n'.join(_recurring_card_lines(row, lang)),
+        reply_markup=recurring_actions_kb(recurring_id, archived=archived, lang=lang, back_cb=f're:remcard:{recurring_id}'),
+    )
     await c.answer()
 
 
 @router.callback_query(F.data.startswith('re:remcard:'))
-async def recurring_reminder_card(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
-    lang = await get_lang(db, c.from_user.id)
+async def recurring_reminder_card(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = 'ru'):
     recurring_id = int(c.data.split(':')[-1])
     row = await get_recurring_expense(db, c.from_user.id, recurring_id)
     if not row:
-        await c.answer('Не найдено', show_alert=True)
+        await c.answer(t(lang, 'NOT_FOUND'), show_alert=True)
         return
-    lines = [
-        f"🔁 <b>{escape(str(row['title']))}</b>",
-        '',
-        ('Напоминание по постоянному расходу.' if lang == 'ru' else ('Recurring expense reminder.' if lang == 'en' else 'Тұрақты шығыс туралы еске салу.')),
-        f"💰 {fmt_money(int(row['amount']))}",
-        f"🏦 {escape(str(row['account_name']))}",
-        f"🗂 {escape(str(row['category_name']))}",
-        f"📅 {escape(str(row['next_run_date']))}",
-    ]
-    if row['comment']:
-        lines.append(f"📝 {escape(str(row['comment']))}")
-    await _render_screen(c, state, '\n'.join(lines), reply_markup=recurring_reminder_actions_kb(recurring_id, lang))
+    await _render_screen(
+        c, state,
+        '\n'.join(_recurring_card_lines(row, lang, reminder_head_key='RE_REMINDER_HEAD_EXPENSE')),
+        reply_markup=recurring_reminder_actions_kb(recurring_id, lang),
+    )
     await c.answer()
 
 
 @router.callback_query(F.data.startswith('re:remindsnooze:'))
-async def recurring_snooze_from_reminder(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+async def recurring_snooze_from_reminder(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = 'ru'):
+    from app.domain.time_utils import today_in_user_tz
     recurring_id = int(c.data.split(':')[-1])
-    tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+    today_local = (await today_in_user_tz(db, c.from_user.id)).isoformat()
     try:
-        await mark_recurring_reminded(db, c.from_user.id, recurring_id, tomorrow)
+        await mark_recurring_reminded(db, c.from_user.id, recurring_id, today_local)
         await db.commit()
     except Exception:
         await db.rollback()
         raise
-    lang = await get_lang(db, c.from_user.id)
-    text = (
-        '🕒 <b>Напомню завтра</b>\\nСегодня больше не трогаю этот расход.'
-        if lang == 'ru' else
-        ('🕒 <b>I will remind you tomorrow</b>\\nI will not bother you about this expense again today.' if lang == 'en' else '🕒 <b>Ертең еске саламын</b>\\nБүгін бұл шығыс туралы қайта мазаламаймын.')
-    )
+    text = t(lang, "REMINDER_SNOOZED_EXPENSE")
+    actions = flow_done_actions_kb(lang, list_cb='re:list', menu_cb='hub:planning')
     try:
-        await c.message.edit_text(text, parse_mode=PARSE_MODE)
+        await c.message.edit_text(text, parse_mode=PARSE_MODE, reply_markup=actions)
     except Exception:
-        await c.message.answer(text, parse_mode=PARSE_MODE)
+        await c.message.answer(text, parse_mode=PARSE_MODE, reply_markup=actions)
     await c.answer()
 
 
 @router.callback_query(F.data.startswith('re:remindmanual:'))
-async def recurring_manual_from_reminder(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+async def recurring_manual_from_reminder(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = 'ru'):
     recurring_id = int(c.data.split(':')[-1])
     ts = now_iso()
     row = await get_recurring_expense(db, c.from_user.id, recurring_id)
     if not row:
-        await c.answer('Не найдено', show_alert=True)
+        await c.answer(t(lang, 'NOT_FOUND'), show_alert=True)
         return
     try:
         await mark_recurring_paid(db, c.from_user.id, recurring_id, ts)
@@ -564,16 +596,12 @@ async def recurring_manual_from_reminder(c: CallbackQuery, state: FSMContext, db
     except Exception:
         await db.rollback()
         raise
-    lang = await get_lang(db, c.from_user.id)
-    text = (
-        '🔗 <b>Отмечено как уже внесённое вручную</b>\\nНовый расход не создан, шаблон сдвинут на следующий месяц.'
-        if lang == 'ru' else
-        ('🔗 <b>Marked as already added manually</b>\\nNo new expense was created, the template was moved to the next month.' if lang == 'en' else '🔗 <b>Қолмен бұрын енгізілген деп белгіленді</b>\\nЖаңа шығыс жасалмады, үлгі келесі айға жылжытылды.')
-    )
+    text = t(lang, "REMINDER_MANUAL_EXPENSE")
+    actions = flow_done_actions_kb(lang, list_cb='re:list', menu_cb='hub:planning')
     try:
-        await c.message.edit_text(text, parse_mode=PARSE_MODE)
+        await c.message.edit_text(text, parse_mode=PARSE_MODE, reply_markup=actions)
     except Exception:
-        await c.message.answer(text, parse_mode=PARSE_MODE)
+        await c.message.answer(text, parse_mode=PARSE_MODE, reply_markup=actions)
     await c.answer()
 
 @router.callback_query(F.data.startswith('re:archive:'))
@@ -601,9 +629,10 @@ async def recurring_restore(c: CallbackQuery, state: FSMContext, db: aiosqlite.C
 
 
 async def _mark_expense_paid(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, recurring_id: int, *, from_reminder: bool):
+    lang = await get_lang(db, c.from_user.id)
     row = await get_recurring_expense(db, c.from_user.id, recurring_id)
     if not row:
-        await c.answer('Не найдено', show_alert=True)
+        await c.answer(t(lang, 'NOT_FOUND'), show_alert=True)
         return
     ts = now_iso()
     try:
@@ -614,19 +643,19 @@ async def _mark_expense_paid(c: CallbackQuery, state: FSMContext, db: aiosqlite.
     except Exception:
         await db.rollback()
         raise
+    text = t(lang, 'RE_PAID_OK')
+    actions = flow_done_actions_kb(lang, list_cb='re:list', menu_cb='hub:planning')
     if from_reminder:
         try:
-            await c.message.edit_text('✅ <b>Расход отмечен как оплаченный</b>\nШаблон сдвинут на следующий месяц, запись добавлена в историю.', parse_mode=PARSE_MODE)
+            await c.message.edit_text(text, parse_mode=PARSE_MODE, reply_markup=actions)
         except Exception:
-            await c.message.answer('✅ Расход отмечен как оплаченный и добавлен в историю.', parse_mode=PARSE_MODE)
-        await c.answer('Готово')
+            await c.message.answer(text, parse_mode=PARSE_MODE, reply_markup=actions)
+        await c.answer(t(lang, 'DONE_OK'))
         return
-    lang = await get_lang(db, c.from_user.id)
-    text = '✅ <b>Расход отмечен как оплаченный</b>\nШаблон сдвинут на следующий месяц, запись добавлена в историю.' if lang == 'ru' else ('✅ <b>Expense marked as paid</b>\nTemplate moved to the next month and saved to history.' if lang == 'en' else '✅ <b>Шығыс төленді деп белгіленді</b>\nҮлгі келесі айға жылжытылып, тарихқа сақталды.')
     await _clear_last_screen(c, state, forget=True)
     await _clear_recurring_flow_data(state)
-    await c.message.answer(text, reply_markup=await build_main_menu_markup(db, c.from_user.id, lang), parse_mode=PARSE_MODE)
-    await c.answer('Готово')
+    await c.message.answer(text, parse_mode=PARSE_MODE, reply_markup=actions)
+    await c.answer(t(lang, 'DONE_OK'))
 
 
 @router.callback_query(F.data.startswith('re:paid:'))

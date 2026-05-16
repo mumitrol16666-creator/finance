@@ -27,6 +27,14 @@ PARSE_MODE = "Markdown"
 def dbg(txt: str) -> str:
     return f"\n\n#DBG {txt}" if settings.debug else ""
 
+async def _try_delete(bot, chat_id: int, message_id: int | None) -> None:
+    if not message_id:
+        return
+    try:
+        await bot.delete_message(chat_id, int(message_id))
+    except Exception:
+        pass
+
 async def answer_md(m: Message, text: str, **kwargs):
     return await m.answer(text, parse_mode=PARSE_MODE, **kwargs)
 
@@ -76,6 +84,12 @@ async def ob_acc_name(m: Message, state: FSMContext, db):
     name = clean_name(m.text)
     if not name:
         return await answer_md(m, get_text(lang, 'NAME_ERROR'), reply_markup=cancel_kb(lang))
+    data = await state.get_data()
+    await _try_delete(m.bot, m.chat.id, data.get("prompt_message_id"))
+    try:
+        await m.delete()
+    except Exception:
+        pass
     await state.update_data(acc_name=name)
     await state.set_state(Onboarding.acc_balance)
     sent = await answer_md(m, get_text(lang, 'ASK_ACC_BAL'), reply_markup=cancel_kb(lang))
@@ -87,14 +101,22 @@ async def ob_acc_bal(m: Message, state: FSMContext, db):
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
-    bal = parse_positive_int(m.text, max_value=99_999_999)
-    if bal is None:
-        t = m.text.strip().replace(' ', '')
-        if t.isdigit() and int(t) == 0:
-            bal = 0
-        else:
+    # Опорный 0 разрешён (открыли счёт с нулевым балансом), поэтому проверяем
+    # его отдельно — parse_money всегда отвергает 0 как невалидный.
+    from app.domain.money import parse_money_for_user
+    raw = (m.text or "").strip().replace(" ", "").replace(",", ".")
+    if raw in {"0", "0.0", "0.00"}:
+        bal = 0
+    else:
+        bal = await parse_money_for_user(db, m.from_user.id, m.text, max_minor=99_999_999_00)
+        if bal is None:
             return await answer_md(m, get_text(lang, 'SUM_ERROR'), reply_markup=cancel_kb(lang))
     data = await state.get_data()
+    await _try_delete(m.bot, m.chat.id, data.get("prompt_message_id"))
+    try:
+        await m.delete()
+    except Exception:
+        pass
     await add_account(db, m.from_user.id, data['acc_name'], bal)
     await state.clear()
     await answer_md(m, get_text(lang, 'ASK_ADD_MORE'), reply_markup=yes_no_kb('ob:moreacc', lang))

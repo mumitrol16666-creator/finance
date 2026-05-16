@@ -40,8 +40,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _current_month() -> str:
-    return datetime.now().strftime("%Y-%m")
+async def _current_month(db: aiosqlite.Connection, user_id: int) -> str:
+    from app.domain.time_utils import user_month_key
+    return await user_month_key(db, user_id)
 
 
 async def _safe_delete_message(bot, chat_id: int, message_id: int | None) -> None:
@@ -125,7 +126,7 @@ async def _show_prompt(target: Message | CallbackQuery, state: FSMContext, db: a
 
 async def _ensure_limit(db: aiosqlite.Connection, user_id: int) -> tuple[int, str]:
     used, month = await get_ai_usage(db, user_id)
-    current_month = _current_month()
+    current_month = await _current_month(db, user_id)
     if month != current_month:
         used = 0
         await set_ai_usage(db, user_id, 0, current_month, _now_iso())

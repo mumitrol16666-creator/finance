@@ -17,7 +17,7 @@ from app.db.repositories.settings_repo import (
     mark_nudge_sent,
 )
 from app.db.repositories.users_repo import get_streak
-from app.domain.services.reports_service import report_period, report_by_category
+from app.domain.services.reports_service import report_period, report_by_category, build_smart_suggestion
 from app.db.repositories.recurring_repo import (
     list_due_recurring_expenses,
     list_due_recurring_incomes,
@@ -25,10 +25,30 @@ from app.db.repositories.recurring_repo import (
     mark_recurring_income_reminded,
 )
 from app.db.repositories.planned_repo import list_due_planned, mark_planned_reminded
+from app.db.repositories.debts_repo import (
+    list_due_debts_for_reminders,
+    debt_reminder_already_sent,
+    mark_debt_reminder_sent,
+)
 
 
 TOP_CATS = 5
 NUDGE_START_HH = 9  # локально с 09:00
+_suppressed_until: dict[int, datetime] = {}
+
+def suppress_notifications_for(user_id: int, seconds: int):
+    _suppressed_until[user_id] = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+
+def _is_suppressed(user_id: int) -> bool:
+    until = _suppressed_until.get(user_id)
+    if not until:
+        return False
+    if datetime.now(timezone.utc) > until:
+        # Cleanup
+        try: del _suppressed_until[user_id]
+        except: pass
+        return False
+    return True
 
 
 def _fmt_human_date(dt) -> str:
@@ -355,7 +375,7 @@ PRE_MID = [
     "⏰ До отчёта около часа. День уже собран неплохо, просто проверь хвосты.",
     "⏰ Скоро итог дня. Картина уже есть, осталось дочистить мелочь.",
     "⏰ Через час отчёт. Нормальный момент быстро пройтись по сегодняшним записям.",
-    "⏰ До итога недолго. Если что-то всплыло позже, добавь сейчас.",
+    "⏰ До итога недолго. Если что-то упустил, добавь сейчас.",
     "⏰ Скоро отчёт. День уже выглядит рабочим, просто добей остатки.",
     "⏰ Почти время итога. Быстрая проверка и день можно закрывать.",
     "⏰ Через час отчёт. Всё идёт нормально, просто не забудь мелочи.",
@@ -435,6 +455,82 @@ def _fmt_money(n: int) -> str:
     return " ".join(reversed(parts))
 
 
+def _ru_entries_word(n: int) -> str:
+    n = abs(int(n)) % 100
+    n1 = n % 10
+    if 11 <= n <= 14:
+        return "записей"
+    if n1 == 1:
+        return "запись"
+    if 2 <= n1 <= 4:
+        return "записи"
+    return "записей"
+
+
+def _today_snapshot_prefix(
+    lang: str,
+    *,
+    cnt: int,
+    income: int,
+    expense_raw: int,
+    currency: str,
+) -> str:
+    """Short header for nudges / pre-report: entry count + optional spend/income (not for morning tone)."""
+    lang = (lang or "ru").lower()
+    from app.domain.money import fmt_money_compact
+
+    cnt = int(cnt or 0)
+    inc_mag = int(income or 0)
+    exp_mag = abs(int(expense_raw or 0))
+
+    if lang == "en":
+        if cnt == 0:
+            line1 = "📋 <b>No entries today yet.</b>"
+        elif cnt == 1:
+            line1 = "📋 <b>Already 1 entry today.</b>"
+        else:
+            line1 = f"📋 <b>Already {cnt} entries today.</b>"
+    elif lang == "kk":
+        if cnt == 0:
+            line1 = "📋 <b>Бүгін әлі жазба жоқ.</b>"
+        elif cnt == 1:
+            line1 = "📋 <b>Бүгін бұрыннан 1 жазба бар.</b>"
+        else:
+            line1 = f"📋 <b>Бүгін қазірдің өзінде {cnt} жазба.</b>"
+    else:
+        if cnt == 0:
+            line1 = "📋 <b>Сегодня в учёте пока пусто.</b>"
+        else:
+            line1 = f"📋 <b>Уже {cnt} {_ru_entries_word(cnt)} сегодня.</b>"
+
+    lines: list[str] = [line1]
+    if cnt > 0 and (exp_mag > 0 or inc_mag > 0):
+        if lang == "en":
+            parts = []
+            if exp_mag > 0:
+                parts.append(f"Spent: −{fmt_money_compact(exp_mag, currency)}")
+            if inc_mag > 0:
+                parts.append(f"Income: +{fmt_money_compact(inc_mag, currency)}")
+            lines.append(" · ".join(parts))
+        elif lang == "kk":
+            parts = []
+            if exp_mag > 0:
+                parts.append(f"Шығыс: −{fmt_money_compact(exp_mag, currency)}")
+            if inc_mag > 0:
+                parts.append(f"Кіріс: +{fmt_money_compact(inc_mag, currency)}")
+            lines.append(" · ".join(parts))
+        else:
+            parts = []
+            if exp_mag > 0:
+                parts.append(f"Расходы: −{fmt_money_compact(exp_mag, currency)}")
+            if inc_mag > 0:
+                parts.append(f"Доходы: +{fmt_money_compact(inc_mag, currency)}")
+            lines.append(" · ".join(parts))
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _day_bounds_utc(now_utc: datetime, tz_name: str) -> tuple[datetime, datetime, str, str]:
     tz, tz_norm = _safe_tz(tz_name)
     local_now = now_utc.astimezone(tz)
@@ -498,80 +594,231 @@ async def _send_safe(bot, user_id: int, text: str, parse_mode: str | None = None
         kwargs = {"parse_mode": parse_mode} if parse_mode else {}
         await bot.send_message(user_id, text, **kwargs)
     except Exception as e:
-        logger.warning(f"send failed uid={user_id}: {e}")
+        err_msg = str(e).lower()
+        # Mute common "user left" errors to INFO level instead of WARNING
+        if "chat not found" in err_msg or "forbidden" in err_msg or "user is deactivated" in err_msg:
+            logger.info(f"skipping inactive user {user_id}: {e}")
+        else:
+            logger.warning(f"send failed uid={user_id}: {e}")
 
 
-
-
-
-def _recurring_reminder_kb(kind: str, recurring_id: int, lang: str):
-    lang = (lang or 'ru').lower()
+def _recurring_reminder_kb(kind: str, recurring_id: int, lang: str = 'ru'):
     kb = InlineKeyboardBuilder()
     if kind == 'expense':
         kb.button(text='✅ Оплачено' if lang == 'ru' else ('✅ Paid' if lang == 'en' else '✅ Төленді'), callback_data=f're:remindpay:{recurring_id}')
         kb.button(text='🕒 Завтра' if lang == 'ru' else ('🕒 Tomorrow' if lang == 'en' else '🕒 Ертең'), callback_data=f're:remindsnooze:{recurring_id}')
-        kb.button(text='🔗 Уже внёс вручную' if lang == 'ru' else ('🔗 Already added manually' if lang == 'en' else '🔗 Қолмен енгізіп қойдым'), callback_data=f're:remindmanual:{recurring_id}')
-        kb.button(text='📂 Открыть' if lang == 'ru' else ('📂 Open' if lang == 'en' else '📂 Ашу'), callback_data=f're:remcard:{recurring_id}')
     else:
         kb.button(text='✅ Получено' if lang == 'ru' else ('✅ Received' if lang == 'en' else '✅ Алынды'), callback_data=f'ri:remindrecv:{recurring_id}')
-        kb.button(text='🚫 Не получил' if lang == 'ru' else ("🚫 Didn't receive" if lang == 'en' else '🚫 Алынбады'), callback_data=f'ri:remindmissed:{recurring_id}')
         kb.button(text='🕒 Завтра' if lang == 'ru' else ('🕒 Tomorrow' if lang == 'en' else '🕒 Ертең'), callback_data=f'ri:remindsnooze:{recurring_id}')
-        kb.button(text='🔗 Уже внёс вручную' if lang == 'ru' else ('🔗 Already added manually' if lang == 'en' else '🔗 Қолмен енгізіп қойдым'), callback_data=f'ri:remindmanual:{recurring_id}')
-        kb.button(text='📂 Открыть' if lang == 'ru' else ('📂 Open' if lang == 'en' else '📂 Ашу'), callback_data=f'ri:remcard:{recurring_id}')
-    kb.adjust(2, 2, 1)
+    
+    kb.button(text='🏠 Меню' if lang == 'ru' else ('🏠 Menu' if lang == 'en' else '🏠 Мәзір'), callback_data='hub:main')
+    kb.button(text='📂 Открыть' if lang == 'ru' else ('📂 Open' if lang == 'en' else '📂 Ашу'), callback_data=f'r{kind[0]}:remcard:{recurring_id}')
+    kb.adjust(2, 2)
     return kb.as_markup()
 
 
-async def _send_recurring_reminders(bot, db: aiosqlite.Connection, user_id: int, currency: str, tz_name: str, lang: str, now_utc: datetime):
+def _planned_reminder_kb(planned_id: int, lang: str = 'ru'):
+    kb = InlineKeyboardBuilder()
+    kb.button(text='✅ Проведено' if lang == 'ru' else ('✅ Done' if lang == 'en' else '✅ Өтті'), callback_data=f'pl:done:{planned_id}')
+    kb.button(text='🕒 Завтра' if lang == 'ru' else ('🕒 Tomorrow' if lang == 'en' else '🕒 Ертең'), callback_data=f'pl:remindsnooze:{planned_id}')
+    kb.button(text='🏠 Меню' if lang == 'ru' else ('🏠 Menu' if lang == 'en' else '🏠 Мәзір'), callback_data='hub:main')
+    kb.button(text='📂 Открыть' if lang == 'ru' else ('📂 Open' if lang == 'en' else '📂 Ашу'), callback_data=f'pl:remcard:{planned_id}')
+    kb.adjust(2, 2)
+    return kb.as_markup()
+
+
+def _debt_reminder_kb(debt_id: int, direction: str, lang: str = 'ru'):
+    kb = InlineKeyboardBuilder()
+    kb.button(text='✅ Оплачено' if lang == 'ru' else ('✅ Paid' if lang == 'en' else '✅ Төленді'), callback_data=f'debt:pay:{debt_id}')
+    kb.button(text='🕒 Завтра' if lang == 'ru' else ('🕒 Tomorrow' if lang == 'en' else '🕒 Ертең'), callback_data=f'debt:remindsnooze:{debt_id}')
+    kb.button(text='🏠 Меню' if lang == 'ru' else ('🏠 Menu' if lang == 'en' else '🏠 Мәзір'), callback_data='hub:main')
+    kb.button(text='📂 Открыть' if lang == 'ru' else ('📂 Open' if lang == 'en' else '📂 Ашу'), callback_data=f'debt:open:{debt_id}:{direction}')
+    kb.adjust(2, 2)
+    return kb.as_markup()
+
+
+def _debt_kind_text(lang: str, direction: str, dtype: str) -> str:
+    if lang == "en":
+        return "loan payment" if direction == "out" and dtype == "bank" else ("you owe" if direction == "out" else "owed to you")
+    if lang == "kk":
+        return "несие төлемі" if direction == "out" and dtype == "bank" else ("сіз қарызсыз" if direction == "out" else "сізге қарыз")
+    return "платёж по кредиту" if direction == "out" and dtype == "bank" else ("вы должны" if direction == "out" else "вам должны")
+
+
+def _debt_date_human(date_str: str) -> str:
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        months_ru = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+        return f"{d.day} {months_ru[d.month - 1]} {d.year}"
+    except Exception:
+        return date_str or "—"
+
+
+def _build_debt_reminder_text(lang: str, debt: dict, days_left: int, currency: str) -> tuple[str, str]:
+    title = debt.get("title") or "—"
+    amount = int(debt.get("payment_amount") or 0)
+    due = str(debt.get("next_payment_date") or "")
+    kind = _debt_kind_text(lang, str(debt.get("direction") or "out"), str(debt.get("dtype") or "private"))
+    amount_line = f"{_fmt_money(amount)} {currency}" if amount > 0 else ("not fixed" if lang == "en" else ("бекітілмеген" if lang == "kk" else "не фиксирован"))
+
+    if days_left < 0:
+        key = "overdue"
+        if lang == "en":
+            text = f"🔴 <b>Overdue debt reminder</b>\n\n<b>{title}</b> — {kind}.\nDue date: <b>{_debt_date_human(due)}</b>\nPlanned payment: <b>{amount_line}</b>\n\nThe payment date has already passed."
+        elif lang == "kk":
+            text = f"🔴 <b>Қарыз бойынша кешігу</b>\n\n<b>{title}</b> — {kind}.\nТөлем күні: <b>{_debt_date_human(due)}</b>\nЖоспарланған төлем: <b>{amount_line}</b>\n\nТөлем күні өтіп кетті."
+        else:
+            text = f"🔴 <b>Просрочка по долгу</b>\n\n<b>{title}</b> — {kind}.\nДата: <b>{_debt_date_human(due)}</b>\nПлановый платёж: <b>{amount_line}</b>\n\nСрок платежа уже прошёл."
+    elif days_left == 0:
+        key = "today"
+        if lang == "en":
+            text = f"🟡 <b>Debt reminder for today</b>\n\n<b>{title}</b> — {kind}.\nDue date: <b>today</b>\nPlanned payment: <b>{amount_line}</b>."
+        elif lang == "kk":
+            text = f"🟡 <b>Бүгінгі қарыз еске салғышы</b>\n\n<b>{title}</b> — {kind}.\nТөлем күні: <b>бүгін</b>\nЖоспарланған төлем: <b>{amount_line}</b>."
+        else:
+            text = f"🟡 <b>Напоминание по долгу на сегодня</b>\n\n<b>{title}</b> — {kind}.\nДата платежа: <b>сегодня</b>\nПлановый платёж: <b>{amount_line}</b>."
+    else:
+        key = "soon"
+        if lang == "en":
+            text = f"🟠 <b>Upcoming debt reminder</b>\n\n<b>{title}</b> — {kind}.\nDue in: <b>{days_left} day(s)</b>\nDate: <b>{_debt_date_human(due)}</b>\nPlanned payment: <b>{amount_line}</b>."
+        elif lang == "kk":
+            text = f"🟠 <b>Жақында болатын қарыз</b>\n\n<b>{title}</b> — {kind}.\nҚалғаны: <b>{days_left} күн</b>\nКүні: <b>{_debt_date_human(due)}</b>\nЖоспарланған төлем: <b>{amount_line}</b>."
+        else:
+            text = f"🟠 <b>Скорый платёж по долгу</b>\n\n<b>{title}</b> — {kind}.\nДо даты: <b>{days_left} дн.</b>\nДата: <b>{_debt_date_human(due)}</b>\nПлановый платёж: <b>{amount_line}</b>."
+    return key, text
+
+
+async def _send_debt_reminders(
+    bot,
+    db: aiosqlite.Connection,
+    user_id: int,
+    currency: str,
+    tz_name: str,
+    lang: str,
+    days_before: int,
+    now_utc: datetime,
+) -> None:
+    tz, _ = _safe_tz(tz_name)
+    local_now = now_utc.astimezone(tz)
+    local_date = local_now.date().isoformat()
+    if local_now.hour < 9:
+        return
+
+    snap_holder: list[str | None] = [None]
+
+    async def _snap_for_push() -> str:
+        if snap_holder[0] is None:
+            start_utc, end_utc, _, _ = _day_bounds_utc(now_utc, tz_name)
+            income, expense, cnt_today = await report_period(db, user_id, start_utc, end_utc)
+            snap_holder[0] = _today_snapshot_prefix(
+                lang,
+                cnt=cnt_today,
+                income=income,
+                expense_raw=expense,
+                currency=str(currency or "KZT"),
+            )
+        return snap_holder[0]
+
+    rows = await list_due_debts_for_reminders(db, user_id)
+    for row in rows:
+        debt = {
+            "id": row[0], "title": row[1], "payment_amount": row[2], "next_payment_date": row[3],
+            "remaining_amount": row[4], "dtype": row[5], "direction": row[6], "is_active": row[7],
+        }
+        try:
+            due = datetime.strptime(str(debt.get("next_payment_date")), "%Y-%m-%d").date()
+        except Exception:
+            continue
+        days_left = (due - local_now.date()).days
+        if days_left > int(days_before or 3):
+            continue
+        reminder_kind, text = _build_debt_reminder_text(lang, debt, days_left, currency)
+        if await debt_reminder_already_sent(db, int(user_id), int(debt["id"]), reminder_kind, local_date):
+            continue
+        full_text = (await _snap_for_push()) + text
+        await bot.send_message(user_id, full_text, parse_mode='HTML', reply_markup=_debt_reminder_kb(int(debt["id"]), str(debt.get("direction", "out")), lang))
+        await mark_debt_reminder_sent(db, int(user_id), int(debt["id"]), reminder_kind, local_date)
+
+
+async def _send_recurring_reminders(
+    bot, db, user_id: int, currency: str, tz_name: str, lang: str, now_utc: datetime,
+    inc_enabled: int = 1, inc_days: int = 0,
+    exp_enabled: int = 1, exp_days: int = 1
+):
+    from html import escape as _escape
+    from app.domain.money import fmt_money as _money_fmt
+    from app.ui.i18n import t as _i18n_t
+
     tz, _ = _safe_tz(tz_name)
     local_now = now_utc.astimezone(tz)
     local_date = local_now.date().isoformat()
 
-    exp_rows = await list_due_recurring_expenses(db, user_id, local_date, 3)
-    for row in exp_rows:
-        if str(row['last_reminded_on'] or '') == local_date:
-            continue
-        due = str(row['next_run_date'] or '')
-        title = str(row['title'] or 'Платёж')
-        amount = _fmt_money(int(row['amount'] or 0))
-        account = str(row['account_name'] or '—')
-        if due == local_date:
-            text = f"🔁 <b>Постоянный расход сегодня</b>\n• {title} — <b>{amount} {currency}</b>\n• Счёт: <b>{account}</b>"
-        else:
-            text = f"🔁 <b>Скоро постоянный расход</b>\n• {title} — <b>{amount} {currency}</b>\n• Дата: <b>{due}</b>\n• Счёт: <b>{account}</b>"
-        await bot.send_message(user_id, text, parse_mode='HTML', reply_markup=_recurring_reminder_kb('expense', int(row['id']), lang))
-        await mark_recurring_reminded(db, user_id, int(row['id']), local_date)
+    snap_holder: list[str | None] = [None]
 
-    inc_rows = await list_due_recurring_incomes(db, user_id, local_date, 3)
-    for row in inc_rows:
-        if str(row['last_reminded_on'] or '') == local_date:
-            continue
-        due = str(row['next_run_date'] or '')
-        title = str(row['title'] or 'Поступление')
-        amount = _fmt_money(int(row['amount'] or 0))
-        account = str(row['account_name'] or '—')
-        if due == local_date:
-            text = f"♻️ <b>Постоянный доход сегодня</b>\n• {title} — <b>{amount} {currency}</b>\n• Счёт: <b>{account}</b>"
-        else:
-            text = f"♻️ <b>Скоро постоянный доход</b>\n• {title} — <b>{amount} {currency}</b>\n• Дата: <b>{due}</b>\n• Счёт: <b>{account}</b>"
-        await bot.send_message(user_id, text, parse_mode='HTML', reply_markup=_recurring_reminder_kb('income', int(row['id']), lang))
-        await mark_recurring_income_reminded(db, user_id, int(row['id']), local_date)
+    async def _snap_for_push() -> str:
+        if snap_holder[0] is None:
+            start_utc, end_utc, _, _ = _day_bounds_utc(now_utc, tz_name)
+            income, expense, cnt_today = await report_period(db, user_id, start_utc, end_utc)
+            snap_holder[0] = _today_snapshot_prefix(
+                lang,
+                cnt=cnt_today,
+                income=income,
+                expense_raw=expense,
+                currency=str(currency or "KZT"),
+            )
+        return snap_holder[0]
+
+    def _amount(value) -> str:
+        return _money_fmt(int(value or 0), currency=str(currency or "KZT"))
+
+    if int(exp_enabled or 0) == 1:
+        exp_rows = await list_due_recurring_expenses(db, user_id, local_date, int(exp_days or 1))
+        for row in exp_rows:
+            if str(row['last_reminded_on'] or '') == local_date:
+                continue
+            due = str(row['next_run_date'] or '')
+            title = _escape(str(row['title'] or '—'))
+            amount = _amount(row['amount'])
+            account = _escape(str(row['account_name'] or '—'))
+            if due == local_date:
+                text = _i18n_t(lang, "PUSH_RECURRING_EXPENSE_TODAY").format(title=title, amount=amount, account=account)
+            else:
+                text = _i18n_t(lang, "PUSH_RECURRING_EXPENSE_SOON").format(title=title, amount=amount, date=due, account=account)
+            full_text = (await _snap_for_push()) + text
+            await bot.send_message(user_id, full_text, parse_mode='HTML', reply_markup=_recurring_reminder_kb('expense', int(row['id']), lang))
+            await mark_recurring_reminded(db, user_id, int(row['id']), local_date)
+
+    if int(inc_enabled or 0) == 1:
+        inc_rows = await list_due_recurring_incomes(db, user_id, local_date, int(inc_days or 0))
+        for row in inc_rows:
+            if str(row['last_reminded_on'] or '') == local_date:
+                continue
+            due = str(row['next_run_date'] or '')
+            title = _escape(str(row['title'] or '—'))
+            amount = _amount(row['amount'])
+            account = _escape(str(row['account_name'] or '—'))
+            if due == local_date:
+                text = _i18n_t(lang, "PUSH_RECURRING_INCOME_TODAY").format(title=title, amount=amount, account=account)
+            else:
+                text = _i18n_t(lang, "PUSH_RECURRING_INCOME_SOON").format(title=title, amount=amount, date=due, account=account)
+            full_text = (await _snap_for_push()) + text
+            await bot.send_message(user_id, full_text, parse_mode='HTML', reply_markup=_recurring_reminder_kb('income', int(row['id']), lang))
+            await mark_recurring_income_reminded(db, user_id, int(row['id']), local_date)
 
     planned_rows = await list_due_planned(db, user_id, local_date, 3)
     for row in planned_rows:
         if str(row['last_reminded_on'] or '') == local_date:
             continue
         due = str(row['planned_date'] or '')
-        title = str(row['title'] or 'План')
-        amount = _fmt_money(int(row['amount'] or 0))
-        account = str(row['account_name'] or '—')
-        kind = str(row['kind'] or 'expense')
-        sign = '➕' if kind == 'income' else '➖'
+        title = _escape(str(row['title'] or '—'))
+        amount = _amount(row['amount'])
+        account = _escape(str(row['account_name'] or '—'))
         if due == local_date:
-            text = f"🗓 <b>Плановая операция сегодня</b>\n• {title} — <b>{sign}{amount} {currency}</b>\n• Счёт: <b>{account}</b>"
+            text = _i18n_t(lang, "PUSH_PLANNED_TODAY").format(title=title, sign='—', amount=amount, account=account)
         else:
-            text = f"🗓 <b>Скоро плановая операция</b>\n• {title} — <b>{sign}{amount} {currency}</b>\n• Дата: <b>{due}</b>\n• Счёт: <b>{account}</b>"
-        await bot.send_message(user_id, text, parse_mode='HTML', reply_markup=_planned_reminder_kb(int(row['id']), lang))
+            text = _i18n_t(lang, "PUSH_PLANNED_SOON").format(title=title, sign='—', amount=amount, date=due, account=account)
+        full_text = (await _snap_for_push()) + text
+        await bot.send_message(user_id, full_text, parse_mode='HTML', reply_markup=_planned_reminder_kb(int(row['id']), lang))
         await mark_planned_reminded(db, user_id, int(row['id']), local_date)
 
 
@@ -587,7 +834,7 @@ async def _build_daily_text(
     income, expense, cnt = await report_period(db, user_id, start_utc, end_utc)
     cats = await report_by_category(db, user_id, start_utc, end_utc, "expense", 5)
 
-    # балансы счетов — используем уже существующий list_accounts
+    # балансы счетов
     accounts = await list_accounts(db, user_id)
     balances = [(name, int(bal or 0)) for _, name, bal, arch in accounts if not int(arch or 0)]
     total_balance = sum(bal for _, bal in balances)
@@ -642,14 +889,14 @@ async def _build_daily_text(
         "",
         f"{'⚪' if cnt == 0 else '🔥'} Операций: {cnt}",
         f"Серия: {cur_streak} дн. (лучшее {best_streak})",
+        "",
+        await build_smart_suggestion(db, user_id, "ru")
     ]
 
     return "\n".join(lines)
 
 async def tick_notify(bot, db: aiosqlite.Connection):
     now_utc = datetime.now(timezone.utc)
-
-    # окно 70 секунд, так как тик каждую минуту
     window = timedelta(seconds=70)
 
     targets = await list_notify_targets(db)
@@ -667,10 +914,16 @@ async def tick_notify(bot, db: aiosqlite.Connection):
             nudge_last_sent_at,
             debts_enabled,
             debts_days_before,
+            inc_enabled,
+            inc_days,
+            exp_enabled,
+            exp_days,
 
     ) in targets:
         try:
             uid = int(user_id)
+            if _is_suppressed(uid):
+                continue
             tz, tz_norm = _safe_tz(str(tz_name or "UTC"))
 
             local_now = now_utc.astimezone(tz)
@@ -682,13 +935,28 @@ async def tick_notify(bot, db: aiosqlite.Connection):
             report_local = local_now.replace(hour=rep_h, minute=rep_m, second=0, microsecond=0)
             pre_local = report_local - timedelta(hours=1)
 
-            await _send_recurring_reminders(bot, db, uid, str(currency or "KZT"), tz_norm, str(lang or "ru"), now_utc)
+            await _send_recurring_reminders(
+                bot, db, uid, str(currency or "KZT"), tz_norm, str(lang or "ru"), now_utc,
+                int(inc_enabled or 1), int(inc_days or 0),
+                int(exp_enabled or 1), int(exp_days or 1)
+            )
+
+            if int(debts_enabled or 0) == 1:
+                try:
+                    await _send_debt_reminders(
+                        bot, db, uid,
+                        str(currency or "KZT"),
+                        tz_norm,
+                        str(lang or "ru"),
+                        int(debts_days_before or 3),
+                        now_utc,
+                    )
+                except Exception as e:
+                    logger.warning(f"debt reminders failed uid={uid}: {e}")
 
             # ---------------- NUDGES ----------------
             if int(nudge_enabled or 0) == 1:
                 interval = int(nudge_interval_min or 180)
-
-                # окно: 09:00 .. min(22:00, время_отчёта - 1ч)
                 nudge_end = report_local - timedelta(hours=1)
                 end_cap = local_now.replace(hour=22, minute=0, second=0, microsecond=0)
                 if nudge_end > end_cap:
@@ -719,27 +987,52 @@ async def tick_notify(bot, db: aiosqlite.Connection):
                             should_send = True
 
                 if should_send:
-                    _, _, cnt_today = await report_period(db, uid, start_utc, end_utc)
-                    nudge_text = _build_nudge_text(uid, local_now, cnt_today)
+                    income, expense, cnt_today = await report_period(db, uid, start_utc, end_utc)
+                    nudge_body = _build_nudge_text(uid, local_now, cnt_today)
+                    cur = str(currency or "KZT")
+                    lng = str(lang or "ru")
+                    if int(local_now.hour) >= 11:
+                        snap = _today_snapshot_prefix(
+                            lng,
+                            cnt=cnt_today,
+                            income=income,
+                            expense_raw=expense,
+                            currency=cur,
+                        )
+                        nudge_text = snap + nudge_body
+                        await _send_safe(bot, uid, nudge_text, parse_mode="HTML")
+                    else:
+                        await _send_safe(bot, uid, nudge_body)
 
-                    await _send_safe(bot, uid, nudge_text)
                     await mark_nudge_sent(db, uid, _iso(now_utc))
 
             # ---------------- PRE + DAILY REPORT ----------------
             if int(daily_enabled or 0) == 1:
                 # PRE
                 if (pre_last_sent or "") != local_date and _in_window(local_now, pre_local, window):
-                    _, _, cnt_today = await report_period(db, uid, start_utc, end_utc)
+                    income, expense, cnt_today = await report_period(db, uid, start_utc, end_utc)
+                    cur = str(currency or "KZT")
+                    lng = str(lang or "ru")
+                    snap = _today_snapshot_prefix(
+                        lng,
+                        cnt=cnt_today,
+                        income=income,
+                        expense_raw=expense,
+                        currency=cur,
+                    )
+                    pre_body = _build_pre_text(uid, local_now, cnt_today)
+                    pre_text = snap + pre_body
 
-                    pre_text = _build_pre_text(uid, local_now, cnt_today)
-
-                    await _send_safe(bot, uid, pre_text)
+                    await _send_safe(bot, uid, pre_text, parse_mode="HTML")
                     await mark_daily_pre_sent(db, uid, local_date, _iso(now_utc))
 
                 # REPORT
                 if (last_sent or "") != local_date and _in_window(local_now, report_local, window):
                     text = await _build_daily_text(db, uid, str(currency or "KZT"), tz_norm, now_utc)
-                    await _send_safe(bot, uid, text)
+                    # Add Menu button to Daily Report?
+                    kb = InlineKeyboardBuilder()
+                    kb.button(text="🏠 Меню" if lang=="ru" else ("🏠 Menu" if lang=="en" else "🏠 Мәзір"), callback_data="hub:main")
+                    await bot.send_message(uid, text, reply_markup=kb.as_markup())
                     await mark_daily_sent(db, uid, local_date, _iso(now_utc))
 
         except Exception as e:
@@ -762,12 +1055,3 @@ def setup_notify_scheduler(bot, db: aiosqlite.Connection) -> AsyncIOScheduler:
         misfire_grace_time=30,
     )
     return sch
-
-def _planned_reminder_kb(planned_id: int, lang: str = 'ru'):
-    kb = InlineKeyboardBuilder()
-    kb.button(text='✅ Проведено' if lang == 'ru' else ('✅ Done' if lang == 'en' else '✅ Өтті'), callback_data=f'pl:done:{planned_id}')
-    kb.button(text='🕒 Завтра' if lang == 'ru' else ('🕒 Tomorrow' if lang == 'en' else '🕒 Ертең'), callback_data=f'pl:remindsnooze:{planned_id}')
-    kb.button(text='🔗 Уже внёс вручную' if lang == 'ru' else ('🔗 Already added manually' if lang == 'en' else '🔗 Қолмен енгізіп қойдым'), callback_data=f'pl:remindmanual:{planned_id}')
-    kb.button(text='📂 Открыть' if lang == 'ru' else ('📂 Open' if lang == 'en' else '📂 Ашу'), callback_data=f'pl:remcard:{planned_id}')
-    kb.adjust(2, 2)
-    return kb.as_markup()

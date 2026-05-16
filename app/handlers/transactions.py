@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 from html import escape
+
+from app.domain.time_utils import user_month_key
 
 from aiogram import Router, F
 from aiogram.types import (
@@ -15,6 +16,7 @@ from aiogram.fsm.context import FSMContext
 
 from app.fsm.states import ExpenseFlow, IncomeFlow, TransferFlow
 from app.domain.validators import parse_positive_int, clean_note
+from app.domain.money import parse_money_for_user
 from app.domain.services.ai_service import simple_feedback
 from app.domain.services.accounting_service import (
     get_balance_after,
@@ -24,7 +26,7 @@ from app.domain.services.accounting_service import (
 )
 
 from app.db.repositories.accounts_repo import list_accounts, get_account
-from app.db.repositories.categories_repo import list_categories, get_category
+from app.db.repositories.categories_repo import list_categories, get_category, create_category, name_exists_any_kind
 from app.db.repositories.settings_repo import get_settings, get_lang
 from app.db.repositories.budgets_repo import (
     get_category_budget,
@@ -32,9 +34,9 @@ from app.db.repositories.budgets_repo import (
     month_spent_map,
 )
 
-from app.handlers.common import cancel_to_main_menu, is_cancel_text, deny_feature_message, build_main_menu_markup
+from app.handlers.common import cancel_to_main_menu, is_cancel_text, deny_feature_message, build_main_menu_markup, neutralize_keyboard
 from app.domain.services.access_service import FEATURE_TRANSFER, can_use_feature
-from app.ui.i18n import text_matches_key
+from app.ui.i18n import text_matches_key, t as _i18n_t
 from app.ui.keyboards import (
     cancel_kb,
     accounts_kb,
@@ -107,7 +109,7 @@ async def start_prefilled_expense(
         cat = await _validate_category(db, user_id, int(category_id))
         if cat:
             _, cat_name, cat_emoji, _, _ = cat
-            month = datetime.now().strftime("%Y-%m")
+            month = await user_month_key(db, user_id)
             category_limit = await get_category_budget(
                 db=db,
                 user_id=user_id,
@@ -196,8 +198,8 @@ async def start_prefilled_income(
         return
 
     if note is None and not skip_note_prompt:
-        await state.set_state(ExpenseFlow.need_note)
-        await _exp_render_need_note(target, state)
+        await state.set_state(IncomeFlow.need_note)
+        await _inc_render_need_note(target, state)
         return
 
     await state.set_state(IncomeFlow.confirm)
@@ -580,6 +582,46 @@ async def _validate_category(db, user_id: int, category_id: int):
     return cat
 
 
+async def _try_auto_pick_only_account(
+    db,
+    user_id: int,
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    *,
+    is_expense: bool,
+) -> bool:
+    """If the user has exactly one active account, skip the picker and continue."""
+    accs = await list_accounts(db, user_id)
+    active = [r for r in accs if int(r[3] or 0) == 0]
+    if len(active) != 1:
+        return False
+    acc_id = int(active[0][0])
+    acc = await _validate_account(db, user_id, acc_id)
+    if not acc:
+        return False
+    await state.update_data(
+        account_id=acc_id,
+        account_name=acc[1],
+        balance_before=acc[2],
+    )
+    data = await state.get_data()
+    if is_expense:
+        if data.get("category_id"):
+            await state.set_state(ExpenseFlow.confirm)
+            await _exp_render_confirm(target, state, db)
+        else:
+            await state.set_state(ExpenseFlow.category)
+            await _exp_render_category(target, state, db)
+    else:
+        if data.get("category_id"):
+            await state.set_state(IncomeFlow.confirm)
+            await _inc_render_confirm(target, state, db)
+        else:
+            await state.set_state(IncomeFlow.category)
+            await _inc_render_category(target, state, db)
+    return True
+
+
 # =========================================================
 # Expense screens
 # =========================================================
@@ -597,21 +639,36 @@ async def _exp_render_amount(target: Message | CallbackQuery, state: FSMContext)
 
 async def _exp_render_account(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     accs = await list_accounts(db, target.from_user.id)
+    active = [r for r in accs if int(r[3] or 0) == 0]
+    if not active:
+        await _flow_render(
+            target,
+            state,
+            f"{_exp_summary_lines(data)}\n\n{_i18n_t(lang, 'TX_NO_ACTIVE_ACCOUNTS')}",
+            reply_markup=cancel_kb(lang),
+        )
+        return
+    if await _try_auto_pick_only_account(
+        db, target.from_user.id, target, state, is_expense=True
+    ):
+        return
     text = (
         f"{_exp_summary_lines(data)}\n\n"
         "Шаг 2 из 5.\n"
         "Выбери счёт:"
     )
-    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "expacc"))
+    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "expacc", lang))
 
 
 async def _exp_render_category(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     user_id = target.from_user.id
 
     cats = await list_categories(db, user_id, kind="expense")
-    month = datetime.now().strftime("%Y-%m")
+    month = await user_month_key(db, user_id)
 
     spent_map = await month_spent_map(db, user_id, month)
     left_map: dict[int, int] = {}
@@ -638,6 +695,8 @@ async def _exp_render_category(target: Message | CallbackQuery, state: FSMContex
             left_map,
             prefix="expcat",
             cancel_cb="cancel",
+            lang=lang,
+            add_cb="expcat:add",
         ),
     )
 
@@ -696,7 +755,7 @@ async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext
 
     category_id = int(data["category_id"])
     category_limit = data.get("category_limit")
-    month = datetime.now().strftime("%Y-%m")
+    month = await user_month_key(db, user_id)
     spent_before = await month_spent_by_category(db, user_id, month, category_id)
     after_spent = spent_before + amt
 
@@ -739,26 +798,16 @@ async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext
 # Expense handlers
 # =========================================================
 
-@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_EXPENSE"))
-async def exp_start(m: Message, state: FSMContext, db):
-    await _clear_flow_message(m.bot, m.chat.id, state)
-    await state.clear()
-    lang = await get_lang(db, m.from_user.id)
-    await state.update_data(lang=lang)
-    await state.set_state(ExpenseFlow.amount)
-    await _exp_render_amount(m, state)
-
-
 @router.message(ExpenseFlow.amount, F.text)
 async def exp_amount(m: Message, state: FSMContext, db):
     if _is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
 
-    amt = parse_positive_int(m.text)
+    amt = await parse_money_for_user(db, m.from_user.id, m.text)
     if amt is None:
         lang = await get_lang(db, m.from_user.id)
-        return await m.answer("Use digits only. Example: 4500" if lang=="en" else ("Тек цифрлар. Мысалы: 4500" if lang=="kk" else "Нужны цифры. Пример: 4500"), reply_markup=cancel_kb(lang))
+        return await m.answer(_i18n_t(lang, "AMOUNT_INVALID"), reply_markup=cancel_kb(lang))
 
     await state.update_data(amount=amt)
     await state.set_state(ExpenseFlow.account)
@@ -766,7 +815,7 @@ async def exp_amount(m: Message, state: FSMContext, db):
     await _exp_render_account(m, state, db)
 
 
-@router.callback_query(ExpenseFlow.account, F.data.startswith("expacc:"))
+@router.callback_query(ExpenseFlow.account, F.data.regexp(r"^expacc:\d+$"))
 async def exp_account(c: CallbackQuery, state: FSMContext, db):
     acc_id = int(c.data.split(":")[1])
     acc = await _validate_account(db, c.from_user.id, acc_id)
@@ -793,7 +842,7 @@ async def exp_account(c: CallbackQuery, state: FSMContext, db):
     await c.answer()
 
 
-@router.callback_query(ExpenseFlow.category, F.data.startswith("expcat:"))
+@router.callback_query(ExpenseFlow.category, F.data.regexp(r"^expcat:\d+$"))
 async def exp_category(c: CallbackQuery, state: FSMContext, db):
     cat_id = int(c.data.split(":")[1])
     cat = await _validate_category(db, c.from_user.id, cat_id)
@@ -804,7 +853,7 @@ async def exp_category(c: CallbackQuery, state: FSMContext, db):
 
     _, cat_name, cat_emoji, _, _ = cat
 
-    month = datetime.now().strftime("%Y-%m")
+    month = await user_month_key(db, c.from_user.id)
     category_limit = await get_category_budget(
         db=db,
         user_id=c.from_user.id,
@@ -825,6 +874,103 @@ async def exp_category(c: CallbackQuery, state: FSMContext, db):
     await c.answer()
 
 
+@router.callback_query(ExpenseFlow.category, F.data == "expcat:add")
+async def exp_category_add_prompt(c: CallbackQuery, state: FSMContext, db):
+    lang = (await state.get_data()).get("lang", "ru")
+    text = (
+        "➕ <b>Новая категория</b>\n\n"
+        "Напиши название новой категории одним коротким словом.\n"
+        "Она будет добавлена в список «Расход»."
+    )
+    if lang == "en":
+        text = "➕ <b>New Category</b>\n\nType the name of the new category.\nIt will be added to the 'Expense' list."
+    elif lang == "kk":
+        text = "➕ <b>Жаңа санат</b>\n\nЖаңа санаттың атын жазыңыз.\nОл «Шығыс» тізіміне қосылады."
+
+    await state.set_state(ExpenseFlow.add_category)
+    await _flow_render(c, state, text, reply_markup=cancel_kb(lang))
+    await c.answer()
+
+
+@router.message(ExpenseFlow.add_category, F.text)
+async def exp_category_add_handle(m: Message, state: FSMContext, db):
+    raw = (m.text or "").strip()
+    if _is_cancel_text(raw):
+        await cancel_to_main_menu(m, state, db)
+        return
+
+    lang = (await state.get_data()).get("lang", "ru")
+    if len(raw) < 2 or len(raw) > 20:
+        await m.answer("❌ Название должно быть от 2 до 20 символов." if lang=="ru" else "❌ Name must be 2-20 chars.")
+        return
+
+    # Check for duplicates
+    if await name_exists_any_kind(db, m.from_user.id, raw):
+        await m.answer("❌ Категория с таким названием уже есть." if lang=="ru" else "❌ Category already exists.")
+        return
+
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).isoformat()
+    cat_id = await create_category(db, m.from_user.id, raw, "🔹", "expense", ts)
+    
+    await state.update_data(
+        category_id=cat_id,
+        category_name=raw,
+        category_emoji="🔹",
+        category_limit=None,
+        category_limit_month=None,
+    )
+    await state.set_state(ExpenseFlow.need_note)
+    await _exp_render_need_note(m, state)
+
+
+@router.callback_query(IncomeFlow.category, F.data == "inccat:add")
+async def inc_category_add_prompt(c: CallbackQuery, state: FSMContext, db):
+    lang = (await state.get_data()).get("lang", "ru")
+    text = (
+        "➕ <b>Новая категория</b>\n\n"
+        "Напиши название новой категории одним коротким словом.\n"
+        "Она будет добавлена в список «Доход»."
+    )
+    if lang == "en":
+        text = "➕ <b>New Category</b>\n\nType the name of the new category.\nIt will be added to the 'Income' list."
+    elif lang == "kk":
+        text = "➕ <b>Жаңа санат</b>\n\nЖаңа санаттың атын жазыңыз.\nОл «Кіріс» тізіміне қосылады."
+
+    await state.set_state(IncomeFlow.add_category)
+    await _flow_render(c, state, text, reply_markup=cancel_kb(lang))
+    await c.answer()
+
+
+@router.message(IncomeFlow.add_category, F.text)
+async def inc_category_add_handle(m: Message, state: FSMContext, db):
+    raw = (m.text or "").strip()
+    if _is_cancel_text(raw):
+        await cancel_to_main_menu(m, state, db)
+        return
+
+    lang = (await state.get_data()).get("lang", "ru")
+    if len(raw) < 2 or len(raw) > 20:
+        await m.answer("❌ Название должно быть от 2 до 20 символов." if lang=="ru" else "❌ Name must be 2-20 chars.")
+        return
+
+    if await name_exists_any_kind(db, m.from_user.id, raw):
+        await m.answer("❌ Категория с таким названием уже есть." if lang=="ru" else "❌ Category already exists.")
+        return
+
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).isoformat()
+    cat_id = await create_category(db, m.from_user.id, raw, "🔹", "income", ts)
+    
+    await state.update_data(
+        category_id=cat_id,
+        category_name=raw,
+        category_emoji="🔹",
+    )
+    await state.set_state(IncomeFlow.need_note)
+    await _inc_render_need_note(m, state)
+
+
 @router.callback_query(ExpenseFlow.need_note, F.data.startswith("expnote:"))
 async def exp_need_note(c: CallbackQuery, state: FSMContext, db):
     ans = c.data.split(":")[1]
@@ -840,22 +986,34 @@ async def exp_need_note(c: CallbackQuery, state: FSMContext, db):
     await c.answer()
 
 
-@router.message(ExpenseFlow.note, F.text)
+@router.message(ExpenseFlow.note, F.text | F.caption)
 async def exp_note(m: Message, state: FSMContext, db):
-    if _is_cancel_text(m.text):
+    raw = (m.text or m.caption or "").strip()
+    if _is_cancel_text(raw):
         await cancel_to_main_menu(m, state, db)
         return
 
     max_len = await _note_max(db, m.from_user.id)
-    note = clean_note(m.text, max_len)
+    note = clean_note(raw, max_len)
     if not note:
-        return await m.answer(f"Комментарий 1–{max_len} символов.")
+        lang = (await state.get_data()).get("lang", "ru")
+        return await m.answer(_i18n_t(lang, "NOTE_INVALID_LEN").format(max=max_len), reply_markup=cancel_kb(lang))
 
     await state.update_data(note=note)
     await state.set_state(ExpenseFlow.confirm)
 
 
     await _exp_render_confirm(m, state, db)
+
+
+@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_EXPENSE"))
+async def exp_start(m: Message, state: FSMContext, db):
+    await _clear_flow_message(m.bot, m.chat.id, state)
+    await state.clear()
+    lang = await get_lang(db, m.from_user.id)
+    await state.update_data(lang=lang)
+    await state.set_state(ExpenseFlow.amount)
+    await _exp_render_amount(m, state)
 
 
 @router.callback_query(ExpenseFlow.confirm, F.data.startswith("expcfm:"))
@@ -879,6 +1037,9 @@ async def exp_confirm(c: CallbackQuery, state: FSMContext, db):
         return
 
     if action == "save":
+        # Defuse the inline keyboard immediately so a rage-tap can't fire this
+        # callback twice and create a duplicate transaction (audit 1.3).
+        await neutralize_keyboard(c)
         data = await state.get_data()
         bal_after = data.get("balance_after")
 
@@ -913,6 +1074,7 @@ async def exp_od(c: CallbackQuery, state: FSMContext, db):
         await c.answer()
         return
 
+    await neutralize_keyboard(c)
     await _exp_save(c, state, db)
 
 
@@ -1004,24 +1166,40 @@ async def _inc_render_amount(target: Message | CallbackQuery, state: FSMContext)
 
 async def _inc_render_account(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     accs = await list_accounts(db, target.from_user.id)
+    active = [r for r in accs if int(r[3] or 0) == 0]
+    if not active:
+        await _flow_render(
+            target,
+            state,
+            f"{_inc_summary_lines(data)}\n\n{_i18n_t(lang, 'TX_NO_ACTIVE_ACCOUNTS')}",
+            reply_markup=cancel_kb(lang),
+        )
+        return
+    if await _try_auto_pick_only_account(
+        db, target.from_user.id, target, state, is_expense=False
+    ):
+        return
     text = (
         f"{_inc_summary_lines(data)}\n\n"
         "Шаг 2 из 5.\n"
         "Выбери счёт:"
     )
-    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "incacc"))
+    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "incacc", lang))
 
 
 async def _inc_render_category(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     cats = await list_categories(db, target.from_user.id, "income")
     text = (
         f"{_inc_summary_lines(data)}\n\n"
         "Шаг 3 из 5.\n"
         "Выбери категорию дохода:"
     )
-    await _flow_render(target, state, text, reply_markup=categories_kb(cats, "inccat"))
+    page = int(data.get("inc_cat_page", 0) or 0)
+    await _flow_render(target, state, text, reply_markup=categories_kb(cats, "inccat", page=page, add_cb="inccat:add", lang=lang))
 
 
 async def _inc_render_need_note(target: Message | CallbackQuery, state: FSMContext):
@@ -1089,26 +1267,16 @@ async def _inc_render_confirm(target: Message | CallbackQuery, state: FSMContext
 # Income handlers
 # =========================================================
 
-@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_INCOME"))
-async def inc_start(m: Message, state: FSMContext, db):
-    await _clear_flow_message(m.bot, m.chat.id, state)
-    await state.clear()
-    lang = await get_lang(db, m.from_user.id)
-    await state.update_data(lang=lang)
-    await state.set_state(IncomeFlow.amount)
-    await _inc_render_amount(m, state)
-
-
 @router.message(IncomeFlow.amount, F.text)
 async def inc_amount(m: Message, state: FSMContext, db):
     if _is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
 
-    amt = parse_positive_int(m.text)
+    amt = await parse_money_for_user(db, m.from_user.id, m.text)
     if amt is None:
         lang = await get_lang(db, m.from_user.id)
-        return await m.answer("Use digits only. Example: 20000" if lang=="en" else ("Тек цифрлар. Мысалы: 20000" if lang=="kk" else "Нужны цифры. Пример: 20000"), reply_markup=cancel_kb(lang))
+        return await m.answer(_i18n_t(lang, "AMOUNT_INVALID"), reply_markup=cancel_kb(lang))
 
     await state.update_data(amount=amt)
     await state.set_state(IncomeFlow.account)
@@ -1117,7 +1285,7 @@ async def inc_amount(m: Message, state: FSMContext, db):
     await _inc_render_account(m, state, db)
 
 
-@router.callback_query(IncomeFlow.account, F.data.startswith("incacc:"))
+@router.callback_query(IncomeFlow.account, F.data.regexp(r"^incacc:\d+$"))
 async def inc_account(c: CallbackQuery, state: FSMContext, db):
     acc_id = int(c.data.split(":")[1])
     acc = await _validate_account(db, c.from_user.id, acc_id)
@@ -1143,7 +1311,15 @@ async def inc_account(c: CallbackQuery, state: FSMContext, db):
     await _inc_render_category(c, state, db)
     await c.answer()
 
-@router.callback_query(IncomeFlow.category, F.data.startswith("inccat:"))
+@router.callback_query(IncomeFlow.category, F.data.regexp(r"^inccat:page:\d+$"))
+async def inc_category_page(c: CallbackQuery, state: FSMContext, db):
+    page = int(c.data.split(":")[2])
+    await state.update_data(inc_cat_page=page)
+    await _inc_render_category(c, state, db)
+    await c.answer()
+
+
+@router.callback_query(IncomeFlow.category, F.data.regexp(r"^inccat:\d+$"))
 async def inc_category(c: CallbackQuery, state: FSMContext, db):
     cat_id = int(c.data.split(":")[1])
     cat = await _validate_category(db, c.from_user.id, cat_id)
@@ -1179,22 +1355,33 @@ async def inc_need_note(c: CallbackQuery, state: FSMContext, db):
     await c.answer()
 
 
-@router.message(IncomeFlow.note, F.text)
+@router.message(IncomeFlow.note, F.text | F.caption)
 async def inc_note(m: Message, state: FSMContext, db):
-    if _is_cancel_text(m.text):
+    raw = (m.text or m.caption or "").strip()
+    if _is_cancel_text(raw):
         await cancel_to_main_menu(m, state, db)
         return
 
     max_len = await _note_max(db, m.from_user.id)
-    note = clean_note(m.text, max_len)
+    note = clean_note(raw, max_len)
     if not note:
-        return await m.answer(f"Комментарий 1–{max_len} символов.")
+        lang = (await state.get_data()).get("lang", "ru")
+        return await m.answer(_i18n_t(lang, "NOTE_INVALID_LEN").format(max=max_len), reply_markup=cancel_kb(lang))
 
     await state.update_data(note=note)
     await state.set_state(IncomeFlow.confirm)
 
-
     await _inc_render_confirm(m, state, db)
+
+
+@router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_INCOME"))
+async def inc_start(m: Message, state: FSMContext, db):
+    await _clear_flow_message(m.bot, m.chat.id, state)
+    await state.clear()
+    lang = await get_lang(db, m.from_user.id)
+    await state.update_data(lang=lang)
+    await state.set_state(IncomeFlow.amount)
+    await _inc_render_amount(m, state)
 
 
 @router.callback_query(IncomeFlow.confirm, F.data.startswith("inccfm:"))
@@ -1218,6 +1405,7 @@ async def inc_confirm(c: CallbackQuery, state: FSMContext, db):
         return
 
     if action == "save":
+        await neutralize_keyboard(c)
         await _inc_save(c, state, db)
         return
 
@@ -1242,7 +1430,7 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     cat_label = f"{cat_emoji} {cat_name}".strip()
     bal_after_txt = fmt_money(int(bal_after)) if isinstance(bal_after, int) else "—"
 
-    month = datetime.now().strftime("%Y-%m")
+    month = await user_month_key(db, ctx.from_user.id)
     prev_month = _prev_month_key(month)
     month_txt = _format_month(month)
     prev_month_txt = _format_month(prev_month)
@@ -1258,6 +1446,7 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
         WHERE user_id = ?
           AND type = 'income'
           AND strftime('%Y-%m', created_at) = ?
+          AND deleted_at IS NULL
         """,
         (ctx.from_user.id, month),
     )
@@ -1274,6 +1463,7 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
         WHERE user_id = ?
           AND type = 'income'
           AND strftime('%Y-%m', created_at) = ?
+          AND deleted_at IS NULL
         """,
         (ctx.from_user.id, prev_month),
     )
@@ -1289,6 +1479,7 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
           AND type = 'income'
           AND category_id = ?
           AND strftime('%Y-%m', created_at) = ?
+          AND deleted_at IS NULL
         """,
         (ctx.from_user.id, int(data["category_id"]), month),
     )
@@ -1437,10 +1628,10 @@ async def tr_amount(m: Message, state: FSMContext, db):
     if _is_cancel_text(m.text):
         return await cancel_to_main_menu(m, state, db)
 
-    amt = parse_positive_int(m.text)
+    amt = await parse_money_for_user(db, m.from_user.id, m.text)
     if amt is None:
         lang = await get_lang(db, m.from_user.id)
-        return await m.answer("Use digits only. Example: 50000" if lang=="en" else ("Тек цифрлар. Мысалы: 50000" if lang=="kk" else "Нужны цифры. Пример: 50000"), reply_markup=cancel_kb(lang))
+        return await m.answer(_i18n_t(lang, "AMOUNT_INVALID"), reply_markup=cancel_kb(lang))
 
     await state.update_data(amount=amt)
     await state.set_state(TransferFlow.from_account)
@@ -1554,6 +1745,7 @@ async def tr_confirm(c: CallbackQuery, state: FSMContext, db):
         return
 
     if action == "save":
+        await neutralize_keyboard(c)
         data = await state.get_data()
         from_after = data.get("from_after")
 
@@ -1588,6 +1780,7 @@ async def tr_od(c: CallbackQuery, state: FSMContext, db):
         await c.answer()
         return
 
+    await neutralize_keyboard(c)
     await _tr_save(c, state, db)
 
 
@@ -1626,3 +1819,16 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
         msg += f"\n📝 Комментарий: <i>{escape(str(data['note']))}</i>"
 
     await _flow_finish(ctx, state, msg, db)
+
+
+# ---------------------------------------------------------------------------
+# FSM fallback handlers: catch non-text input while we're expecting an amount.
+# Without these, sending a sticker/photo/voice in *.amount state silently
+# leaves the user stuck — see audit 1.6.
+# ---------------------------------------------------------------------------
+@router.message(ExpenseFlow.amount, ~F.text)
+@router.message(IncomeFlow.amount, ~F.text)
+@router.message(TransferFlow.amount, ~F.text)
+async def _amount_non_text_fallback(m: Message, state: FSMContext, db):
+    lang = await get_lang(db, m.from_user.id)
+    await m.answer(_i18n_t(lang, "ENTER_AMOUNT_HINT"))

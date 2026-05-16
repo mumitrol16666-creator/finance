@@ -8,7 +8,7 @@ import aiosqlite
 DATE_FMT = "%Y-%m-%d"
 
 
-def _calc_status(next_payment_date: str | None, is_active: int = 1) -> str:
+def _calc_status(next_payment_date: str | None, is_active: int = 1, today: date | None = None) -> str:
     if not is_active:
         return "closed"
 
@@ -20,7 +20,8 @@ def _calc_status(next_payment_date: str | None, is_active: int = 1) -> str:
     except Exception:
         return "active"
 
-    today = date.today()
+    if today is None:
+        today = date.today()
 
     if due < today:
         return "overdue"
@@ -47,7 +48,7 @@ async def refresh_debt_status(
 ) -> None:
     cur = await db.execute(
         """
-        SELECT next_payment_date, is_active
+        SELECT next_payment_date, is_active, user_id
         FROM debts
         WHERE id = ?
         """,
@@ -59,7 +60,10 @@ async def refresh_debt_status(
 
     next_payment_date = _row_get(row, "next_payment_date", 0)
     is_active = int(_row_get(row, "is_active", 1) or 0)
-    status = _calc_status(next_payment_date, is_active)
+    user_id = int(_row_get(row, "user_id", 2) or 0)
+    from app.domain.time_utils import today_in_user_tz
+    today = await today_in_user_tz(db, user_id) if user_id else None
+    status = _calc_status(next_payment_date, is_active, today=today)
 
     await db.execute(
         """
@@ -81,6 +85,8 @@ async def refresh_all_debt_statuses(
     *,
     commit: bool = False,
 ) -> None:
+    from app.domain.time_utils import today_in_user_tz
+    today = await today_in_user_tz(db, user_id)
     cur = await db.execute(
         """
         SELECT id, next_payment_date, is_active
@@ -97,7 +103,7 @@ async def refresh_all_debt_statuses(
         debt_id = int(_row_get(row, "id", 0))
         next_payment_date = _row_get(row, "next_payment_date", 1)
         is_active = int(_row_get(row, "is_active", 2) or 0)
-        status = _calc_status(next_payment_date, is_active)
+        status = _calc_status(next_payment_date, is_active, today=today)
         updates.append((status, debt_id))
 
     if updates:
@@ -134,6 +140,7 @@ async def add_debt(
             direction,
             dtype,
             title,
+            total_amount,
             payment_amount,
             next_payment_date,
             remaining_amount,
@@ -142,13 +149,14 @@ async def add_debt(
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, datetime('now'), datetime('now'))
         """,
         (
             user_id,
             direction,
             dtype,
             title,
+            remaining_amount, # total_amount = starting remaining_amount
             payment_amount,
             next_payment_date,
             remaining_amount,
@@ -173,6 +181,7 @@ async def list_active_debts(
             payment_amount,
             next_payment_date,
             remaining_amount,
+            total_amount,
             dtype,
             direction,
             is_active,

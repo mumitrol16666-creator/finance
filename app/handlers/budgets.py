@@ -15,7 +15,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.fsm.states import BudgetFlow
-from app.handlers.common import cancel_to_main_menu, is_cancel_text, deny_feature_message
+from app.handlers.common import cancel_to_main_menu, is_cancel_text, deny_feature_message, neutralize_keyboard
 from app.domain.services.access_service import can_use_feature, FEATURE_BUDGETS
 from app.ui.keyboards import (
     budgets_categories_kb,
@@ -30,7 +30,9 @@ from app.db.repositories.budgets_repo import (
     month_limits_status_map,
     get_category_limit_status,
 )
+from app.ui.i18n import t
 from app.db.repositories.categories_repo import list_categories, get_category
+from app.db.repositories.settings_repo import get_lang
 from app.handlers.settings_categories_limits import show_limits_overview
 
 router = Router()
@@ -52,18 +54,21 @@ MONTHS_RU = {
 }
 
 
-def _fmt(n: int | None, *, with_currency: bool = True) -> str:
+def _fmt(n: int | None, *, with_currency: bool = True, currency: str = "KZT") -> str:
+    """Format minor units using the central currency-aware formatter.
+
+    ``with_currency=False`` drops the currency symbol (used when the symbol is
+    rendered separately, e.g. badges). ``currency`` defaults to KZT so existing
+    call sites keep working until they are updated to pass the user's currency.
+    """
     if n is None:
         return "—"
-    s = str(abs(int(n)))
-    parts: list[str] = []
-    while s:
-        parts.append(s[-3:])
-        s = s[:-3]
-    value = " ".join(reversed(parts))
-    if int(n) < 0:
-        value = f"-{value}"
-    return f"{value} тг" if with_currency else value
+    from app.domain.money import fmt_money as _fmt_money, get_symbol
+    formatted = _fmt_money(int(n), currency=currency)
+    if not with_currency:
+        symbol = get_symbol(currency)
+        return formatted.rsplit(" ", 1)[0] if formatted.endswith(symbol) else formatted
+    return formatted
 
 
 def _fmt_month(month: str) -> str:
@@ -180,7 +185,7 @@ def _budget_picker_meta(
         info = status_map.get(int(cid))
 
         if not info:
-            right_map[int(cid)] = "без лимита"
+            right_map[int(cid)] = t(lang, "LABEL_NO_LIMIT")
             badge_map[int(cid)] = "plain"
             continue
 
@@ -191,20 +196,20 @@ def _budget_picker_meta(
 
         if limit_value is None:
             if spent > 0:
-                right_map[int(cid)] = f"трат {_fmt(spent)}"
+                right_map[int(cid)] = f"{t(lang, 'LABEL_SPENT')} {_fmt(spent)}"
             else:
-                right_map[int(cid)] = "без лимита"
+                right_map[int(cid)] = t(lang, "LABEL_NO_LIMIT")
             badge_map[int(cid)] = "plain"
             continue
 
         if state == "over":
-            right_map[int(cid)] = f"перелимит {_fmt(abs(left))}"
+            right_map[int(cid)] = f"{t(lang, 'LABEL_OVER')} {_fmt(abs(left))}"
             badge_map[int(cid)] = "over"
         elif state == "warn":
-            right_map[int(cid)] = f"осталось {_fmt(left)}"
+            right_map[int(cid)] = f"{t(lang, 'LABEL_LEFT')} {_fmt(left)}"
             badge_map[int(cid)] = "warn"
         else:
-            right_map[int(cid)] = f"осталось {_fmt(left)}"
+            right_map[int(cid)] = f"{t(lang, 'LABEL_LEFT')} {_fmt(left)}"
             badge_map[int(cid)] = "ok"
 
     return ordered, right_map, badge_map
@@ -242,7 +247,7 @@ def _limit_card_text(
         if left_now > 0:
             lines.append(f"🟢 Остаток: <b>{_fmt(left_now)}</b>")
         elif left_now == 0:
-            lines.append("🟡 Лимит исчерпан: <b>0 тг</b>")
+            lines.append(f"🟡 Лимит исчерпан: <b>{_fmt(0)}</b>")
         else:
             lines.append(f"🔴 Перерасход: <b>{_fmt(abs(left_now))}</b>")
 
@@ -477,7 +482,10 @@ async def show_budget_categories(
     state: FSMContext,
     db: aiosqlite.Connection,
 ):
+    from app.ui.i18n import t as _i18n_t
     user_id = target.from_user.id
+    lang = await get_lang(db, user_id)
+    await state.update_data(lang=lang)
     await state.clear()
     await state.set_state(BudgetFlow.pick_category)
     await _clear_budget_prompt(target, state)
@@ -486,11 +494,11 @@ async def show_budget_categories(
     cats = await list_categories(db, user_id, kind="expense")
 
     if not cats:
-        text = "Нет категорий расходов. Сначала добавь категорию."
+        text = _i18n_t(lang, "NO_EXPENSE_CATEGORIES")
         if isinstance(target, CallbackQuery):
             await target.answer()
             await target.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-            await target.message.answer("Меню:", reply_markup=main_menu(), parse_mode="HTML")
+            await target.message.answer(_i18n_t(lang, "MENU_TITLE"), reply_markup=main_menu(), parse_mode="HTML")
         else:
             await target.answer(text, reply_markup=main_menu(), parse_mode="HTML")
         return
@@ -498,11 +506,7 @@ async def show_budget_categories(
     status_map = await month_limits_status_map(db, user_id, month)
     ordered, right_map, badge_map = _budget_picker_meta(cats, status_map)
 
-    text = (
-        "📌 <b>Лимиты категорий</b>\n\n"
-        "Сначала идут категории с перерасходом и риском, затем категории без лимита, где уже есть траты, и только потом остальные.\n"
-        "Справа показан актуальный статус по текущему месяцу."
-    )
+    text = f"{_i18n_t(lang, 'LIMITS_TITLE')}\n\n{_i18n_t(lang, 'LIMITS_PICKER_HINT')}"
     kb = budgets_categories_kb(ordered, right_map=right_map, badge_map=badge_map)
 
     if isinstance(target, CallbackQuery):
@@ -516,6 +520,9 @@ async def show_budget_categories(
 
 @router.message(Command("budget"))
 async def budget_start(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    if not await can_use_feature(db, m.from_user.id, FEATURE_BUDGETS):
+        await deny_feature_message(m, db, m.from_user.id)
+        return
     await show_limits_overview(m, state, db)
 
 
@@ -544,7 +551,10 @@ async def budget_pick_list(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
 
 
 @router.callback_query(BudgetFlow.pick_category, F.data == "bud:start_set")
-async def budget_start_set(c: CallbackQuery, state: FSMContext):
+async def budget_start_set(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    if not await can_use_feature(db, c.from_user.id, FEATURE_BUDGETS):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     await c.answer()
 
     data = await state.get_data()
@@ -580,26 +590,16 @@ async def budget_enter_amount(m: Message, state: FSMContext, db: aiosqlite.Conne
         await cancel_to_main_menu(m, state, db)
         return
 
-    t = (m.text or "").strip().replace(" ", "")
+    from app.domain.money import parse_money_for_user
+    from app.ui.i18n import t as _i18n_t
 
-    if not t.isdigit():
+    lang = await get_lang(db, m.from_user.id)
+    amount = await parse_money_for_user(db, m.from_user.id, m.text, max_minor=10_000_000_000)
+    if amount is None:
         await m.answer(
-            "Введи сумму цифрами без пробелов и валюты.\nНапример: <code>15000</code>",
+            _i18n_t(lang, "AMOUNT_INVALID"),
             parse_mode="HTML",
         )
-        return
-
-    amount = int(t)
-
-    if amount <= 0:
-        await m.answer(
-            "Сумма должна быть больше 0.\nНапример: <code>15000</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    if amount > 10_000_000_000:
-        await m.answer("Сумма слишком большая. Введи адекватное значение.")
         return
 
     data = await state.get_data()
@@ -644,7 +644,10 @@ async def budget_enter_amount(m: Message, state: FSMContext, db: aiosqlite.Conne
 
 
 @router.callback_query(BudgetFlow.pick_category, F.data == "bud:remove")
-async def budget_remove(c: CallbackQuery, state: FSMContext):
+async def budget_remove(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    if not await can_use_feature(db, c.from_user.id, FEATURE_BUDGETS):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     await c.answer()
 
     data = await state.get_data()
@@ -687,6 +690,7 @@ async def budget_remove_back(c: CallbackQuery, state: FSMContext, db: aiosqlite.
 
 @router.callback_query(BudgetFlow.pick_category, F.data == "bud:remove_confirm")
 async def budget_remove_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     await c.answer()
 
     data = await state.get_data()
@@ -723,6 +727,7 @@ async def budget_remove_confirm(c: CallbackQuery, state: FSMContext, db: aiosqli
 
 @router.callback_query(BudgetFlow.confirm, F.data == "bud:save")
 async def budget_save(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     await c.answer()
     data = await state.get_data()
 

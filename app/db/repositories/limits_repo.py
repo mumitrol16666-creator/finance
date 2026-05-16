@@ -99,7 +99,7 @@ async def set_category_daily_limit(db: aiosqlite.Connection, user_id: int, categ
 async def today_expense_total(db: aiosqlite.Connection, user_id: int) -> int:
     start, end = await _day_range_utc(db, user_id)
     cur = await db.execute(
-        "SELECT COALESCE(SUM(-amount),0) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<?",
+        "SELECT COALESCE(SUM(-amount),0) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<? AND deleted_at IS NULL",
         (user_id, start, end),
     )
     row = await cur.fetchone()
@@ -108,7 +108,7 @@ async def today_expense_total(db: aiosqlite.Connection, user_id: int) -> int:
 async def today_expense_total_by_category(db: aiosqlite.Connection, user_id: int, category_id: int) -> int:
     start, end = await _day_range_utc(db, user_id)
     cur = await db.execute(
-        "SELECT COALESCE(SUM(-amount),0) FROM transactions WHERE user_id=? AND type='expense' AND category_id=? AND ts>=? AND ts<?",
+        "SELECT COALESCE(SUM(-amount),0) FROM transactions WHERE user_id=? AND type='expense' AND category_id=? AND ts>=? AND ts<? AND deleted_at IS NULL",
         (user_id, category_id, start, end),
     )
     row = await cur.fetchone()
@@ -117,7 +117,7 @@ async def today_expense_total_by_category(db: aiosqlite.Connection, user_id: int
 async def week_expense_total(db: aiosqlite.Connection, user_id: int, offset_weeks: int = 0) -> int:
     start, end = await _week_range_utc(db, user_id, offset_weeks=offset_weeks)
     cur = await db.execute(
-        "SELECT COALESCE(SUM(-amount),0) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<?",
+        "SELECT COALESCE(SUM(-amount),0) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<? AND deleted_at IS NULL",
         (user_id, start, end),
     )
     row = await cur.fetchone()

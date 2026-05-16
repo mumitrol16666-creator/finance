@@ -81,6 +81,7 @@ async def month_spent_by_category(
           AND category_id=?
           AND ts>=?
           AND ts<?
+          AND deleted_at IS NULL
         """,
         (user_id, category_id, start, end),
     )
@@ -125,6 +126,7 @@ async def month_spent_map(
           AND ts>=?
           AND ts<?
           AND category_id IS NOT NULL
+          AND deleted_at IS NULL
         GROUP BY category_id
         """,
         (user_id, start, end),

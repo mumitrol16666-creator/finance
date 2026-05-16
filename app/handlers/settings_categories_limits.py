@@ -25,8 +25,17 @@ from app.db.repositories.categories_repo import (
 )
 from app.db.repositories.settings_repo import get_lang
 from app.fsm.states import BudgetFlow, CategoriesFlow
-from app.handlers.common import build_main_menu_markup, cancel_to_main_menu, is_cancel_text, deny_feature_message
+from app.handlers.common import (
+    build_main_menu_markup,
+    cancel_to_main_menu,
+    is_cancel_text,
+    deny_feature_message,
+    neutralize_keyboard,
+    consume_user_input,
+    _cleanup_ui,
+)
 from app.domain.services.access_service import FEATURE_BUDGETS, can_use_feature
+from app.ui.formatters import make_progress_bar
 from app.ui.keyboards import cancel_kb
 
 router = Router()
@@ -55,15 +64,8 @@ def _now() -> str:
 def _fmt_money(value: int | None) -> str:
     if value is None:
         return "—"
-    s = str(abs(int(value)))
-    parts: list[str] = []
-    while s:
-        parts.append(s[-3:])
-        s = s[:-3]
-    out = " ".join(reversed(parts)) if parts else "0"
-    if int(value) < 0:
-        out = f"-{out}"
-    return f"{out} тг"
+    from app.domain.money import fmt_money as _fmt_money
+    return _fmt_money(int(value), currency="KZT")
 
 
 def _month_title(month: str, lang: str) -> str:
@@ -88,22 +90,22 @@ def _T(lang: str, key: str, **kwargs) -> str:
     lang = (lang or "ru").lower()
     data = {
         "ru": {
-            "root": "🗂 <b>Категории и лимиты</b>\n\nЗдесь в одном месте можно управлять категориями и лимитами по ним.\nВыбери нужный раздел ниже.",
+            "root": "🗂 <b>КАТЕГОРИИ И ЛИМИТЫ</b>\n━━━━━━━━━━━━━━\n\nЗдесь можно управлять категориями и лимитами по ним.\nВыбери нужный раздел ниже.",
             "root_hint": "Сначала удобно настроить расходные категории и сразу проверить лимиты по ним.",
-            "expense_list": "🗂 <b>Категории расходов</b>\n\nНажми на категорию, чтобы открыть действия, переименовать её или быстро настроить лимит.",
-            "income_list": "🗂 <b>Категории доходов</b>\n\nНажми на категорию, чтобы открыть действия или переименовать её.",
-            "limits": "📌 <b>Лимиты по категориям</b>\n\nПериод: <b>{month}</b>\nЗдесь видно, где лимит уже задан, где его нет и где есть риск перерасхода.",
+            "expense_list": "🗂 <b>КАТЕГОРИИ РАСХОДОВ</b>\n━━━━━━━━━━━━━━\n\nНажми на категорию для управления или быстрой настройки лимита.",
+            "income_list": "🗂 <b>КАТЕГОРИИ ДОХОДОВ</b>\n━━━━━━━━━━━━━━\n\nНажми на категорию для управления или переименования.",
+            "limits": "📌 <b>ЛИМИТЫ ПО КАТЕГОРИЯМ</b>\n━━━━━━━━━━━━━━\n\nПериод: <b>{month}</b>",
             "empty_expense": "Категорий расходов пока нет. Добавь первую категорию ниже.",
             "empty_income": "Категорий доходов пока нет. Добавь первую категорию ниже.",
-            "cat_card": "🗂 <b>{name}</b>\n\nТип: <b>{kind}</b>\nЛимит на месяц: <b>{limit}</b>\nПотрачено за месяц: <b>{spent}</b>\nОстаток: <b>{left}</b>",
-            "cat_card_no_limit": "🗂 <b>{name}</b>\n\nТип: <b>{kind}</b>\nЛимит на месяц: <b>не задан</b>\nПотрачено за месяц: <b>{spent}</b>\n\nМожно сразу поставить лимит или сначала оставить категорию без лимита.",
+            "cat_card": "🗂 <b>{name}</b>\n━━━━━━━━━━━━━━\n\n📊 <b>ДАННЫЕ ЗА МЕСЯЦ</b>\n├ Лимит: <code>{limit}</code>\n├ Израсходовано: <code>{spent}</code>\n└ Остаток: <b>{left}</b>",
+            "cat_card_no_limit": "🗂 <b>{name}</b>\n━━━━━━━━━━━━━━\n\n📊 <b>ДАННЫЕ ЗА МЕСЯЦ</b>\n├ Лимит: <i>не задан</i>\n└ Израсходовано: <code>{spent}</code>\n\nМожно сразу поставить лимит или оставить без него.",
             "kind_expense": "расход",
             "kind_income": "доход",
-            "set_limit_title": "📌 <b>Лимит по категории</b>\n\nКатегория: <b>{name}</b>\nТекущий лимит: <b>{current}</b>\nПотрачено за месяц: <b>{spent}</b>\n\nВведи новую сумму лимита числом.",
-            "add_title": "➕ <b>Новая категория</b>\n\nВведи название категории.",
-            "rename_title": "✏️ <b>Переименование категории</b>\n\nВведи новое название категории.",
-            "input_hint_cat": "Напиши название и используй кнопку «Отмена», если передумал.",
-            "input_hint_limit": "Введи сумму цифрами без пробелов и валюты или нажми «Отмена».",
+            "set_limit_title": "📌 <b>УСТАНОВКА ЛИМИТА</b>\n━━━━━━━━━━━━━━\n\nКатегория: <b>{name}</b>\n├ Текущий: <code>{current}</code>\n└ Потрачено: <code>{spent}</code>",
+            "add_title": "➕ <b>НОВАЯ КАТЕГОРИЯ</b>\n━━━━━━━━━━━━━━\n\nВведите название для новой категории.",
+            "rename_title": "✏️ <b>ПЕРЕИМЕНОВАНИЕ</b>\n━━━━━━━━━━━━━━\n\nКатегория: <b>{name}</b>\nВведите новое название.",
+            "input_hint_cat": "Напишите название и нажмите «Отмена», если передумали.",
+            "input_hint_limit": "Введите сумму цифрами (без пробелов) или нажмите «Отмена».",
             "bad_name": "Название должно быть от <b>2</b> до <b>24</b> символов.",
             "name_exists": "Такая категория уже есть. Выбери другое название.",
             "bad_amount": "Нужна сумма больше 0 цифрами. Пример: <code>15000</code>",
@@ -111,9 +113,9 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "done_rename": "✅ Категория переименована.",
             "done_limit": "✅ Лимит сохранён.",
             "done_limit_removed": "✅ Лимит убран.",
-            "done_delete": "✅ Категория удалена из активного списка.",
-            "delete_confirm": "🗑 <b>Удаление категории</b>\n\nКатегория: <b>{name}</b>\n\nКатегория исчезнет из активных списков. Старые операции сохранятся.\nТекущий лимит для неё тоже будет убран.\n\nУдалить категорию?",
-            "remove_limit_confirm": "🗑 <b>Удаление лимита</b>\n\nКатегория: <b>{name}</b>\nТекущий лимит: <b>{current}</b>\n\nУбрать лимит у этой категории?",
+            "done_delete": "✅ Категория удалена.",
+            "delete_confirm": "🗑 <b>УДАЛЕНИЕ КАТЕГОРИИ</b>\n━━━━━━━━━━━━━━\n\nВы уверены, что хотите удалить <b>{name}</b>?\n\n<i>Категория исчезнет из активных списков, но история транзакций сохранится.</i>",
+            "remove_limit_confirm": "🗑 <b>УДАЛЕНИЕ ЛИМИТА</b>\n━━━━━━━━━━━━━━\n\nКатегория: <b>{name}</b>\n└ Лимит: <code>{current}</code>\n\nВы уверены, что хотите убрать лимит?",
             "not_found": "Категория не найдена.",
             "btn_expense": "➖ Расходные",
             "btn_income": "➕ Доходные",
@@ -129,6 +131,9 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "btn_menu": "🏠 Главное меню",
             "btn_yes_delete": "🗑 Да, удалить",
             "btn_yes_remove_limit": "🗑 Да, убрать лимит",
+            "LABEL_ZERO_LEFT": "в ноль",
+            "LABEL_SPENT": "потрачено",
+            "LABEL_NO_LIMIT": "без лимита",
         },
         "en": {
             "root": "🗂 <b>Categories and limits</b>\n\nManage categories and their limits in one place.\nChoose a section below.",
@@ -138,8 +143,8 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "limits": "📌 <b>Category limits</b>\n\nPeriod: <b>{month}</b>\nSee where a limit is set, where it is missing and where overspending is close.",
             "empty_expense": "There are no expense categories yet. Add the first one below.",
             "empty_income": "There are no income categories yet. Add the first one below.",
-            "cat_card": "🗂 <b>{name}</b>\n\nType: <b>{kind}</b>\nMonthly limit: <b>{limit}</b>\nSpent this month: <b>{spent}</b>\nLeft: <b>{left}</b>",
-            "cat_card_no_limit": "🗂 <b>{name}</b>\n\nType: <b>{kind}</b>\nMonthly limit: <b>not set</b>\nSpent this month: <b>{spent}</b>\n\nYou can set a limit now or leave this category without one.",
+            "cat_card": "🗂 <b>{name}</b>\n━━━━━━━━━━━━━━\n\n📊 <b>MONTHLY DATA</b>\n├ Limit: <code>{limit}</code>\n├ Spent: <code>{spent}</code>\n└ Left: <b>{left}</b>",
+            "cat_card_no_limit": "🗂 <b>{name}</b>\n━━━━━━━━━━━━━━\n\n📊 <b>MONTHLY DATA</b>\n├ Limit: <i>not set</i>\n└ Spent: <code>{spent}</code>\n\nYou can set a limit now or leave this category without one.",
             "kind_expense": "expense",
             "kind_income": "income",
             "set_limit_title": "📌 <b>Category limit</b>\n\nCategory: <b>{name}</b>\nCurrent limit: <b>{current}</b>\nSpent this month: <b>{spent}</b>\n\nEnter a new limit amount.",
@@ -172,6 +177,9 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "btn_menu": "🏠 Main menu",
             "btn_yes_delete": "🗑 Yes, delete",
             "btn_yes_remove_limit": "🗑 Yes, remove",
+            "LABEL_ZERO_LEFT": "zero left",
+            "LABEL_SPENT": "spent",
+            "LABEL_NO_LIMIT": "no limit",
         },
         "kk": {
             "root": "🗂 <b>Санаттар мен лимиттер</b>\n\nМұнда санаттар мен оларға қойылатын лимиттер бір жерде басқарылады.\nТөменнен бөлімді таңдаңыз.",
@@ -181,8 +189,8 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "limits": "📌 <b>Санат лимиттері</b>\n\nКезең: <b>{month}</b>\nМұнда лимит қайда қойылғанын, қайда жоқ екенін және қайда артық жұмсау қаупі барын көруге болады.",
             "empty_expense": "Шығыс санаттары әлі жоқ. Төменнен біріншісін қосыңыз.",
             "empty_income": "Кіріс санаттары әлі жоқ. Төменнен біріншісін қосыңыз.",
-            "cat_card": "🗂 <b>{name}</b>\n\nТүрі: <b>{kind}</b>\nАйлық лимит: <b>{limit}</b>\nОсы айда жұмсалды: <b>{spent}</b>\nҚалды: <b>{left}</b>",
-            "cat_card_no_limit": "🗂 <b>{name}</b>\n\nТүрі: <b>{kind}</b>\nАйлық лимит: <b>орнатылмаған</b>\nОсы айда жұмсалды: <b>{spent}</b>\n\nҚаласаңыз лимитті қазір орнатыңыз немесе лимитсіз қалдырыңыз.",
+            "cat_card": "🗂 <b>{name}</b>\n━━━━━━━━━━━━━━\n\n📊 <b>АЙЛЫҚ ДЕРЕКТЕР</b>\n├ Лимит: <code>{limit}</code>\n├ Жұмсалды: <code>{spent}</code>\n└ Қалды: <b>{left}</b>",
+            "cat_card_no_limit": "🗂 <b>{name}</b>\n━━━━━━━━━━━━━━\n\n📊 <b>АЙЛЫҚ ДЕРЕКТЕР</b>\n├ Лимит: <i>орнатылмаған</i>\n└ Жұмсалды: <code>{spent}</code>\n\nҚаласаңыз лимитті қазір орнатыңыз немесе лимитсіз қалдырыңыз.",
             "kind_expense": "шығыс",
             "kind_income": "кіріс",
             "set_limit_title": "📌 <b>Санат лимиті</b>\n\nСанат: <b>{name}</b>\nҚазіргі лимит: <b>{current}</b>\nОсы айда жұмсалды: <b>{spent}</b>\n\nЖаңа лимит сомасын енгізіңіз.",
@@ -215,6 +223,9 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "btn_menu": "🏠 Басты мәзір",
             "btn_yes_delete": "🗑 Иә, өшіру",
             "btn_yes_remove_limit": "🗑 Иә, өшіру",
+            "LABEL_ZERO_LEFT": "бітті",
+            "LABEL_SPENT": "жұмсалды",
+            "LABEL_NO_LIMIT": "лимитсіз",
         },
     }
     base = data.get(lang, data["ru"]).get(key, data["ru"].get(key, key))
@@ -254,25 +265,15 @@ async def _render(target: Message | CallbackQuery, state: FSMContext, text: str,
     bot = target.bot
     chat_id = target.chat.id if isinstance(target, Message) else target.message.chat.id
 
+    # Always delete the old window to keep the new one at the bottom
     if flow_message_id:
-        try:
-            await bot.edit_message_text(chat_id=chat_id, message_id=int(flow_message_id), text=text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
-            await _ensure_settings_reply_keyboard(target, state, (await state.get_data()).get("lang") or "ru")
-            return
-        except Exception:
-            pass
+        await _safe_delete_message(bot, chat_id, flow_message_id)
 
     if isinstance(target, CallbackQuery):
-        try:
-            await target.message.edit_text(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
-            await state.update_data(flow_message_id=target.message.message_id)
-            await _ensure_settings_reply_keyboard(target, state, (await state.get_data()).get("lang") or "ru")
-            return
-        except Exception:
-            pass
         sent = await target.message.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
     else:
         sent = await target.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
+
     await state.update_data(flow_message_id=sent.message_id)
     await _ensure_settings_reply_keyboard(target, state, (await state.get_data()).get("lang") or "ru")
 
@@ -281,13 +282,17 @@ async def _start_input(target: CallbackQuery, state: FSMContext, *, screen_text:
     data = await state.get_data()
     lang = data.get("lang") or "ru"
     await _clear_prompt(target, state)
-    await _safe_remove_markup(target.bot, target.message.chat.id, data.get("flow_message_id") or target.message.message_id)
+    
+    # Combine screen info and prompt into one clean message at the bottom
+    combined_text = f"{screen_text}\n\n{prompt_text}"
+    await _render(target, state, combined_text, reply_markup=None)
+    
     await state.update_data(ui_scope=CATLIM_SCOPE, lang=lang, **(extra or {}))
     await state.set_state(next_state)
-    await _render(target, state, screen_text, reply_markup=None)
-    reply_markup = None if (await state.get_data()).get("settings_reply_message_id") else cancel_kb(lang)
-    prompt = await target.message.answer(prompt_text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
-    await state.update_data(prompt_message_id=prompt.message_id)
+    
+    # Save the new flow message as prompt_id so it gets cleaned up after input
+    new_data = await state.get_data()
+    await state.update_data(prompt_message_id=new_data.get("flow_message_id"))
 
 
 async def _lang(db: aiosqlite.Connection, user_id: int) -> str:
@@ -295,6 +300,19 @@ async def _lang(db: aiosqlite.Connection, user_id: int) -> str:
         return await get_lang(db, user_id)
     except Exception:
         return "ru"
+
+
+async def _safe_answer(
+    c: CallbackQuery,
+    text: str | None = None,
+    *,
+    show_alert: bool = False,
+) -> None:
+    """Answer callback query; swallow errors (expired or duplicate taps)."""
+    try:
+        await c.answer(text=text, show_alert=show_alert)
+    except Exception:
+        pass
 
 
 def _root_kb(lang: str):
@@ -347,7 +365,7 @@ async def _expense_status_map(db: aiosqlite.Connection, user_id: int):
     return month, statuses, spent_map
 
 
-async def _build_category_rows(db: aiosqlite.Connection, user_id: int, *, kind: str):
+async def _build_category_rows(db: aiosqlite.Connection, user_id: int, lang: str, *, kind: str):
     cats = await list_categories(db, user_id, kind)
     month, statuses, spent_map = await _expense_status_map(db, user_id)
     rows: list[tuple[str, str]] = []
@@ -357,18 +375,20 @@ async def _build_category_rows(db: aiosqlite.Connection, user_id: int, *, kind: 
             status = statuses.get(int(cid))
             spent = int(spent_map.get(int(cid), 0))
             if status:
+                limit = int(status.get("limit") or 0)
                 left = int(status.get("left") or 0)
+                pbar = make_progress_bar(spent, limit, width=8)
                 if left < 0:
-                    right = f"🔴 перелимит {_fmt_money(abs(left))}"
+                    right = f"🔴 {pbar} -{_fmt_money(abs(left))}"
                 elif left == 0:
-                    right = "🟡 в ноль"
+                    right = f"🟡 {pbar} {_T(lang, 'LABEL_ZERO_LEFT')}"
                 else:
-                    right = f"🟢 {_fmt_money(left)}"
+                    right = f"🟢 {pbar} {_fmt_money(left)}"
             elif spent > 0:
-                right = f"⚪️ без лимита · {_fmt_money(spent)}"
+                right = f"⚪️ {_fmt_money(spent)} {_T(lang, 'LABEL_SPENT')}"
             else:
-                right = "⚪️ без лимита"
-            title = f"{title} — {right}"
+                right = f"⚪️ {_T(lang, 'LABEL_NO_LIMIT')}"
+            title = f"{title} · {right}"
         rows.append((title, f"st:catlim:item:{cid}"))
     return cats, month, rows
 
@@ -384,7 +404,7 @@ async def show_catlim_root(target: Message | CallbackQuery, state: FSMContext, d
 
 async def show_category_list(target: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection, *, kind: str) -> None:
     lang = await _lang(db, target.from_user.id)
-    cats, _month, rows = await _build_category_rows(db, target.from_user.id, kind=kind)
+    cats, _month, rows = await _build_category_rows(db, target.from_user.id, lang, kind=kind)
     header = _T(lang, "expense_list") if kind == "expense" else _T(lang, "income_list")
     if not cats:
         header += f"\n\n{_T(lang, 'empty_expense' if kind == 'expense' else 'empty_income')}"
@@ -406,11 +426,8 @@ async def show_category_list(target: Message | CallbackQuery, state: FSMContext,
 
 
 async def show_limits_overview(target: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection) -> None:
-    if not await can_use_feature(db, target.from_user.id, FEATURE_BUDGETS):
-        await deny_feature_message(target, db, target.from_user.id)
-        return
     lang = await _lang(db, target.from_user.id)
-    cats, month, rows = await _build_category_rows(db, target.from_user.id, kind="expense")
+    cats, month, rows = await _build_category_rows(db, target.from_user.id, lang, kind="expense")
     text = _T(lang, "limits", month=_month_title(month, lang))
     if not cats:
         text += f"\n\n{_T(lang, 'empty_expense')}"
@@ -444,14 +461,18 @@ async def show_category_card(target: Message | CallbackQuery, state: FSMContext,
             text = _T(lang, "cat_card_no_limit", name=label, kind=_T(lang, "kind_expense"), spent=_fmt_money(spent))
         else:
             text = _T(lang, "cat_card", name=label, kind=_T(lang, "kind_expense"), limit=_fmt_money(limit_amount), spent=_fmt_money(spent), left=_fmt_money(left))
+            pbar = make_progress_bar(spent, int(limit_amount), width=15)
+            percent = int((spent / int(limit_amount)) * 100) if int(limit_amount) > 0 else 0
+            text += f"\n\n<code>{pbar}</code> {percent}%"
     else:
-        text = "\n".join([
-            f"🗂 <b>{label}</b>",
-            "",
-            f"Тип: <b>{_T(lang, 'kind_income')}</b>" if lang == 'ru' else (f"Type: <b>{_T(lang, 'kind_income')}</b>" if lang == 'en' else f"Түрі: <b>{_T(lang, 'kind_income')}</b>"),
-            "",
-            _T(lang, "income_list").split("\n\n", 1)[1],
-        ])
+        income_hint = _T(lang, "income_list").split("\n\n", 1)[1]
+        text = (
+            f"🗂 <b>{label}</b>\n"
+            f"━━━━━━━━━━━━━━\n\n"
+            f"📈 <b>ИНФОРМАЦИЯ</b>\n"
+            f"└ Тип: <b>{_T(lang, 'kind_income')}</b>\n\n"
+            f"{income_hint}"
+        )
     back_cb = return_to or ("st:catlim:limits" if kind == "expense" else f"st:catlim:list:{kind}")
     await _clear_prompt(target, state)
     await state.set_state(None)
@@ -525,6 +546,7 @@ async def catlim_item_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conn
     except Exception:
         await _safe_answer(c)
         return
+    await neutralize_keyboard(c)
     data = await state.get_data()
     await show_category_card(c, state, db, category_id=category_id, return_to=data.get("catlim_current_screen") or data.get("catlim_return_to") or f"st:catlim:list:{data.get('catlim_kind', 'expense')}")
     await _safe_answer(c)
@@ -532,6 +554,10 @@ async def catlim_item_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conn
 
 @router.callback_query(F.data.startswith("st:catlim:add:"))
 async def catlim_add_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    if not await can_use_feature(db, c.from_user.id, FEATURE_BUDGETS):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     lang = await _lang(db, c.from_user.id)
     kind = (c.data or "").split(":")[-1]
     await _start_input(
@@ -550,6 +576,7 @@ async def catlim_add_name(m: Message, state: FSMContext, db: aiosqlite.Connectio
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
+    await consume_user_input(m, state)
     lang = await _lang(db, m.from_user.id)
     name = (m.text or "").strip()
     name = " ".join(name.split())
@@ -562,7 +589,6 @@ async def catlim_add_name(m: Message, state: FSMContext, db: aiosqlite.Connectio
     kind = (await state.get_data()).get("catlim_kind") or "expense"
     await create_category(db, m.from_user.id, name, None, kind, _now())
     await db.commit()
-    await _clear_prompt(m, state)
     await m.answer(_T(lang, "done_add"), parse_mode=PARSE_MODE)
     await state.set_state(None)
     await _return_after_input(m, state, db)
@@ -570,6 +596,10 @@ async def catlim_add_name(m: Message, state: FSMContext, db: aiosqlite.Connectio
 
 @router.callback_query(F.data.startswith("st:catlim:rename:"))
 async def catlim_rename_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    if not await can_use_feature(db, c.from_user.id, FEATURE_BUDGETS):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     lang = await _lang(db, c.from_user.id)
     category_id = int((c.data or "").split(":")[-1])
     data = await state.get_data()
@@ -593,6 +623,7 @@ async def catlim_rename_text(m: Message, state: FSMContext, db: aiosqlite.Connec
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
+    await consume_user_input(m, state)
     lang = await _lang(db, m.from_user.id)
     data = await state.get_data()
     category_id = int(data.get("cat_id") or 0)
@@ -609,7 +640,6 @@ async def catlim_rename_text(m: Message, state: FSMContext, db: aiosqlite.Connec
         return
     await rename_category(db, m.from_user.id, category_id, new_name, _now())
     await db.commit()
-    await _clear_prompt(m, state)
     await m.answer(_T(lang, "done_rename"), parse_mode=PARSE_MODE)
     await state.set_state(None)
     await _return_after_input(m, state, db)
@@ -617,6 +647,10 @@ async def catlim_rename_text(m: Message, state: FSMContext, db: aiosqlite.Connec
 
 @router.callback_query(F.data.startswith("st:catlim:limit:"))
 async def catlim_limit_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    if not await can_use_feature(db, c.from_user.id, FEATURE_BUDGETS):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     category_id = int((c.data or "").split(":")[-1])
     row = await get_category(db, c.from_user.id, category_id)
     lang = await _lang(db, c.from_user.id)
@@ -634,7 +668,7 @@ async def catlim_limit_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Con
         next_state=BudgetFlow.enter_amount,
         extra={
             "cat_id": category_id,
-            "catlim_after": "card",
+            "catlim_after": "limits",
             "catlim_return_to": data.get("catlim_return_to") or "st:catlim:limits",
         },
     )
@@ -643,9 +677,20 @@ async def catlim_limit_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Con
 
 @router.message(BudgetFlow.enter_amount, F.text)
 async def catlim_limit_text(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    logger.info(f"--- CATLIM_LIMIT_TEXT TRIGGERED by {m.from_user.id} ---")
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
+
+    data = await state.get_data()
+    # Same FSM state is reused by ``/budget`` wizard (category_id + month); catlim uses cat_id only.
+    if data.get("cat_id") is None:
+        from app.handlers.budgets import budget_enter_amount
+
+        await budget_enter_amount(m, state, db)
+        return
+
+    await consume_user_input(m, state)
     lang = await _lang(db, m.from_user.id)
     raw = (m.text or "").strip().replace(" ", "")
     if not raw.isdigit() or int(raw) <= 0:
@@ -654,7 +699,6 @@ async def catlim_limit_text(m: Message, state: FSMContext, db: aiosqlite.Connect
     category_id = int((await state.get_data()).get("cat_id") or 0)
     await upsert_budget(db, m.from_user.id, month_key(), category_id, int(raw))
     await db.commit()
-    await _clear_prompt(m, state)
     await m.answer(_T(lang, "done_limit"), parse_mode=PARSE_MODE)
     await state.set_state(None)
     await _return_after_input(m, state, db)
@@ -684,6 +728,7 @@ async def catlim_limit_remove_cb(c: CallbackQuery, state: FSMContext, db: aiosql
 
 @router.callback_query(F.data.startswith("st:catlim:limit_remove_confirm:"))
 async def catlim_limit_remove_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     category_id = int((c.data or "").split(":")[-1])
     lang = await _lang(db, c.from_user.id)
     await _remove_current_month_limit(db, c.from_user.id, category_id)
@@ -694,6 +739,9 @@ async def catlim_limit_remove_confirm(c: CallbackQuery, state: FSMContext, db: a
 
 @router.callback_query(F.data.startswith("st:catlim:delete:"))
 async def catlim_delete_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    if not await can_use_feature(db, c.from_user.id, FEATURE_BUDGETS):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
     lang = await _lang(db, c.from_user.id)
     category_id = int((c.data or "").split(":")[-1])
     row = await get_category(db, c.from_user.id, category_id)
@@ -715,6 +763,7 @@ async def catlim_delete_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
 
 @router.callback_query(F.data.startswith("st:catlim:delete_confirm:"))
 async def catlim_delete_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     category_id = int((c.data or "").split(":")[-1])
     lang = await _lang(db, c.from_user.id)
     row = await get_category(db, c.from_user.id, category_id)

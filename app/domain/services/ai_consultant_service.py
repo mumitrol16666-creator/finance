@@ -13,7 +13,12 @@ import aiosqlite
 from app.db.repositories.budgets_repo import month_limits_status_map, month_key
 from app.db.repositories.debts_repo import list_active_debts
 from app.db.repositories.settings_repo import get_financial_goal, get_timezone
-from app.db.repositories.recurring_repo import recurring_due_before_month_end, recurring_income_due_before_month_end
+from app.db.repositories.recurring_repo import (
+    recurring_due_before_month_end,
+    recurring_income_due_before_month_end,
+    list_recurring_expenses,
+    list_recurring_incomes,
+)
 from app.db.repositories.ai_context_repo import get_latest_ai_context_note
 from app.db.repositories.planned_repo import planned_before_month_end
 from app.domain.services.reports_service import day_bounds_utc, month_bounds_utc, week_bounds_utc
@@ -21,7 +26,10 @@ from app.ui.formatters import fmt_money
 from app.ui.i18n import t
 
 ESSENTIAL_HINTS = {
-    "арен", "ипот", "кредит", "коммун", "жкх", "садик", "школ", "налог"
+    "арен", "ипот", "кредит", "коммун", "жкх", "садик", "школ", "налог",
+    "подписк", "gym", "фитнес", "internet", "интернет", "связь", "mobile", "телефон",
+    "netflix", "spotify", "youtube", "yandex", "яндекс", "apple", "icloud", "google",
+    "страховк", "лифт", "парковк", "охрана", "домофон"
 }
 
 
@@ -133,7 +141,7 @@ async def _fetch_rows(db: aiosqlite.Connection, user_id: int, start: datetime, e
                COALESCE(c.emoji, '') AS category_emoji, COALESCE(t.note, '') AS note
         FROM transactions t
         LEFT JOIN categories c ON c.id = t.category_id
-        WHERE t.user_id = ? AND t.ts >= ? AND t.ts < ?
+        WHERE t.user_id = ? AND t.ts >= ? AND t.ts < ? AND t.deleted_at IS NULL
         ORDER BY t.ts ASC, t.id ASC
         """,
         (user_id, _iso(start), _iso(end)),
@@ -147,7 +155,7 @@ async def _fetch_expense_category_sums(db: aiosqlite.Connection, user_id: int, s
         SELECT COALESCE(c.name, 'Без категории') AS category_name, SUM(-t.amount) AS total
         FROM transactions t
         LEFT JOIN categories c ON c.id = t.category_id
-        WHERE t.user_id = ? AND t.type = 'expense' AND t.ts >= ? AND t.ts < ?
+        WHERE t.user_id = ? AND t.type = 'expense' AND t.ts >= ? AND t.ts < ? AND t.deleted_at IS NULL
         GROUP BY COALESCE(c.name, 'Без категории')
         ORDER BY total DESC
         """,
@@ -169,7 +177,7 @@ async def _fetch_month_history_expenses(db: aiosqlite.Connection, user_id: int, 
         else:
             end_local = datetime(y, m + 1, 1, 1, tzinfo=tz)
         cur = await db.execute(
-            "SELECT SUM(-amount) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<?",
+            "SELECT SUM(-amount) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<? AND deleted_at IS NULL",
             (user_id, _iso(start_local.astimezone(timezone.utc)), _iso(end_local.astimezone(timezone.utc))),
         )
         row = await cur.fetchone()
@@ -181,13 +189,12 @@ async def _fetch_month_history_expenses(db: aiosqlite.Connection, user_id: int, 
     return list(reversed(vals))
 
 
-async def _fetch_active_accounts(db: aiosqlite.Connection, user_id: int) -> list[tuple[str, int]]:
+async def _fetch_active_accounts(db: aiosqlite.Connection, user_id: int):
     cur = await db.execute(
-        "SELECT name, balance FROM accounts WHERE user_id=? AND is_archived=0 ORDER BY balance DESC, id ASC",
+        "SELECT name, balance, currency, is_saving FROM accounts WHERE user_id=? AND is_archived=0 ORDER BY is_saving ASC, balance DESC",
         (user_id,),
     )
-    rows = await cur.fetchall()
-    return [(str(r[0]), int(r[1] or 0)) for r in rows]
+    return await cur.fetchall()
 
 
 async def _fetch_currency(db: aiosqlite.Connection, user_id: int) -> str:
@@ -258,7 +265,8 @@ async def _fetch_debt_snapshot(db: aiosqlite.Connection, user_id: int) -> dict:
     due_today = 0
     soon = 0
     nearest: list[dict] = []
-    today = datetime.now().date()
+    from app.domain.time_utils import today_in_user_tz
+    today = await today_in_user_tz(db, user_id)
 
     for row in rows:
         if hasattr(row, "keys"):
@@ -580,7 +588,7 @@ def _has_possible_missing_recurring(current_rows: list[aiosqlite.Row], previous_
 def _build_data_quality(kind: str, current_metrics: dict, previous_metrics: dict, month_metrics: dict, *,
                         has_goal: bool, has_limits: bool, has_debts: bool, has_planned: bool,
                         recurring_count: int, recurring_income_count: int, clarification_present: bool,
-                        possible_missing_recurring: bool) -> dict:
+                        possible_missing_recurring: bool, stale_recurring_count: int = 0) -> dict:
     blockers: list[str] = []
     warnings: list[str] = []
     recommendations: list[str] = []
@@ -591,12 +599,12 @@ def _build_data_quality(kind: str, current_metrics: dict, previous_metrics: dict
     expense_count = month_metrics["expense_count"] if kind == "month" else current_metrics["expense_count"]
     categories_count = month_metrics["expense_categories_count"] if kind == "month" else current_metrics["expense_categories_count"]
 
-    if active_days < 12:
-        blockers.append(f"мало активных дней с учётом: {active_days}")
-        recommendations.append("вноси операции хотя бы 12–15 дней за месяц, чтобы увидеть реальный паттерн")
-    if tx_count < 20:
-        blockers.append(f"слишком мало операций: {tx_count}")
-        recommendations.append("для нормального разбора нужен хотя бы базовый объём операций, а не 2–3 записи")
+    if active_days < 21:
+        blockers.append(f"мало активных дней для глубокого анализа: {active_days}")
+        recommendations.append("Продолжай вести учет! AI-отчет станет доступен после 21 дня активного ведения, чтобы анализ был максимально точным и без догадок.")
+    if tx_count < 30:
+        blockers.append(f"недостаточно операций для статистики: {tx_count}")
+        recommendations.append("для качественного разбора нужно хотя бы 30-40 записей, чтобы увидеть реальные паттерны трат")
     if income_count == 0:
         blockers.append("нет занесённых доходов за базовый период")
         recommendations.append("заноси все реальные доходы, иначе свободный остаток и прогноз искажаются")
@@ -633,6 +641,9 @@ def _build_data_quality(kind: str, current_metrics: dict, previous_metrics: dict
         warnings.append("при долгах слабая база особенно режет точность прогноза")
     if not clarification_present:
         warnings.append("нет пользовательского уточнения: были ли незанесённые траты и нетипичные операции")
+    if stale_recurring_count > 0:
+        warnings.append(f"найдено неактивных постоянных операций: {stale_recurring_count}")
+        recommendations.append("🧹 Похоже, некоторые подписки или платежи больше не активны. Проверь и удали их для чистоты прогноза.")
 
     confidence = "high" if not blockers and sufficient_for_compare and sufficient_for_forecast else ("medium" if not blockers else "low")
     sufficient_for_deep_report = not blockers
@@ -696,8 +707,26 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
     projected_month_income += int(planned_snapshot.get("income_total") or 0)
     projected_free_cash = projected_month_income - projected_month_expense
     projected_required_free_cash = projected_month_income - projected_month_expense - int(planned_snapshot.get("flexible_income_total") or 0) + int(planned_snapshot.get("flexible_expense_total") or 0)
-    total_balance = sum(balance for _name, balance in active_accounts)
-    runway_days = int(total_balance / max(1, month["avg_per_active_day"])) if month["avg_per_active_day"] > 0 else None
+    # Calculate totals per currency for regular accounts
+    currency_totals = {}
+    for r in active_accounts:
+        # r[1] = balance, r[2] = currency, r[3] = is_saving
+        if not r[3]: # not a saving account
+            curr = r[2] or "KZT"
+            currency_totals[curr] = currency_totals.get(curr, 0) + int(r[1] or 0)
+    
+    # We still need a numeric 'total_balance' for some legacy calculations (like runway)
+    # Let's sum them all as-is (this is slightly incorrect for mixed currencies but good for a 'raw' metric)
+    raw_total_balance = sum(int(r[1] or 0) for r in active_accounts if not r[3])
+    
+    # Store the formatted multicurrency total in context
+    from app.domain.money import fmt_money_compact
+    if not currency_totals:
+        fmt_total_balance = fmt_money_compact(0, "KZT")
+    else:
+        fmt_total_balance = ", ".join([fmt_money_compact(val, curr) for curr, val in currency_totals.items()])
+
+    runway_days = int(raw_total_balance / max(1, month["avg_per_active_day"])) if month["avg_per_active_day"] > 0 else None
 
     adjustable = []
     for cat, amount in current["top_categories"]:
@@ -730,6 +759,26 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
     if debt_snapshot["monthly_out"] > 0 and month["income"] > 0:
         debt_pressure_ratio = debt_snapshot["monthly_out"] / month["income"]
 
+    # Hygiene Audit: find "ghost" recurring items (inactive for 60+ days)
+    all_expenses = await list_recurring_expenses(db, user_id)
+    all_incomes = await list_recurring_incomes(db, user_id)
+    stale_recurring_count = 0
+    from app.domain.time_utils import now_in_user_tz
+    now = (await now_in_user_tz(db, user_id)).replace(tzinfo=None)
+    for r in [*all_expenses, *all_incomes]:
+        last_activity = r[9] # last_paid_at or last_received_at
+        created_at = r[8] if len(r) > 8 else None # fallback
+        
+        # Determine the effective "last seen" date
+        ref_date_str = last_activity or created_at
+        if ref_date_str:
+            try:
+                ref_dt = datetime.fromisoformat(ref_date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                if (now - ref_dt).days > 60:
+                    stale_recurring_count += 1
+            except Exception:
+                pass
+
     data_quality = _build_data_quality(
         kind,
         current_metrics,
@@ -740,6 +789,7 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
         has_debts=bool(debt_snapshot.get("active_count")),
         has_planned=bool(planned_snapshot.get("count")),
         recurring_count=int(recurring_snapshot.get("count") or 0),
+        stale_recurring_count=stale_recurring_count,
         recurring_income_count=int(recurring_income_snapshot.get("count") or 0),
         clarification_present=bool(clarification_note and clarification_note.get("content")),
         possible_missing_recurring=_has_possible_missing_recurring(current_rows, previous_rows),
@@ -755,7 +805,8 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
         "month": month,
         "month_history": month_history,
         "active_accounts": active_accounts,
-        "total_balance": total_balance,
+        "total_balance": raw_total_balance,
+        "fmt_total_balance": fmt_total_balance,
         "runway_days": runway_days,
         "projected_month_income": projected_month_income,
         "projected_month_expense": projected_month_expense,
@@ -810,6 +861,33 @@ def render_ai_insufficient_report(context: dict) -> str:
         "Сейчас лучше либо быстро уточнить данные, либо задать один конкретный вопрос. Когда в базе будет нормальный месяц учёта, AI сможет делать уже полноценный разбор по тратам, лимитам, долгам и цели.",
     ])
     return "\n".join(lines)
+
+
+SYSTEM_PROMPT_RECURRING_DISCOVERY = """
+Ты — эксперт по анализу банковских выписок. Твоя задача — найти ПОВТОРЯЮЩИЕСЯ (регулярные) платежи в истории транзакций.
+
+ВХОДНЫЕ ДАННЫЕ:
+1. Список последних транзакций (дата, сумма, категория, заметка).
+2. Список УЖЕ СУЩЕСТВУЮЩИХ регулярных планов (чтобы не предлагать дубликаты).
+
+КРИТЕРИИ ДЛЯ ВЫБОРА:
+- Это типичные подписки (Netflix, Spotify, iCloud, мобильная связь).
+- Это аренда, коммуналка, ипотека, садик, школа.
+- Это зарплата или регулярные пополнения.
+- ИГНОРИРУЙ: разовые покупки в магазинах, такси, рестораны (даже если они повторяются часто — это не подписки).
+
+ПРАВИЛА:
+- Группируй похожие записи, даже если заметки чуть-чуть отличаются (например, "Аренда май" и "Аренда июнь").
+- Для каждой найденной группы верни JSON:
+  - "title": понятное название (например, "Аренда квартиры")
+  - "amount": средняя сумма (целое число)
+  - "kind": "expense" или "income"
+  - "day": день месяца (от 1 до 28), когда обычно проходит платеж
+  - "category_hint": название категории
+  - "reason": почему ты считаешь это регулярным (коротко)
+
+Верни ТОЛЬКО валидный JSON-массив объектов. Если ничего не нашел — [].
+""".strip()
 
 
 def render_ai_question_answer(context: dict, question: str) -> str:
@@ -872,27 +950,36 @@ def render_ai_report(context: dict) -> str:
     expense_diff = current["expense"] - previous["expense"]
     income_diff = current["income"] - previous["income"]
 
+    # Calculate Goal Progress
+    goal_amount = context.get("goal_amount")
+    goal_progress_bar = ""
+    if goal_amount and goal_amount > 0:
+        # We need to know how much is saved/available for the goal
+        # For simplicity, let's assume total_balance is what's being saved
+        # or we could use a specific account. Let's use total_balance for now.
+        progress = min(100, int((total_balance / goal_amount) * 100))
+        filled = int(progress / 10)
+        bar = "🔵" * filled + "⚪" * (10 - filled)
+        goal_progress_bar = f"\n📈 Прогресс: {bar} <b>{progress}%</b>"
+
     lines = [
-        f"🤖 <b>AI-разбор {meta.title}</b>",
+        f"🤖 <b>AI-анализ {meta.title}</b>",
+        "────────────────",
+        f"🎯 Цель: <b>{goal_text}</b>{goal_progress_bar}",
         "",
-        f"🎯 Цель: <b>{goal_text}</b>",
+        "<b>💰 ИТОГИ ПЕРИОДА</b>",
+        f"• Доходы: <b>{fmt_money(current['income'])}</b>",
+        f"• Расходы: <b>{fmt_money(current['expense'])}</b>",
+        f"• Чистый итог: <b>{fmt_money(current['net'])}</b>",
         "",
-        "<b>Итог периода</b>",
-        _line("Доходы", fmt_money(current["income"])),
-        _line("Расходы", fmt_money(current["expense"])),
-        _line("Баланс", fmt_money(current["net"])),
-        _line("Операций", str(current["tx_count"])),
-        "",
-        "<b>Сравнение с предыдущим таким же периодом</b>",
-        f"• Расходы: <b>{fmt_money(current['expense'])}</b> ({'+' if expense_diff > 0 else ''}{fmt_money(expense_diff)})",
-        f"• Доходы: <b>{fmt_money(current['income'])}</b> ({'+' if income_diff > 0 else ''}{fmt_money(income_diff)})",
     ]
 
     if current["top_categories"]:
-        lines.extend(["", "<b>Куда уходит больше всего</b>"])
+        lines.extend(["<b>📂 ГДЕ ДЕНЬГИ? (Топ-4)</b>"])
         for cat, amount in current["top_categories"][:4]:
             share = _pct(amount, max(1, current["expense"]))
             lines.append(f"• {cat} — <b>{fmt_money(amount)}</b> ({share:.1f}%)")
+        lines.append("")
 
     insights: list[str] = []
     if month["expense"] > 0 and projected_month_expense > month["expense"]:
@@ -1127,11 +1214,13 @@ _SECTION_HINTS = {
         "reports_warn": "Категорий на грани лимита: <b>{count}</b>.",
         "reports_minus": "После обязательных будущих движений месяц уже в минусе: <b>{amount}</b>.",
         "reports_thin": "Свободный остаток к концу месяца тонкий: около <b>{amount}</b>.",
+        "reports_empty_suggest": "Пока критичных сигналов нет. Но для точного прогноза остатка к концу месяца добавь <b>Планирование</b>.",
         "reports_ok": "Критичных сигналов по месяцу сейчас нет.",
         "main_minus": "После обязательных движений месяц уже уходит в минус: <b>{amount}</b>.",
         "main_overdue": "Просроченные долги: <b>{count}</b>. Не делай вид, что их нет.",
         "main_limits": "Лимиты уже пробиты в <b>{count}</b> категориях.",
         "main_due": "До конца месяца ещё висят обязательные движения на <b>{amount}</b>.",
+        "main_empty_suggest": "Все спокойно. Но ты ещё не используешь <b>Планирование</b> — добавь будущие траты или долги, чтобы бот помогал точнее.",
         "main_ok": "Главных тревожных сигналов сейчас нет.",
     },
     "en": {
@@ -1153,11 +1242,13 @@ _SECTION_HINTS = {
         "reports_warn": "Categories close to the limit: <b>{count}</b>.",
         "reports_minus": "After required future moves, the month is already negative: <b>{amount}</b>.",
         "reports_thin": "Free cash by month end looks thin: around <b>{amount}</b>.",
+        "reports_empty_suggest": "No critical signals yet. But for an accurate month-end forecast, add <b>Planning</b> data.",
         "reports_ok": "No critical month signals right now.",
         "main_minus": "After required moves, the month is already negative: <b>{amount}</b>.",
         "main_overdue": "Overdue debts: <b>{count}</b>. Stop pretending they are not there.",
         "main_limits": "Budget limits are already broken in <b>{count}</b> categories.",
         "main_due": "Required moves still hanging until month end: <b>{amount}</b>.",
+        "main_empty_suggest": "Everything is fine. But you haven't used <b>Planning</b> yet — add future expenses or debts to get better insights.",
         "main_ok": "No major warning signs right now.",
     },
     "kk": {
@@ -1179,11 +1270,13 @@ _SECTION_HINTS = {
         "reports_warn": "Лимитке жақын санаттар: <b>{count}</b>.",
         "reports_minus": "Міндетті болашақ қозғалыстардан кейін ай қазірдің өзінде минуста: <b>{amount}</b>.",
         "reports_thin": "Ай соңындағы бос қалдық жұқа: шамамен <b>{amount}</b>.",
+        "reports_empty_suggest": "Әзірге сыни сигналдар жоқ. Бірақ ай соңындағы болжам дәл болуы үшін <b>Жоспарлауды</b> қосыңыз.",
         "reports_ok": "Қазір ай бойынша сыни сигналдар жоқ.",
         "main_minus": "Міндетті қозғалыстардан кейін ай минусқа кетіп тұр: <b>{amount}</b>.",
         "main_overdue": "Мерзімі өткен қарыздар: <b>{count}</b>.",
         "main_limits": "Лимиттер <b>{count}</b> санатта бұзылған.",
         "main_due": "Ай соңына дейін міндетті қозғалыстар әлі бар: <b>{amount}</b>.",
+        "main_empty_suggest": "Барлығы дұрыс. Бірақ сен әлі <b>Жоспарлауды</b> қолданбадың — болашақ шығындарды немесе қарыздарды қосыңыз.",
         "main_ok": "Қазір негізгі қауіп сигналдары жоқ.",
     },
 }
@@ -1199,7 +1292,27 @@ def _wrap_hint(lang: str, body: str | None) -> str:
     if not body:
         return ""
     title = (_SECTION_HINTS.get(lang) or _SECTION_HINTS["ru"])["title"]
-    return f"\n\n{title}\n{body}"
+    return f"{title}\n{body}"
+
+
+async def _build_today_feed(db: aiosqlite.Connection, user_id: int, tz_name: str, lang: str) -> str:
+    tz = _safe_tz(tz_name)
+    now_utc = datetime.now(timezone.utc)
+    meta = build_period_meta("day", tz_name, now_utc)
+    rows = await _fetch_rows(db, user_id, meta.start, meta.end)
+    if not rows: return ""
+    lines = []
+    for row in rows[-5:]:
+        try: dt = datetime.fromisoformat(row[1]).astimezone(tz)
+        except Exception: dt = datetime.now(tz)
+        time_str = dt.strftime("%H:%M")
+        amount = int(row[3])
+        cat_emoji = row[5] or "🔹"
+        label = (row[6] if row[6] else row[4])[:18]
+        currency = await _fetch_currency(db, user_id)
+        lines.append(f"<code>{time_str}</code> · {cat_emoji} {label} · <b>{fmt_money(amount, currency)}</b>")
+    title = {"ru": "🕒 <b>Сегодня:</b>", "en": "🕒 <b>Today:</b>", "kk": "🕒 <b>Бүгін:</b>"}.get(lang, "🕒 <b>Сегодня:</b>")
+    return f"\n{title}\n" + "\n".join(lines)
 
 
 async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str = "ru") -> str:
@@ -1207,26 +1320,19 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
         tz_name = await get_timezone(db, user_id)
         goal_text = await get_financial_goal(db, user_id)
         context = await build_ai_context(db, user_id, tz_name, "month", goal_text)
-
-        month = context.get("month") or {}
-        debt_snapshot = context.get("debt_snapshot") or {}
-        planned_snapshot = context.get("planned_snapshot") or {}
-        total_balance = int(context.get("total_balance") or 0)
-        required_ahead = int(context.get("recurring_snapshot", {}).get("total") or 0)
-        required_ahead += max(0, int(planned_snapshot.get("required_expense_total") or 0) - int(planned_snapshot.get("required_income_total") or 0))
-
-        lines = [
-            t(lang, "MENU_DASHBOARD"),
-            "",
-            _line(t(lang, "MENU_TOTAL"), fmt_money(total_balance)),
-            _line(t(lang, "MENU_EXPENSE_MONTH"), fmt_money(int(month.get("expense") or 0))),
-            _line(t(lang, "MENU_INCOME_MONTH"), fmt_money(int(month.get("income") or 0))),
-            _line(t(lang, "MENU_REQUIRED"), fmt_money(required_ahead)),
-            _line(t(lang, "MENU_DEBTS"), str(int(debt_snapshot.get("active_count") or 0))),
-        ]
-        return "\n".join(lines) + await build_section_hint(db, user_id, "main_menu", lang)
-    except Exception:
-        return t(lang, "MENU_LABEL")
+        total_balance_str = context.get("fmt_total_balance") or fmt_money(int(context.get("total_balance") or 0))
+        is_negative = int(context.get("total_balance") or 0) < 0
+        indicator = "🔴" if is_negative else "🟢"
+        text = f"🏠 <b>{t(lang, 'MENU_LABEL')}</b>\n"
+        text += f"{indicator} {t(lang, 'MENU_TOTAL')}: <b>{total_balance_str}</b>"
+        feed = await _build_today_feed(db, user_id, tz_name, lang)
+        if feed: text += feed
+        hint = await build_section_hint(db, user_id, "main_menu", lang)
+        critical = ("просрочен", "минус", "пробит", "overdue", "broken", "negative", "архив", "старт")
+        if hint and any(k in hint.lower() for k in critical):
+            text += f"\n───\n{hint}"
+        return text
+    except Exception: return t(lang, "MENU_LABEL")
 
 
 async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: str, lang: str = "ru") -> str:
@@ -1242,24 +1348,25 @@ async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: st
     projected_required_free_cash = int(context.get("projected_required_free_cash") or 0)
     projected_free_cash = int(context.get("projected_free_cash") or 0)
 
+    currency = await _fetch_currency(db, user_id)
     body = ""
     if section == "recurring_expenses":
         if not recurring_snapshot.get("count"):
             body = _hint_text(lang, "no_recurring_expenses")
         elif recurring_snapshot.get("total"):
-            body = _hint_text(lang, "recurring_expenses_due", count=int(recurring_snapshot.get("count") or 0), total=fmt_money(int(recurring_snapshot.get("total") or 0)))
+            body = _hint_text(lang, "recurring_expenses_due", count=int(recurring_snapshot.get("count") or 0), total=fmt_money(int(recurring_snapshot.get("total") or 0), currency))
         else:
             body = _hint_text(lang, "recurring_expenses_clear")
     elif section == "recurring_incomes":
         if not recurring_income_snapshot.get("count"):
             body = _hint_text(lang, "no_recurring_incomes")
         elif recurring_income_snapshot.get("total"):
-            body = _hint_text(lang, "recurring_incomes_due", count=int(recurring_income_snapshot.get("count") or 0), total=fmt_money(int(recurring_income_snapshot.get("total") or 0)))
+            body = _hint_text(lang, "recurring_incomes_due", count=int(recurring_income_snapshot.get("count") or 0), total=fmt_money(int(recurring_income_snapshot.get("total") or 0), currency))
         else:
             body = _hint_text(lang, "recurring_incomes_clear")
     elif section == "planned":
         if int(planned_snapshot.get("required_count") or 0) > 0:
-            body = _hint_text(lang, "planned_required", count=int(planned_snapshot.get("required_count") or 0), net=fmt_money(int(planned_snapshot.get("required_net") or 0)))
+            body = _hint_text(lang, "planned_required", count=int(planned_snapshot.get("required_count") or 0), net=fmt_money(int(planned_snapshot.get("required_net") or 0), currency))
         elif int(planned_snapshot.get("count") or 0) > 0:
             body = _hint_text(lang, "planned_flexible", count=int(planned_snapshot.get("count") or 0))
         else:
@@ -1277,24 +1384,269 @@ async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: st
         if int(budget_snapshot.get("over_count") or 0) > 0:
             body = _hint_text(lang, "reports_over", count=int(budget_snapshot.get("over_count") or 0))
         elif projected_required_free_cash < 0:
-            body = _hint_text(lang, "reports_minus", amount=fmt_money(projected_required_free_cash))
+            body = _hint_text(lang, "reports_minus", amount=fmt_money(projected_required_free_cash, currency))
         elif int(budget_snapshot.get("warn_count") or 0) > 0:
             body = _hint_text(lang, "reports_warn", count=int(budget_snapshot.get("warn_count") or 0))
         elif projected_free_cash < max(15000, int((context.get("projected_month_expense") or 0) * 0.1)) and int((context.get("month") or {}).get("expense") or 0) > 0:
-            body = _hint_text(lang, "reports_thin", amount=fmt_money(projected_free_cash))
+            body = _hint_text(lang, "reports_thin", amount=fmt_money(projected_free_cash, currency))
+        elif not (recurring_snapshot.get("count") or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
+            body = _hint_text(lang, "reports_empty_suggest")
         else:
             body = _hint_text(lang, "reports_ok")
     elif section == "main_menu":
         due_total = int(recurring_snapshot.get("total") or 0) + max(0, int(planned_snapshot.get("required_expense_total") or 0) - int(planned_snapshot.get("required_income_total") or 0))
         if projected_required_free_cash < 0:
-            body = _hint_text(lang, "main_minus", amount=fmt_money(projected_required_free_cash))
+            body = _hint_text(lang, "main_minus", amount=fmt_money(projected_required_free_cash, currency))
         elif int(debt_snapshot.get("overdue_count") or 0) > 0:
             body = _hint_text(lang, "main_overdue", count=int(debt_snapshot.get("overdue_count") or 0))
         elif int(budget_snapshot.get("over_count") or 0) > 0:
             body = _hint_text(lang, "main_limits", count=int(budget_snapshot.get("over_count") or 0))
         elif due_total > 0:
-            body = _hint_text(lang, "main_due", amount=fmt_money(due_total))
+            body = _hint_text(lang, "main_due", amount=fmt_money(due_total, currency))
+        elif not (recurring_snapshot.get("count") or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
+            body = _hint_text(lang, "main_empty_suggest")
         else:
             body = _hint_text(lang, "main_ok")
 
     return _wrap_hint(lang, body)
+
+
+async def discover_recurring_candidates_ai(db: aiosqlite.Connection, user_id: int, days: int = 90) -> list[dict]:
+    """Uses AI to find recurring items in history."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    # 1. Fetch History
+    cur = await db.execute(
+        """
+        SELECT t.type, t.amount, COALESCE(t.note, '') as note, c.name as category_name, t.ts
+        FROM transactions t
+        LEFT JOIN categories c ON c.id = t.category_id
+        WHERE t.user_id = ? AND t.ts >= ? AND t.deleted_at IS NULL
+        ORDER BY t.ts DESC LIMIT 150
+        """,
+        (user_id, start_date.isoformat())
+    )
+    rows = await cur.fetchall()
+    history_json = [
+        {"type": r[0], "amount": int(r[1]), "note": r[2], "category": r[3], "date": r[4]}
+        for r in rows
+    ]
+
+    # 2. Fetch Existing Plans
+    existing_expenses = await list_recurring_expenses(db, user_id)
+    existing_incomes = await list_recurring_incomes(db, user_id)
+    existing_plans_json = [
+        {"title": r[2], "amount": int(r[3]), "kind": "expense"} for r in existing_expenses
+    ] + [
+        {"title": r[2], "amount": int(r[3]), "kind": "income"} for r in existing_incomes
+    ]
+
+    # 3. Call AI
+    context_str = json.dumps({
+        "history": history_json,
+        "existing_plans": existing_plans_json
+    }, ensure_ascii=False)
+    
+    try:
+        raw_res = await asyncio.to_thread(_generate, SYSTEM_PROMPT_RECURRING_DISCOVERY, context_str)
+        # Cleanup code blocks
+        raw_res = re.sub(r"```json\s?|\s?```", "", raw_res).strip()
+        candidates = json.loads(raw_res)
+    except Exception:
+        return []
+
+    if not isinstance(candidates, list):
+        return []
+
+    # 4. Map back to DB IDs (Categories/Accounts)
+    from app.db.repositories.accounts_repo import get_default_account
+    from app.db.repositories.categories_repo import find_category_by_name_ci
+    
+    default_acc = await get_default_account(db, user_id)
+    acc_id = default_acc[0] if default_acc else None
+
+    final = []
+    for c in candidates:
+        kind = c.get("kind", "expense")
+        hint = c.get("category_hint")
+        
+        cat_id = None
+        if hint:
+            cat_hit = await find_category_by_name_ci(db, user_id, kind, hint)
+            if cat_hit:
+                cat_id = cat_hit[0]
+        
+        # Unique ID
+        import hashlib
+        cid = hashlib.md5(f"{c['title']}{c['amount']}{kind}".encode()).hexdigest()[:12]
+
+        final.append({
+            "cid": cid,
+            "title": c["title"],
+            "type": kind,
+            "amount": int(c["amount"]),
+            "category_id": cat_id,
+            "account_id": acc_id,
+            "day_of_month": int(c.get("day") or 15),
+            "reason": c.get("reason", "AI detection"),
+            "is_unsure": False
+        })
+
+    return final
+
+
+async def discover_recurring_candidates(db: aiosqlite.Connection, user_id: int, days: int = 90) -> list[dict]:
+    """Finds potential recurring transactions in history. Uses AI if available, else falls back to simple logic."""
+    from app.integrations.openai_client import has_openai_key
+    if has_openai_key():
+        try:
+            return await discover_recurring_candidates_ai(db, user_id, days)
+        except Exception:
+            # Fallback to legacy logic below
+            pass
+            
+    # Legacy logic (for safety or when no AI key)
+    now = datetime.now(timezone.utc)
+    # ... (the rest of the existing logic)
+    start_date = now - timedelta(days=days)
+    
+    # Fetch all transactions
+    cur = await db.execute(
+        """
+        SELECT t.type, t.amount, COALESCE(t.note, '') as note, c.name as category_name, t.category_id, t.account_id, t.ts
+        FROM transactions t
+        LEFT JOIN categories c ON c.id = t.category_id
+        WHERE t.user_id = ? AND t.ts >= ? AND t.deleted_at IS NULL
+        """,
+        (user_id, start_date.isoformat())
+    )
+    rows = await cur.fetchall()
+    
+    # Get existing recurring titles and debts to avoid duplicates
+    existing_expenses = await list_recurring_expenses(db, user_id)
+    existing_incomes = await list_recurring_incomes(db, user_id)
+    existing_debts = await list_active_debts(db, user_id)
+    
+    # Data for filtering
+    # Manually assign types since they are from different tables
+    existing_items = []
+    for r in existing_expenses:
+        item = dict(r)
+        item["type"] = "expense"
+        existing_items.append(item)
+    for r in existing_incomes:
+        item = dict(r)
+        item["type"] = "income"
+        existing_items.append(item)
+        
+    # Set of (amount, type) pairs to avoid duplicates by money
+    existing_amounts = {(abs(int(r["amount"])), r["type"]) for r in existing_items}
+    # Set of existing words to avoid similar titles
+    existing_words = set()
+    for r in [*existing_items, *existing_debts]:
+        title_words = str(r["title"]).lower().strip().split()
+        existing_words.update([w for w in title_words if len(w) > 2]) # only words > 2 chars
+        
+    debt_titles = [str(r["title"]).lower().strip() for r in existing_debts if r["title"]]
+    
+    candidates: dict[str, dict] = {}
+    
+    for row in rows:
+        ttype = str(row["type"])
+        if ttype == "transfer":
+            continue
+            
+        amount = abs(int(row["amount"]))
+        # 1. Amount + Type check (The most reliable for same-priced subscriptions)
+        if (amount, ttype) in existing_amounts:
+            continue
+            
+        note = str(row["note"]).strip()
+        cat_name = str(row["category_name"] or "Без категории")
+        
+        # We look for notes first, then categories if note is empty
+        key = note.lower() if note else f"cat:{cat_name.lower()}"
+        if not key or key == "cat:без категории":
+            continue
+            
+        # 1. Check for Matches
+        amount_match = (amount, ttype) in existing_amounts
+        
+        key_words = key.split()
+        title_match = any(w in existing_words for w in key_words if len(w) > 2)
+        
+        # 2. Skip logic: only if BOTH match (Extreme confidence)
+        if amount_match and title_match:
+            continue
+            
+        # 3. Unsure logic: if EITHER matches
+        is_unsure = amount_match or title_match
+        
+        # 4. Partial match check for debts (always skip debts if name matches)
+        is_debt_payment = False
+        for dt in debt_titles:
+            if dt in key or key in dt:
+                is_debt_payment = True
+                break
+        if is_debt_payment:
+            continue
+            
+        # Add to candidates
+        if key not in candidates:
+            candidates[key] = {
+                "title": note if note else cat_name,
+                "type": ttype,
+                "amounts": [],
+                "count": 0,
+                "category_id": row["category_id"],
+                "account_id": row["account_id"],
+                "is_keyword": any(token in key for token in ESSENTIAL_HINTS),
+                "last_ts": row["ts"],
+                "is_unsure": is_unsure
+            }
+        
+        candidates[key]["amounts"].append(amount)
+        candidates[key]["count"] += 1
+        if is_unsure: # If at least one transaction was unsure, mark the whole candidate
+            candidates[key]["is_unsure"] = True
+            
+        # Keep most recent category/account
+        if row["ts"] > candidates[key]["last_ts"]:
+            candidates[key]["category_id"] = row["category_id"]
+            candidates[key]["account_id"] = row["account_id"]
+            candidates[key]["last_ts"] = row["ts"]
+
+    # Filter candidates: either keyword match OR repeated at least 2 times
+    final_candidates = []
+    for key, c in candidates.items():
+        if c["is_keyword"] or c["count"] >= 2:
+            # Average amount
+            avg_amount = int(sum(c["amounts"]) / len(c["amounts"]))
+            
+            # Day of month from last transaction
+            try:
+                last_dt = datetime.fromisoformat(c["last_ts"].replace("Z", "+00:00"))
+                day_of_month = last_dt.day
+            except Exception:
+                day_of_month = 15
+                
+            # Unique ID to prevent double-adds
+            import hashlib
+            cid = hashlib.md5(f"{c['title']}{avg_amount}{c['type']}".encode()).hexdigest()[:12]
+            
+            final_candidates.append({
+                "cid": cid,
+                "title": c["title"],
+                "type": c["type"],
+                "amount": avg_amount,
+                "category_id": c["category_id"],
+                "account_id": c["account_id"],
+                "day_of_month": day_of_month,
+                "reason": "keyword" if c["is_keyword"] else "frequency"
+            })
+            
+    # Sort by keyword first, then frequency
+    final_candidates.sort(key=lambda x: (0 if x["reason"] == "keyword" else 1, x["title"]))
+    return final_candidates[:10]
