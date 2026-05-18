@@ -525,7 +525,7 @@ def notifications_kb(
         kb.button(text=f"💳 Подписки/Траты: {exp_label}", callback_data="st:notifs:exp:menu")
     
     kb.button(text=t(lang, "BTN_NOTIFS_BACK"), callback_data="st:root")
-    kb.adjust(2, 2, 1, 1, 1)
+    kb.adjust(1)
     return kb.as_markup()
 
 def recurring_days_kb(kind: str, current_enabled: int, current_days: int, lang: str = "ru") -> InlineKeyboardMarkup:
