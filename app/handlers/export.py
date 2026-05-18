@@ -78,40 +78,363 @@ async def _fetch_rows(
 
 
 def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None:
-    """Render rows into an XLSX byte string.
-
-    Returns ``None`` when ``openpyxl`` is not installed (graceful fallback to CSV).
+    """Render rows into a beautifully formatted, printable multi-sheet Excel workbook.
+    
+    Includes a "Dashboard" sheet with summary cards, monthly breakdown, category breakdown
+    and two native Excel charts, plus a detailed "Transactions" sheet.
+    
+    Returns ``None`` when ``openpyxl`` is not installed.
     """
     try:
+        import collections
         from openpyxl import Workbook
-        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+        from openpyxl.chart import BarChart, PieChart, Reference
     except ImportError:
         return None
 
-    headers_by_lang = {
-        "ru": ["ID", "Дата (UTC)", "Тип", "Сумма", "Валюта", "Счёт", "Категория", "Комментарий"],
-        "en": ["ID", "Date (UTC)", "Type", "Amount", "Currency", "Account", "Category", "Note"],
-        "kk": ["ID", "Күні (UTC)", "Түрі", "Сома", "Валюта", "Шот", "Санат", "Түсініктеме"],
+    # 1. Localized catalog
+    all_labels = {
+        "ru": {
+            "title": "📊 ФИНАНСОВАЯ АНАЛИТИКА",
+            "total_income": "ВСЕГО ДОХОДОВ",
+            "total_expense": "ВСЕГО РАСХОДОВ",
+            "net_balance": "ЧИСТЫЙ БАЛАНС",
+            "monthly_title": "Динамика по месяцам",
+            "col_month": "Месяц",
+            "col_income": "Доходы",
+            "col_expense": "Расходы",
+            "col_net": "Чистый доход",
+            "col_savings": "Сбережения %",
+            "category_title": "Расходы по категориям",
+            "col_category": "Категория",
+            "col_spent": "Потрачено",
+            "col_share": "Доля %",
+            "total": "Итого",
+            "chart_monthly_title": "Динамика доходов и расходов",
+            "chart_category_title": "Структура расходов по категориям",
+            "sheet_dashboard": "Аналитика",
+            "sheet_transactions": "История операций",
+            "raw_headers": ["ID", "Дата (UTC)", "Тип", "Сумма", "Валюта", "Счёт", "Категория", "Комментарий"]
+        },
+        "en": {
+            "title": "📊 FINANCIAL ANALYTICS",
+            "total_income": "TOTAL INCOME",
+            "total_expense": "TOTAL EXPENSES",
+            "net_balance": "NET BALANCE",
+            "monthly_title": "Monthly Cashflow",
+            "col_month": "Month",
+            "col_income": "Income",
+            "col_expense": "Expenses",
+            "col_net": "Net Income",
+            "col_savings": "Savings %",
+            "category_title": "Expenses by Category",
+            "col_category": "Category",
+            "col_spent": "Spent",
+            "col_share": "Share %",
+            "total": "Total",
+            "chart_monthly_title": "Income vs Expenses Dynamics",
+            "chart_category_title": "Expenses Structure by Category",
+            "sheet_dashboard": "Analytics",
+            "sheet_transactions": "Transaction History",
+            "raw_headers": ["ID", "Date (UTC)", "Type", "Amount", "Currency", "Account", "Category", "Note"]
+        },
+        "kk": {
+            "title": "📊 ҚАРЖЫЛЫҚ ТАЛДАУ",
+            "total_income": "БАРЛЫҚ КІРІС",
+            "total_expense": "БАРЛЫҚ ШЫҒЫС",
+            "net_balance": "ТАЗА ҚАЛДЫҚ",
+            "monthly_title": "Айлар бойынша динамика",
+            "col_month": "Ай",
+            "col_income": "Кірістер",
+            "col_expense": "Шығыстар",
+            "col_net": "Таза кіріс",
+            "col_savings": "Жинақ %",
+            "category_title": "Санаттар бойынша шығыстар",
+            "col_category": "Санат",
+            "col_spent": "Жұмсалды",
+            "col_share": "Үлесі %",
+            "total": "Жиынтығы",
+            "chart_monthly_title": "Кірістер мен шығыстар динамикасы",
+            "chart_category_title": "Шығыстардың санаттар бойынша құрылымы",
+            "sheet_dashboard": "Талдау",
+            "sheet_transactions": "Операциялар тарихы",
+            "raw_headers": ["ID", "Күні (UTC)", "Түрі", "Сома", "Валюта", "Шот", "Санат", "Түсініктеме"]
+        }
     }
-    headers = headers_by_lang.get(lang, headers_by_lang["ru"])
+    
+    L = all_labels.get(lang, all_labels["ru"])
+
+    # 2. Aggregations
+    total_income = 0
+    total_expense = 0
+    monthly_data = collections.defaultdict(lambda: {"income": 0, "expense": 0})
+    category_data = collections.defaultdict(int)
+
+    # Convert iterable to stable list
+    rows_list = list(rows)
+
+    for r in rows_list:
+        tx_id, ts, ttype, amount, account, category, emoji, note = r
+        val = int(amount or 0)
+        
+        month_str = "Unknown"
+        if ts and len(str(ts)) >= 7:
+            month_str = str(ts)[:7]
+
+        if ttype == "income":
+            total_income += val
+            monthly_data[month_str]["income"] += val
+        elif ttype == "expense":
+            total_expense += val
+            monthly_data[month_str]["expense"] += val
+            cat_display = f"{emoji} {category}".strip() if emoji or category else "Other"
+            category_data[cat_display] += val
 
     wb = Workbook()
+
+    # --- SHEET 1: DASHBOARD ---
     ws = wb.active
-    ws.title = "Transactions"
-    ws.append(headers)
+    ws.title = L["sheet_dashboard"]
+    ws.views.sheetView[0].showGridLines = True
 
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="2D3748", end_color="2D3748", fill_type="solid")
-    center = Alignment(horizontal="center", vertical="center")
-    for cell in ws[1]:
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = center
+    # Styling Constants
+    font_title = Font(name="Segoe UI", size=16, bold=True, color="FFFFFF")
+    font_header = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    font_section = Font(name="Segoe UI", size=13, bold=True, color="1A202C")
+    font_data = Font(name="Segoe UI", size=10)
+    font_bold = Font(name="Segoe UI", size=10, bold=True)
 
-    for r in rows:
+    fill_title = PatternFill(start_color="2D3748", end_color="2D3748", fill_type="solid")
+    fill_header = PatternFill(start_color="4A5568", end_color="4A5568", fill_type="solid")
+    fill_zebra = PatternFill(start_color="F7FAFC", end_color="F7FAFC", fill_type="solid")
+
+    thin_side = Side(style='thin', color='E2E8F0')
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    double_bottom = Border(top=Side(style='thin', color='CBD5E0'), bottom=Side(style='double', color='2D3748'))
+
+    # Title Block
+    ws.merge_cells("A1:K1")
+    ws["A1"] = L["title"]
+    ws["A1"].font = font_title
+    ws["A1"].fill = fill_title
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 40
+
+    # Summary Card 1: Income
+    ws.merge_cells("A3:C3")
+    ws.merge_cells("A4:C4")
+    ws["A3"] = L["total_income"]
+    ws["A4"] = total_income
+    ws["A3"].font = Font(name="Segoe UI", size=10, bold=True, color="137333")
+    ws["A3"].fill = PatternFill(start_color="E6F4EA", end_color="E6F4EA", fill_type="solid")
+    ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
+    ws["A4"].font = Font(name="Segoe UI", size=16, bold=True, color="137333")
+    ws["A4"].fill = PatternFill(start_color="E6F4EA", end_color="E6F4EA", fill_type="solid")
+    ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws["A4"].number_format = f'#,##0" {currency}"'
+
+    # Summary Card 2: Expense
+    ws.merge_cells("E3:G3")
+    ws.merge_cells("E4:G4")
+    ws["E3"] = L["total_expense"]
+    ws["E4"] = total_expense
+    ws["E3"].font = Font(name="Segoe UI", size=10, bold=True, color="C5221F")
+    ws["E3"].fill = PatternFill(start_color="FCE8E6", end_color="FCE8E6", fill_type="solid")
+    ws["E3"].alignment = Alignment(horizontal="center", vertical="center")
+    ws["E4"].font = Font(name="Segoe UI", size=16, bold=True, color="C5221F")
+    ws["E4"].fill = PatternFill(start_color="FCE8E6", end_color="FCE8E6", fill_type="solid")
+    ws["E4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws["E4"].number_format = f'#,##0" {currency}"'
+
+    # Summary Card 3: Net Balance
+    ws.merge_cells("I3:K3")
+    ws.merge_cells("I4:K4")
+    ws["I3"] = L["net_balance"]
+    ws["I4"] = total_income - total_expense
+    ws["I3"].font = Font(name="Segoe UI", size=10, bold=True, color="1A73E8")
+    ws["I3"].fill = PatternFill(start_color="E8F0FE", end_color="E8F0FE", fill_type="solid")
+    ws["I3"].alignment = Alignment(horizontal="center", vertical="center")
+    ws["I4"].font = Font(name="Segoe UI", size=16, bold=True, color="1A73E8")
+    ws["I4"].fill = PatternFill(start_color="E8F0FE", end_color="E8F0FE", fill_type="solid")
+    ws["I4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws["I4"].number_format = f'#,##0" {currency}"'
+
+    # Add border outlines to summary cards
+    for col in ["A", "B", "C", "E", "F", "G", "I", "J", "K"]:
+        ws[f"{col}3"].border = Border(top=thin_side, left=thin_side if col in ["A", "E", "I"] else None, right=thin_side if col in ["C", "G", "K"] else None)
+        ws[f"{col}4"].border = Border(bottom=thin_side, left=thin_side if col in ["A", "E", "I"] else None, right=thin_side if col in ["C", "G", "K"] else None)
+
+    # Row Heights
+    ws.row_dimensions[3].height = 20
+    ws.row_dimensions[4].height = 28
+
+    # --- TABLE 1: MONTHLY CASHFLOW ---
+    ws["A6"] = L["monthly_title"]
+    ws["A6"].font = font_section
+    ws.row_dimensions[6].height = 24
+
+    headers_m = [L["col_month"], L["col_income"], L["col_expense"], L["col_net"], L["col_savings"]]
+    for col_idx, h in enumerate(headers_m, start=1):
+        cell = ws.cell(row=7, column=col_idx, value=h)
+        cell.font = font_header
+        cell.fill = fill_header
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+
+    sorted_months = sorted(list(monthly_data.keys()))
+    row_idx = 8
+    for m_str in sorted_months:
+        inc = monthly_data[m_str]["income"]
+        exp = monthly_data[m_str]["expense"]
+        
+        ws.cell(row=row_idx, column=1, value=m_str).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_idx, column=2, value=inc)
+        ws.cell(row=row_idx, column=3, value=exp)
+        
+        net_cell = ws.cell(row=row_idx, column=4, value=f"=B{row_idx}-C{row_idx}")
+        sav_cell = ws.cell(row=row_idx, column=5, value=f"=IF(B{row_idx}>0, D{row_idx}/B{row_idx}, 0)")
+        
+        ws.cell(row=row_idx, column=2).number_format = '#,##0'
+        ws.cell(row=row_idx, column=3).number_format = '#,##0'
+        net_cell.number_format = '#,##0'
+        sav_cell.number_format = '0.0%'
+        
+        for c in range(1, 6):
+            cell = ws.cell(row=row_idx, column=c)
+            cell.font = font_data
+            cell.border = thin_border
+            if row_idx % 2 == 1:
+                cell.fill = fill_zebra
+        row_idx += 1
+
+    # Total Row for Monthly Table
+    ws.cell(row=row_idx, column=1, value=L["total"]).font = font_bold
+    ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center")
+    ws.cell(row=row_idx, column=2, value=f"=SUM(B8:B{row_idx-1})").font = font_bold
+    ws.cell(row=row_idx, column=3, value=f"=SUM(C8:C{row_idx-1})").font = font_bold
+    ws.cell(row=row_idx, column=4, value=f"=B{row_idx}-C{row_idx}").font = font_bold
+    ws.cell(row=row_idx, column=5, value=f"=IF(B{row_idx}>0, D{row_idx}/B{row_idx}, 0)").font = font_bold
+    
+    ws.cell(row=row_idx, column=2).number_format = '#,##0'
+    ws.cell(row=row_idx, column=3).number_format = '#,##0'
+    ws.cell(row=row_idx, column=4).number_format = '#,##0'
+    ws.cell(row=row_idx, column=5).number_format = '0.0%'
+    
+    for c in range(1, 6):
+        cell = ws.cell(row=row_idx, column=c)
+        cell.border = double_bottom
+        
+    last_month_row = row_idx
+
+    # --- TABLE 2: CATEGORY BREAKDOWN ---
+    ws["H6"] = L["category_title"]
+    ws["H6"].font = font_section
+
+    headers_c = [L["col_category"], L["col_spent"], L["col_share"]]
+    for col_idx, h in enumerate(headers_c, start=8): # H=8, I=9, J=10
+        cell = ws.cell(row=7, column=col_idx, value=h)
+        cell.font = font_header
+        cell.fill = fill_header
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+
+    sorted_cats = sorted(category_data.items(), key=lambda x: x[1], reverse=True)
+    c_row_idx = 8
+    
+    if sorted_cats:
+        for cat_name, spent in sorted_cats:
+            ws.cell(row=c_row_idx, column=8, value=cat_name)
+            ws.cell(row=c_row_idx, column=9, value=spent)
+            
+            # Share formula
+            share_cell = ws.cell(row=c_row_idx, column=10, value=f"=I{c_row_idx}/I{len(sorted_cats) + 8}")
+            
+            ws.cell(row=c_row_idx, column=9).number_format = '#,##0'
+            share_cell.number_format = '0.0%'
+            
+            for c in range(8, 11):
+                cell = ws.cell(row=c_row_idx, column=c)
+                cell.font = font_data
+                cell.border = thin_border
+                if c_row_idx % 2 == 1:
+                    cell.fill = fill_zebra
+            c_row_idx += 1
+            
+        # Total Row for Category Table
+        ws.cell(row=c_row_idx, column=8, value=L["total"]).font = font_bold
+        ws.cell(row=c_row_idx, column=8).alignment = Alignment(horizontal="center")
+        ws.cell(row=c_row_idx, column=9, value=f"=SUM(I8:I{c_row_idx-1})").font = font_bold
+        ws.cell(row=c_row_idx, column=10, value=f"=SUM(J8:J{c_row_idx-1})").font = font_bold
+        
+        ws.cell(row=c_row_idx, column=9).number_format = '#,##0'
+        ws.cell(row=c_row_idx, column=10).number_format = '0.0%'
+        
+        for c in range(8, 11):
+            cell = ws.cell(row=c_row_idx, column=c)
+            cell.border = double_bottom
+    else:
+        # Graceful empty categories row
+        ws.cell(row=8, column=8, value="-").alignment = Alignment(horizontal="center")
+        ws.cell(row=8, column=9, value=0)
+        ws.cell(row=8, column=10, value=0)
+        c_row_idx = 8
+
+    last_cat_row = c_row_idx
+
+    # --- NATIVE EXCEL CHARTS ---
+    # Chart 1: Monthly Cashflow Dynamics
+    chart_m = BarChart()
+    chart_m.type = "col"
+    chart_m.style = 10
+    chart_m.title = L["chart_monthly_title"]
+    chart_m.y_axis.title = f"({currency})"
+    chart_m.x_axis.title = L["col_month"]
+    chart_m.width = 16
+    chart_m.height = 10
+
+    data_m = Reference(ws, min_col=2, min_row=7, max_col=3, max_row=last_month_row-1)
+    cats_m = Reference(ws, min_col=1, min_row=8, max_row=last_month_row-1)
+    chart_m.add_data(data_m, titles_from_data=True)
+    chart_m.set_categories(cats_m)
+
+    ws.add_chart(chart_m, f"A{last_month_row + 3}")
+
+    # Chart 2: Category Structure (Pie Chart)
+    if sorted_cats:
+        chart_c = PieChart()
+        chart_c.title = L["chart_category_title"]
+        chart_c.width = 16
+        chart_c.height = 10
+
+        data_c = Reference(ws, min_col=9, min_row=7, max_row=last_cat_row-1)
+        cats_c = Reference(ws, min_col=8, min_row=8, max_row=last_cat_row-1)
+        chart_c.add_data(data_c, titles_from_data=True)
+        chart_c.set_categories(cats_c)
+
+        ws.add_chart(chart_c, f"H{last_cat_row + 3}")
+
+    # Set exact column widths for gorgeous layout
+    widths = {"A": 12, "B": 15, "C": 15, "D": 15, "E": 15, "F": 4, "G": 4, "H": 25, "I": 16, "J": 12, "K": 4}
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
+
+    # --- SHEET 2: DETAILED TRANSACTIONS ---
+    ws_tx = wb.create_sheet(title=L["sheet_transactions"])
+    ws_tx.views.sheetView[0].showGridLines = True
+    ws_tx.append(L["raw_headers"])
+
+    # Header styling for transaction sheet
+    for cell in ws_tx[1]:
+        cell.font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+        cell.fill = fill_title
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for idx, r in enumerate(rows_list, start=2):
         tx_id, ts, ttype, amount, account, category, emoji, note = r
         cat_display = f"{emoji} {category}".strip() if emoji or category else ""
-        ws.append([
+        
+        ws_tx.append([
             int(tx_id),
             str(ts or ""),
             str(ttype or ""),
@@ -122,10 +445,20 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
             str(note or ""),
         ])
 
-    widths = [6, 22, 10, 14, 8, 18, 22, 40]
-    for col_idx, width in enumerate(widths, start=1):
-        ws.column_dimensions[chr(ord("A") + col_idx - 1)].width = width
+        # Alternating row highlights (zebra)
+        if idx % 2 == 1:
+            for cell in ws_tx[idx]:
+                cell.fill = fill_zebra
 
+    # Format detail columns
+    for row in range(2, len(rows_list) + 2):
+        ws_tx.cell(row=row, column=4).number_format = '#,##0'
+
+    widths_tx = [8, 22, 10, 14, 10, 18, 22, 40]
+    for col_idx, width in enumerate(widths_tx, start=1):
+        ws_tx.column_dimensions[chr(ord("A") + col_idx - 1)].width = width
+
+    # Save to buffer
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
