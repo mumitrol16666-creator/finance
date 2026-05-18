@@ -827,7 +827,8 @@ async def _build_daily_text(
     user_id: int,
     currency: str,
     tz_name: str,
-    now_utc: datetime
+    now_utc: datetime,
+    lang: str = "ru"
 ) -> str:
     start_utc, end_utc, local_date, _ = _day_bounds_utc(now_utc, tz_name)
 
@@ -890,7 +891,7 @@ async def _build_daily_text(
         f"{'⚪' if cnt == 0 else '🔥'} Операций: {cnt}",
         f"Серия: {cur_streak} дн. (лучшее {best_streak})",
         "",
-        await build_smart_suggestion(db, user_id, "ru")
+        await build_smart_suggestion(db, user_id, lang)
     ]
 
     return "\n".join(lines)
@@ -1026,11 +1027,11 @@ async def tick_notify(bot, db: aiosqlite.Connection):
 
                 # REPORT
                 if (last_sent or "") != local_date and _in_window(local_now, report_local, window):
-                    text = await _build_daily_text(db, uid, str(currency or "KZT"), tz_norm, now_utc)
+                    text = await _build_daily_text(db, uid, str(currency or "KZT"), tz_norm, now_utc, str(lang or "ru"))
                     # Add Menu button to Daily Report?
                     kb = InlineKeyboardBuilder()
                     kb.button(text="🏠 Меню" if lang=="ru" else ("🏠 Menu" if lang=="en" else "🏠 Мәзір"), callback_data="hub:main")
-                    await bot.send_message(uid, text, reply_markup=kb.as_markup())
+                    await bot.send_message(uid, text, reply_markup=kb.as_markup(), parse_mode="HTML")
                     await mark_daily_sent(db, uid, local_date, _iso(now_utc))
 
         except Exception as e:
