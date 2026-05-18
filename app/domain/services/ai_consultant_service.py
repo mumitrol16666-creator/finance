@@ -1413,9 +1413,9 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
                     if lang == "en":
                         progression_hint = f"⭐ **Goal Unlocked!** You can now see Reports. Get <b>Full Access</b> in settings ⚙️ to unlock Debts, Smart Planning & AI Financial Coach! 💎"
                     elif lang == "kk":
-                        progression_hint = f"⭐ **Мақсат орындалды!** Есептер бөлімі ашылды. Қарыздарды, Жоспарлауды және AI кеңесшісін ашу үшін баптауларда ⚙️ <b>Full Access</b> алыңыз! 💎"
+                        progression_hint = f"⭐ **Мақсат орындалды!** Есептер бөлімі ашылды. Қарыздарды, Жоспарлауды және AI кеңесшісін ашу үшін баптауларда ⚙️ <b>Толық қолжетімділік</b> алыңыз! 💎"
                     else:
-                        progression_hint = f"⭐ **Цель достигнута!** Отчёты открыты. Оформи <b>Full Access</b> в настройках ⚙️, чтобы открыть Долги, Умное планирование и AI-Консультанта! 💎"
+                        progression_hint = f"⭐ **Цель достигнута!** Отчёты открыты. Оформи <b>Полный доступ</b> в настройках ⚙️, чтобы открыть Долги, Умное планирование и AI-Консультанта! 💎"
                 else:
                     # Full access user with no active moves
                     recurring_snapshot = context.get("recurring_snapshot") or {}
@@ -1425,9 +1425,9 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
                         if lang == "en":
                             progression_hint = f"💡 **Pro Tip:** You have Full Access active! Tap <b>Accounts & Transfers</b> 🔄 to set up your subscription, rent, or salary to unlock automatic month forecast! 📈"
                         elif lang == "kk":
-                            progression_hint = f"💡 **Кеңес:** Full Access белсенді! Автоматты айлық болжамды ашу үшін <b>Шоттар және Аудармалар</b> 🔄 бөлімінде жазылымдарды, жалдау ақысын немесе жалақыны баптаңыз! 📈"
+                            progression_hint = f"💡 **Кеңес:** Толық қолжетімділік белсенді! Автоматты айлық болжамды ашу үшін <b>Шоттар және Аудармалар</b> 🔄 бөлімінде жазылымдарды, жалдау ақысын немесе жалақыны баптаңыз! 📈"
                         else:
-                            progression_hint = f"💡 **Лайфхак:** У тебя активен Full Access! Зайди в <b>Accounts & Transfers</b> 🔄 и добавь аренду, подписки или зарплату, чтобы включить автоматический прогноз баланса на месяц! 📈"
+                            progression_hint = f"💡 **Лайфхак:** У тебя активен Полный доступ! Зайди в <b>Accounts & Transfers</b> 🔄 и добавь аренду, подписки или зарплату, чтобы включить автоматический прогноз баланса на месяц! 📈"
                 
                 if progression_hint:
                     title = {"ru": "💡 <b>Подсказка</b>", "en": "💡 <b>Hint</b>", "kk": "💡 <b>Нұсқау</b>"}.get(lang, "💡 <b>Подсказка</b>")
