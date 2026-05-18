@@ -22,6 +22,7 @@ from app.db.repositories.categories_repo import (
     list_categories,
     name_exists_any_kind,
     rename_category,
+    set_category_emoji,
 )
 from app.db.repositories.settings_repo import get_lang
 from app.fsm.states import BudgetFlow, CategoriesFlow
@@ -35,6 +36,7 @@ from app.handlers.common import (
     _cleanup_ui,
 )
 from app.domain.services.access_service import FEATURE_BUDGETS, can_use_feature
+from app.domain.money import parse_money_for_user
 from app.ui.formatters import make_progress_bar
 from app.ui.keyboards import cancel_kb
 from aiogram.filters import BaseFilter
@@ -126,6 +128,9 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "done_limit": "✅ Лимит сохранён.",
             "done_limit_removed": "✅ Лимит убран.",
             "done_delete": "✅ Категория удалена.",
+            "done_emoji": "✅ Emoji обновлён.",
+            "emoji_title": "😀 <b>EMOJI КАТЕГОРИИ</b>\n━━━━━━━━━━━━━━\n\nОтправьте один emoji или <code>-</code>, чтобы убрать его.",
+            "emoji_error": "Пожалуйста, отправьте ровно один emoji или <code>-</code>.",
             "delete_confirm": "🗑 <b>УДАЛЕНИЕ КАТЕГОРИИ</b>\n━━━━━━━━━━━━━━\n\nВы уверены, что хотите удалить <b>{name}</b>?\n\n<i>Категория исчезнет из активных списков, но история транзакций сохранится.</i>",
             "remove_limit_confirm": "🗑 <b>УДАЛЕНИЕ ЛИМИТА</b>\n━━━━━━━━━━━━━━\n\nКатегория: <b>{name}</b>\n└ Лимит: <code>{current}</code>\n\nВы уверены, что хотите убрать лимит?",
             "not_found": "Категория не найдена.",
@@ -137,6 +142,7 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "btn_change_limit": "✏️ Изменить лимит",
             "btn_remove_limit": "🗑 Убрать лимит",
             "btn_rename": "✏️ Переименовать",
+            "btn_emoji": "😀 Изменить Emoji",
             "btn_delete": "🗑 Удалить категорию",
             "btn_to_settings": "⬅️ Назад",
             "btn_back": "⬅️ Назад",
@@ -172,6 +178,9 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "done_limit": "✅ Limit saved.",
             "done_limit_removed": "✅ Limit removed.",
             "done_delete": "✅ Category removed from the active list.",
+            "done_emoji": "✅ Emoji updated.",
+            "emoji_title": "😀 <b>CATEGORY EMOJI</b>\n━━━━━━━━━━━━━━\n\nSend one emoji or <code>-</code> to remove it.",
+            "emoji_error": "Please send exactly one emoji or <code>-</code>.",
             "delete_confirm": "🗑 <b>Delete category</b>\n\nCategory: <b>{name}</b>\n\nIt will disappear from active lists. Existing transactions will stay.\nIts current limit will also be removed.\n\nDelete this category?",
             "remove_limit_confirm": "🗑 <b>Remove limit</b>\n\nCategory: <b>{name}</b>\nCurrent limit: <b>{current}</b>\n\nRemove this category limit?",
             "not_found": "Category not found.",
@@ -183,6 +192,7 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "btn_change_limit": "✏️ Change limit",
             "btn_remove_limit": "🗑 Remove limit",
             "btn_rename": "✏️ Rename",
+            "btn_emoji": "😀 Change Emoji",
             "btn_delete": "🗑 Delete category",
             "btn_to_settings": "⬅️ Back",
             "btn_back": "⬅️ Back",
@@ -218,6 +228,9 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "done_limit": "✅ Лимит сақталды.",
             "done_limit_removed": "✅ Лимит өшірілді.",
             "done_delete": "✅ Санат белсенді тізімнен өшірілді.",
+            "done_emoji": "✅ Emoji жаңартылды.",
+            "emoji_title": "😀 <b>САНАТ EMOJI-І</b>\n━━━━━━━━━━━━━━\n\nБір emoji немесе өшіру үшін <code>-</code> жіберіңіз.",
+            "emoji_error": "Тек бір emoji немесе <code>-</code> жіберіңіз.",
             "delete_confirm": "🗑 <b>Санатты өшіру</b>\n\nСанат: <b>{name}</b>\n\nОл белсенді тізімнен жоғалады. Ескі операциялар сақталады.\nҚазіргі лимиті де өшіріледі.\n\nСанатты өшіру керек пе?",
             "remove_limit_confirm": "🗑 <b>Лимитті өшіру</b>\n\nСанат: <b>{name}</b>\nҚазіргі лимит: <b>{current}</b>\n\nОсы санаттың лимитін өшіру керек пе?",
             "not_found": "Санат табылмады.",
@@ -229,6 +242,7 @@ def _T(lang: str, key: str, **kwargs) -> str:
             "btn_change_limit": "✏️ Лимитті өзгерту",
             "btn_remove_limit": "🗑 Лимитті өшіру",
             "btn_rename": "✏️ Атын өзгерту",
+            "btn_emoji": "😀 Emoji-ді өзгерту",
             "btn_delete": "🗑 Санатты өшіру",
             "btn_to_settings": "⬅️ Артқа",
             "btn_back": "⬅️ Артқа",
@@ -352,6 +366,7 @@ def _list_kb(items: list[tuple[str, str]], *, add_cb: str, back_cb: str, lang: s
 def _card_kb(*, lang: str, category_id: int, kind: str, has_limit: bool, back_cb: str):
     kb = InlineKeyboardBuilder()
     kb.button(text=_T(lang, "btn_rename"), callback_data=f"st:catlim:rename:{category_id}")
+    kb.button(text=_T(lang, "btn_emoji"), callback_data=f"st:catlim:emoji:{category_id}")
     kb.button(text=_T(lang, "btn_delete"), callback_data=f"st:catlim:delete:{category_id}")
     if kind == "expense":
         kb.button(text=_T(lang, "btn_change_limit") if has_limit else _T(lang, "btn_set_limit"), callback_data=f"st:catlim:limit:{category_id}")
@@ -689,7 +704,6 @@ async def catlim_limit_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Con
 
 @router.message(BudgetFlow.enter_amount, F.text)
 async def catlim_limit_text(m: Message, state: FSMContext, db: aiosqlite.Connection):
-    logger.info(f"--- CATLIM_LIMIT_TEXT TRIGGERED by {m.from_user.id} ---")
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
         return
@@ -704,12 +718,12 @@ async def catlim_limit_text(m: Message, state: FSMContext, db: aiosqlite.Connect
 
     await consume_user_input(m, state)
     lang = await _lang(db, m.from_user.id)
-    raw = (m.text or "").strip().replace(" ", "")
-    if not raw.isdigit() or int(raw) <= 0:
+    amount = await parse_money_for_user(db, m.from_user.id, m.text, max_minor=10_000_000_000)
+    if amount is None or amount <= 0:
         await m.answer(_T(lang, "bad_amount"), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
         return
     category_id = int((await state.get_data()).get("cat_id") or 0)
-    await upsert_budget(db, m.from_user.id, month_key(), category_id, int(raw))
+    await upsert_budget(db, m.from_user.id, month_key(), category_id, int(amount))
     await db.commit()
     await m.answer(_T(lang, "done_limit"), parse_mode=PARSE_MODE)
     await state.set_state(None)
@@ -788,3 +802,53 @@ async def catlim_delete_confirm(c: CallbackQuery, state: FSMContext, db: aiosqli
     await db.commit()
     await show_category_list(c, state, db, kind=kind)
     await _safe_answer(c, _T(lang, "done_delete"))
+
+
+@router.callback_query(F.data.startswith("st:catlim:emoji:"))
+async def catlim_emoji_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    if not await can_use_feature(db, c.from_user.id, FEATURE_BUDGETS):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
+    lang = await _lang(db, c.from_user.id)
+    category_id = int((c.data or "").split(":")[-1])
+    data = await state.get_data()
+    await _start_input(
+        c,
+        state,
+        screen_text=_T(lang, "emoji_title"),
+        prompt_text=_T(lang, "input_hint_cat"),
+        next_state=CategoriesFlow.emoji,
+        extra={
+            "cat_id": category_id,
+            "catlim_after": "card",
+            "catlim_return_to": data.get("catlim_return_to") or f"st:catlim:list:{data.get('catlim_kind', 'expense')}",
+        },
+    )
+    await _safe_answer(c)
+
+
+@router.message(CategoriesFlow.emoji, F.text, CatLimFlowFilter())
+async def catlim_emoji_text(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    if is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+    await consume_user_input(m, state)
+    lang = await _lang(db, m.from_user.id)
+    data = await state.get_data()
+    category_id = int(data.get("cat_id") or 0)
+    row = await get_category(db, m.from_user.id, category_id)
+    if not row:
+        await cancel_to_main_menu(m, state, db)
+        return
+    em = (m.text or "").strip()
+    if em == "-":
+        em = None
+    if em and len(em) > 4:
+        await m.answer(_T(lang, "emoji_error"), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        return
+    await set_category_emoji(db, m.from_user.id, category_id, em, _now())
+    await db.commit()
+    await m.answer(_T(lang, "done_emoji"), parse_mode=PARSE_MODE)
+    await state.set_state(None)
+    await _return_after_input(m, state, db)

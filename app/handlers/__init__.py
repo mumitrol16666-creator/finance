@@ -16,7 +16,6 @@ from app.handlers.planned import router as planned_router
 from app.handlers.planning_smart import router as planning_smart_router
 from app.handlers.export import router as export_router
 from app.handlers.charts import router as charts_router
-from app.handlers.categories_manage import router as categories_manage_router
 
 def get_routers():
     return [
@@ -30,7 +29,6 @@ def get_routers():
         planning_smart_router,
         transactions_router,
         settings_categories_limits_router,
-        categories_manage_router,
         budgets_router,
         reports_router,
         history_router,
