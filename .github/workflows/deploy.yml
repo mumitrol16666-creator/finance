@@ -47,14 +47,19 @@ jobs:
             echo "▸ Deploying $BRANCH to $APP_DIR …"
 
             # Clone or pull latest code
-            if [ -d "$APP_DIR/.git" ]; then
+            if [ ! -d "$APP_DIR" ]; then
+              git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
               cd "$APP_DIR"
+            else
+              cd "$APP_DIR"
+              if [ ! -d ".git" ]; then
+                git init
+                git remote remove origin 2>/dev/null || true
+                git remote add origin "$REPO_URL"
+              fi
               git fetch origin "$BRANCH"
               git reset --hard "origin/$BRANCH"
               git clean -fd
-            else
-              git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
-              cd "$APP_DIR"
             fi
 
             # Create virtual environment if missing
