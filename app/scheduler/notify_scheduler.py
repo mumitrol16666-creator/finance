@@ -836,7 +836,7 @@ async def _build_daily_text(
 
     # балансы счетов
     accounts = await list_accounts(db, user_id)
-    balances = [(name, int(bal or 0)) for _, name, bal, arch in accounts if not int(arch or 0)]
+    balances = [(name, int(bal or 0)) for _, name, bal, arch, *_ in accounts if not int(arch or 0)]
     total_balance = sum(bal for _, bal in balances)
 
     # топ категорий расходов
