@@ -153,6 +153,14 @@ def more_hub_kb(lang: str = "ru", *, show_accounts: bool = True, show_transfer: 
     kb.adjust(1, 1)
     return kb.as_markup()
 
+def lang_selection_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🇷🇺 Русский", callback_data="ob:lang:ru")
+    kb.button(text="🇬🇧 English", callback_data="ob:lang:en")
+    kb.button(text="🇰🇿 Қазақша", callback_data="ob:lang:kk")
+    kb.adjust(3)
+    return kb.as_markup()
+
 def onboarding_start_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=t(lang, "BTN_START"), callback_data="ob:start")

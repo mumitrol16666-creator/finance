@@ -10,16 +10,19 @@ from app.db.repositories.users_repo import get_onboarded
 from app.ui.texts import get_text
 from app.ui.keyboards import (
     onboarding_start_kb, currency_kb, cancel_kb,
-    yes_no_kb, daily_time_quick_kb
+    yes_no_kb, daily_time_quick_kb, lang_selection_kb
 )
 from app.fsm.states import Onboarding
 from app.domain.validators import clean_name, parse_positive_int, parse_hhmm
-from app.handlers.common import cancel_to_main_menu, is_cancel_text, build_main_menu_markup
+from app.handlers.common import (
+    cancel_to_main_menu, is_cancel_text, build_main_menu_markup,
+    neutralize_keyboard
+)
 from app.domain.services.onboarding_service import (
     init_user, save_currency, add_account, has_any_account,
-    save_daily_report, finish_onboarding
+    save_daily_report, finish_onboarding, utcnow_iso
 )
-from app.db.repositories.settings_repo import get_lang
+from app.db.repositories.settings_repo import get_lang, set_lang
 
 router = Router()
 PARSE_MODE = "Markdown"
@@ -49,8 +52,24 @@ async def start(m: Message, state: FSMContext, db):
     if onboarded == 1:
         return await answer_md(m, get_text(lang, 'MENU'), reply_markup=await build_main_menu_markup(db, m.from_user.id, lang))
     await init_user(db, m.from_user.id, settings.timezone)
-    sent = await answer_md(m, get_text(lang, 'START_INTRO'), reply_markup=onboarding_start_kb(lang))
+    
+    prompt = (
+        "🇷🇺 **Выберите язык для продолжения:**\n\n"
+        "🇬🇧 **Choose language to continue:**\n\n"
+        "🇰🇿 **Жалғастыру үшін тілді таңдаңыз:**"
+    )
+    sent = await answer_md(m, prompt, reply_markup=lang_selection_kb())
     await state.update_data(flow_message_id=sent.message_id, ui_scope='onboarding')
+
+@router.callback_query(F.data.startswith('ob:lang:'))
+async def ob_lang_selected(c: CallbackQuery, state: FSMContext, db):
+    await neutralize_keyboard(c)
+    lang = c.data.split(':')[-1]
+    await set_lang(db, c.from_user.id, lang, utcnow_iso())
+    await db.commit()
+    
+    await edit_md(c.message, get_text(lang, 'START_INTRO'), reply_markup=onboarding_start_kb(lang))
+    await c.answer()
 
 @router.callback_query(F.data == 'ob:cancel')
 async def ob_cancel(c: CallbackQuery, state: FSMContext, db):
