@@ -591,6 +591,8 @@ async def export_entry(m: Message, db: aiosqlite.Connection):
 
 @router.callback_query(F.data.startswith("export:"))
 async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, full_access: bool = False):
+    from app.handlers.common import neutralize_keyboard
+    await neutralize_keyboard(c)
     period = (c.data or "").split(":")[1]
     if period not in {"day", "week", "month", "all"}:
         await c.answer()
@@ -679,21 +681,33 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     filename = f"finance_{label}.csv"
     await c.message.answer_document(BufferedInputFile(payload_csv, filename=filename))
     
+    # Check if they are a free user who has already used their trial
+    trial_notice = ""
+    if not full_access and exports_used > 0:
+        trial_notice = {
+            "ru": "⚠️ **Вы уже использовали свой 1 бесплатный пробный премиум-экспорт.**\n\n",
+            "en": "⚠️ **You have already used your 1 free premium export trial.**\n\n",
+            "kk": "⚠️ **Сіз 1 тегін премиум экспорт тест-драйвын пайдаланып қойдыңыз.**\n\n",
+        }.get(lang, "")
+
     # Paywall pitching message to encourage upgrade
     pitch = {
         "ru": (
+            f"{trial_notice}"
             "📊 **Ваш файл успешно экспортирован в формате CSV!**\n\n"
             "🌟 *Хотите получить премиальный Excel-отчёт с интерактивными графиками, "
             "разбивкой по месяцам/категориям и печатным дашбордом?*\n\n"
             "Активируйте **Полный доступ** прямо сейчас, чтобы разблокировать профессиональную аналитику!"
         ),
         "en": (
+            f"{trial_notice}"
             "📊 **Your CSV file is ready!**\n\n"
             "🌟 *Want a premium Excel report with interactive charts, monthly/category cashflow breakdown "
             "and printable dashboard?*\n\n"
             "Activate **Full Access** right now to unlock advanced financial analytics!"
         ),
         "kk": (
+            f"{trial_notice}"
             "📊 **Сіздің CSV файлыңыз сәтті дайындалды!**\n\n"
             "🌟 *Интерактивті графиктермен, айлар/санаттар бойынша бөлінген және басып шығаруға болатын "
             "премиум Excel есебін алғыңыз келе ме?*\n\n"
@@ -701,4 +715,24 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
         )
     }.get(lang, "📊 **Ваш файл успешно экспортирован в формате CSV!**")
     
-    await c.message.answer(pitch, parse_mode="Markdown")
+    # Build inline keyboard to direct them to the upgrade screen or main menu
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    upgrade_btn_text = {
+        "ru": "👑 Активировать Полный доступ",
+        "en": "👑 Activate Full Access",
+        "kk": "👑 Толық қолжетімділікті белсендіру",
+    }.get(lang, "👑 Активировать Полный доступ")
+    
+    menu_btn_text = {
+        "ru": "🏠 В Главное меню",
+        "en": "🏠 Main Menu",
+        "kk": "🏠 Басты мәзірге",
+    }.get(lang, "🏠 В Главное меню")
+    
+    paywall_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=upgrade_btn_text, callback_data="upgrade:info")],
+        [InlineKeyboardButton(text=menu_btn_text, callback_data="hub:main")]
+    ])
+    
+    await c.message.answer(pitch, parse_mode="Markdown", reply_markup=paywall_kb)
