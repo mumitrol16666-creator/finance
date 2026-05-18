@@ -1852,4 +1852,4 @@ async def _transaction_session_expired_fallback(c: CallbackQuery, state: FSMCont
         "kk": "⚠️ Сессия ескірді. «Шығыс» немесе «Кіріс» батырмасын басып, әрекетті қайта бастаңыз.",
     }.get(lang, "⚠️ Сессия устарела. Начни операцию заново.")
     
-    await c.answer(err_text, show_alert=True)
+    await c.answer(err_text, show_alert=True)

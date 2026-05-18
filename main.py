@@ -11,6 +11,7 @@ from app.handlers import get_routers
 from app.logging.setup import setup_logging
 from app.middlewares import ThrottlingMiddleware
 from app.middlewares.access import AccessContextMiddleware
+from app.middlewares.fsm_escape import FsmEscapeMiddleware
 from app.middlewares_notification_quiet import NotificationQuietMiddleware
 from app.scheduler.notify_scheduler import setup_notify_scheduler
 
@@ -74,6 +75,12 @@ async def main():
     throttling = ThrottlingMiddleware(rate=0.7)
     dp.callback_query.middleware(throttling)
     dp.message.middleware(throttling)
+
+    # Graceful FSM escape for stuck users
+    fsm_escape_mw = FsmEscapeMiddleware()
+    dp.message.middleware(fsm_escape_mw)
+    dp.callback_query.middleware(fsm_escape_mw)
+
     # Inject lang / access_ctx once per update so handlers don't refetch.
     access_mw = AccessContextMiddleware()
     dp.message.middleware(access_mw)
