@@ -639,6 +639,7 @@ async def upgrade_info_callback(c: CallbackQuery, state: FSMContext, db: aiosqli
 
 @router.callback_query(F.data == "upgrade:activate")
 async def upgrade_activate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     lang = await get_lang(db, c.from_user.id)
 
     await c.bot.send_invoice(
