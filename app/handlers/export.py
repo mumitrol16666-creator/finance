@@ -534,7 +534,7 @@ async def export_entry(m: Message, db: aiosqlite.Connection):
 
 
 @router.callback_query(F.data.startswith("export:"))
-async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, full_access: bool = False):
     period = (c.data or "").split(":")[1]
     if period not in {"day", "week", "month", "all"}:
         await c.answer()
@@ -567,10 +567,38 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     except Exception:
         pass
 
-    payload = _build_xlsx(rows, lang, currency)
-    if payload is not None:
-        filename = f"finance_{label}.xlsx"
-        await c.message.answer_document(BufferedInputFile(payload, filename=filename))
-    else:
-        filename = f"finance_{label}.csv"
-        await c.message.answer_document(BufferedInputFile(_build_csv(rows, lang, currency), filename=filename))
+    if full_access:
+        payload = _build_xlsx(rows, lang, currency)
+        if payload is not None:
+            filename = f"finance_{label}.xlsx"
+            await c.message.answer_document(BufferedInputFile(payload, filename=filename))
+            return
+
+    # Fallback to CSV for free users or if openpyxl failed
+    payload_csv = _build_csv(rows, lang, currency)
+    filename = f"finance_{label}.csv"
+    await c.message.answer_document(BufferedInputFile(payload_csv, filename=filename))
+    
+    # Paywall pitching message to encourage upgrade
+    pitch = {
+        "ru": (
+            "📊 **Ваш файл успешно экспортирован в формате CSV!**\n\n"
+            "🌟 *Хотите получить премиальный Excel-отчёт с интерактивными графиками, "
+            "разбивкой по месяцам/категориям и печатным дашбордом?*\n\n"
+            "Активируйте **Полный доступ** прямо сейчас, чтобы разблокировать профессиональную аналитику!"
+        ),
+        "en": (
+            "📊 **Your CSV file is ready!**\n\n"
+            "🌟 *Want a premium Excel report with interactive charts, monthly/category cashflow breakdown "
+            "and printable dashboard?*\n\n"
+            "Activate **Full Access** right now to unlock advanced financial analytics!"
+        ),
+        "kk": (
+            "📊 **Сіздің CSV файлыңыз сәтті дайындалды!**\n\n"
+            "🌟 *Интерактивті графиктермен, айлар/санаттар бойынша бөлінген және басып шығаруға болатын "
+            "премиум Excel есебін алғыңыз келе ме?*\n\n"
+            "Кәсіби талдауды ашу үшін қазір **Толық қолжетімділікті** белсендіріңіз!"
+        )
+    }.get(lang, "📊 **Ваш файл успешно экспортирован в формате CSV!**")
+    
+    await c.message.answer(pitch, parse_mode="Markdown")
