@@ -81,15 +81,21 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
     """Render rows into a beautifully formatted, printable multi-sheet Excel workbook.
     
     Includes a "Dashboard" sheet with summary cards, monthly breakdown, category breakdown
-    and two native Excel charts, plus a detailed "Transactions" sheet.
+    and two gorgeous matplotlib charts embedded as images (for flawless mobile/Telegram display),
+    plus a detailed "Transactions" sheet.
     
-    Returns ``None`` when ``openpyxl`` is not installed.
+    Returns ``None`` when required packages are not installed.
     """
     try:
         import collections
+        import io
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
-        from openpyxl.chart import BarChart, PieChart, Reference
+        from openpyxl.drawing.image import Image
+        
+        import matplotlib
+        matplotlib.use('Agg')  # Headless backend to prevent server-side GUI threads
+        import matplotlib.pyplot as plt
     except ImportError:
         return None
 
@@ -391,37 +397,70 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
 
     last_cat_row = c_row_idx
 
-    # --- NATIVE EXCEL CHARTS ---
+    # --- EMBEDDED HIGH-RESOLUTION CHARTS (MATPLOTLIB) ---
     # Chart 1: Monthly Cashflow Dynamics
-    chart_m = BarChart()
-    chart_m.type = "col"
-    chart_m.style = 10
-    chart_m.title = L["chart_monthly_title"]
-    chart_m.y_axis.title = f"({currency})"
-    chart_m.x_axis.title = L["col_month"]
-    chart_m.width = 16
-    chart_m.height = 10
-
-    data_m = Reference(ws, min_col=2, min_row=7, max_col=3, max_row=last_month_row-1)
-    cats_m = Reference(ws, min_col=1, min_row=8, max_row=last_month_row-1)
-    chart_m.add_data(data_m, titles_from_data=True)
-    chart_m.set_categories(cats_m)
-
-    ws.add_chart(chart_m, f"A{last_month_row + 3}")
+    if sorted_months:
+        incomes = [monthly_data[m]["income"] for m in sorted_months]
+        expenses = [monthly_data[m]["expense"] for m in sorted_months]
+        
+        fig, ax = plt.subplots(figsize=(5.8, 3.8), dpi=120)
+        x = range(len(sorted_months))
+        width = 0.35
+        
+        # Soft corporate colors: Teal for Income, Red/Pink for Expense
+        ax.bar([i - width/2 for i in x], incomes, width, label=L["col_income"], color="#2ec4b6")
+        ax.bar([i + width/2 for i in x], expenses, width, label=L["col_expense"], color="#e63946")
+        
+        ax.set_title(L["chart_monthly_title"], fontsize=11, fontweight="bold", pad=12, color="#2d3748")
+        ax.set_xticks(x)
+        ax.set_xticklabels(sorted_months, fontsize=8)
+        ax.tick_params(colors="#4a5568")
+        ax.set_ylabel(currency, fontsize=8, color="#4a5568")
+        ax.legend(frameon=True, facecolor="white", edgecolor="none", fontsize=8)
+        ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+        
+        # Clean borders
+        for spine in ["top", "right", "left"]:
+            ax.spines[spine].set_visible(False)
+        ax.spines["bottom"].set_color("#cbd5e0")
+        
+        plt.tight_layout()
+        
+        buf_m = io.BytesIO()
+        plt.savefig(buf_m, format="png", dpi=120, bbox_inches="tight")
+        plt.close(fig)
+        
+        buf_m.seek(0)
+        img_m = Image(buf_m)
+        ws.add_image(img_m, f"A{last_month_row + 3}")
 
     # Chart 2: Category Structure (Pie Chart)
     if sorted_cats:
-        chart_c = PieChart()
-        chart_c.title = L["chart_category_title"]
-        chart_c.width = 16
-        chart_c.height = 10
-
-        data_c = Reference(ws, min_col=9, min_row=7, max_row=last_cat_row-1)
-        cats_c = Reference(ws, min_col=8, min_row=8, max_row=last_cat_row-1)
-        chart_c.add_data(data_c, titles_from_data=True)
-        chart_c.set_categories(cats_c)
-
-        ws.add_chart(chart_c, f"H{last_cat_row + 3}")
+        cat_labels = [c[0] for c in sorted_cats]
+        cat_values = [c[1] for c in sorted_cats]
+        
+        fig, ax = plt.subplots(figsize=(5.8, 3.8), dpi=120)
+        
+        # Premium multi-color corporate palette
+        colors = ["#4ea8de", "#56cfe1", "#72efdd", "#80ffdb", "#48cae4", "#00b4d8", "#0077b6", "#023e8a", "#03045e"]
+        if len(cat_values) > len(colors):
+            colors = colors * (len(cat_values) // len(colors) + 1)
+            
+        ax.pie(cat_values, labels=cat_labels, autopct='%1.1f%%', startangle=90, colors=colors[:len(cat_values)],
+               textprops={'fontsize': 7, 'color': '#2d3748'}, wedgeprops={'edgecolor': 'white', 'linewidth': 0.8})
+        
+        ax.set_title(L["chart_category_title"], fontsize=11, fontweight="bold", pad=12, color="#2d3748")
+        ax.axis('equal')
+        
+        plt.tight_layout()
+        
+        buf_c = io.BytesIO()
+        plt.savefig(buf_c, format="png", dpi=120, bbox_inches="tight")
+        plt.close(fig)
+        
+        buf_c.seek(0)
+        img_c = Image(buf_c)
+        ws.add_image(img_c, f"H{last_cat_row + 3}")
 
     # Set exact column widths for gorgeous layout
     widths = {"A": 12, "B": 15, "C": 15, "D": 15, "E": 15, "F": 4, "G": 4, "H": 25, "I": 16, "J": 12, "K": 4}
