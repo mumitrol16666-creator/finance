@@ -76,6 +76,18 @@ jobs:
             .venv/bin/pip install -r requirements.txt
 
             # Restart the bot (systemd service)
+            echo "=== SYSTEMD SERVICE INFO ==="
+            sudo systemctl cat finance-bot || true
+            
+            echo "=== PYTHON PROCESSES BEFORE RESTART ==="
+            ps aux | grep python || true
+
             sudo systemctl restart finance-bot
+
+            echo "=== SYSTEMD STATUS AFTER RESTART ==="
+            sudo systemctl status finance-bot || true
+
+            echo "=== PYTHON PROCESSES AFTER RESTART ==="
+            ps aux | grep python || true
 
             echo "✓ Deploy complete"
