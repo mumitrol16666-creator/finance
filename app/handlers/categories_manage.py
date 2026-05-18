@@ -13,6 +13,12 @@ from app.db.repositories.categories_repo import (
 )
 from app.db.repositories.settings_repo import get_lang
 from app.ui.i18n import t_category
+from aiogram.filters import BaseFilter
+
+class LegacyCatsFlowFilter(BaseFilter):
+    async def __call__(self, message: Message, state: FSMContext) -> bool:
+        data = await state.get_data()
+        return "cats_kind" in data or ("catlim_after" not in data and "cat_id" in data)
 
 router = Router()
 
@@ -177,7 +183,7 @@ async def st_cats_add(c: CallbackQuery, state: FSMContext, db):
     await c.answer()
 
 
-@router.message(CategoriesFlow.add_name, F.text)
+@router.message(CategoriesFlow.add_name, F.text, LegacyCatsFlowFilter())
 async def st_cats_add_name(m: Message, state: FSMContext, db):
     lang = await _lang_from_db(db, m.from_user.id)
     L = _L(lang)
@@ -217,7 +223,7 @@ async def st_cats_rename(c: CallbackQuery, state: FSMContext, db):
     await c.answer()
 
 
-@router.message(CategoriesFlow.rename, F.text)
+@router.message(CategoriesFlow.rename, F.text, LegacyCatsFlowFilter())
 async def st_cats_rename_text(m: Message, state: FSMContext, db):
     lang = await _lang_from_db(db, m.from_user.id)
     L = _L(lang)

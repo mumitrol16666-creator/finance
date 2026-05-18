@@ -37,6 +37,12 @@ from app.handlers.common import (
 from app.domain.services.access_service import FEATURE_BUDGETS, can_use_feature
 from app.ui.formatters import make_progress_bar
 from app.ui.keyboards import cancel_kb
+from aiogram.filters import BaseFilter
+
+class CatLimFlowFilter(BaseFilter):
+    async def __call__(self, message: Message, state: FSMContext) -> bool:
+        data = await state.get_data()
+        return "catlim_after" in data
 
 router = Router()
 PARSE_MODE = "HTML"
@@ -577,7 +583,7 @@ async def catlim_add_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conne
     await _safe_answer(c)
 
 
-@router.message(CategoriesFlow.add_name, F.text)
+@router.message(CategoriesFlow.add_name, F.text, CatLimFlowFilter())
 async def catlim_add_name(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
@@ -624,7 +630,7 @@ async def catlim_rename_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
     await _safe_answer(c)
 
 
-@router.message(CategoriesFlow.rename, F.text)
+@router.message(CategoriesFlow.rename, F.text, CatLimFlowFilter())
 async def catlim_rename_text(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if is_cancel_text(m.text):
         await cancel_to_main_menu(m, state, db)
