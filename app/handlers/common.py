@@ -426,6 +426,7 @@ async def more_hub_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
 
 @router.callback_query(F.data == "hub:main")
 async def hub_main(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     await cancel_to_main_menu(c, state, db)
 
 
@@ -607,6 +608,7 @@ async def upgrade_info_message(m: Message, state: FSMContext, db: aiosqlite.Conn
 
 @router.callback_query(lambda c: c.data in {"upgrade:info", "upgrade:open"})
 async def upgrade_info_callback(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     lang = await get_lang(db, c.from_user.id)
 
     data = await state.get_data()
