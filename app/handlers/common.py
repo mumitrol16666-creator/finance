@@ -370,7 +370,7 @@ async def cancel_to_main_menu(ctx: Message | CallbackQuery, state: FSMContext, d
     await ctx.answer(menu_text, reply_markup=await build_main_menu_markup(db, user_id, lang), parse_mode="HTML")
 
 
-@router.message(F.text.casefold().in_({'����', 'menu'}))
+@router.message(F.text.casefold().in_({'меню', 'menu'}))
 @router.message(F.text == '/menu')
 async def menu_any(m: Message, state: FSMContext, db: aiosqlite.Connection):
     data = await state.get_data()
