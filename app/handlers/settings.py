@@ -806,7 +806,7 @@ async def st_accounts(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
 
 
 
-@router.callback_query(F.data.startswith("st:acc:view:archive:"))
+@router.callback_query(F.data.startswith("st:acc:view:archive:"), ~F.data.startswith("st:acc:view:archive:confirm:"))
 async def st_acc_view_archive(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     parts = c.data.split(":")
     if len(parts) != 5:
