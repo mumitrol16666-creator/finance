@@ -19,11 +19,6 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
     "ru": [
         BotCommand(command="start", description="Запуск"),
         BotCommand(command="today", description="Отчёт: сегодня"),
-        BotCommand(command="week", description="Отчёт: неделя"),
-        BotCommand(command="month", description="Отчёт: месяц"),
-        BotCommand(command="cats_today", description="Категории: сегодня"),
-        BotCommand(command="cats_month", description="Категории: месяц"),
-        BotCommand(command="q", description="Быстрая запись (напр. 500 кофе)"),
         BotCommand(command="undo", description="Отменить последнюю запись"),
         BotCommand(command="export", description="Экспорт XLSX за месяц"),
         BotCommand(command="cancel", description="Сбросить текущее действие"),
@@ -31,11 +26,6 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
     "en": [
         BotCommand(command="start", description="Start"),
         BotCommand(command="today", description="Report: today"),
-        BotCommand(command="week", description="Report: week"),
-        BotCommand(command="month", description="Report: month"),
-        BotCommand(command="cats_today", description="Categories: today"),
-        BotCommand(command="cats_month", description="Categories: month"),
-        BotCommand(command="q", description="Quick add (e.g. 500 coffee)"),
         BotCommand(command="undo", description="Undo last entry"),
         BotCommand(command="export", description="Export XLSX for the month"),
         BotCommand(command="cancel", description="Cancel current action"),
@@ -43,11 +33,6 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
     "kk": [
         BotCommand(command="start", description="Бастау"),
         BotCommand(command="today", description="Есеп: бүгін"),
-        BotCommand(command="week", description="Есеп: апта"),
-        BotCommand(command="month", description="Есеп: ай"),
-        BotCommand(command="cats_today", description="Санаттар: бүгін"),
-        BotCommand(command="cats_month", description="Санаттар: ай"),
-        BotCommand(command="q", description="Жылдам жазу (мыс. 500 кофе)"),
         BotCommand(command="undo", description="Соңғы жазуды болдырмау"),
         BotCommand(command="export", description="Айдың XLSX-экспорты"),
         BotCommand(command="cancel", description="Ағымдағы әрекетті бас тарту"),
@@ -57,8 +42,17 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
 
 async def _set_bot_commands(bot: Bot) -> None:
     """Register bot menu commands per language (RU as default)."""
+    try:
+        await bot.delete_my_commands(scope=BotCommandScopeDefault())
+    except Exception:
+        pass
+
     await bot.set_my_commands(BOT_COMMANDS["ru"], scope=BotCommandScopeDefault())
     for lang_code in ("en", "kk"):
+        try:
+            await bot.delete_my_commands(scope=BotCommandScopeDefault(), language_code=lang_code)
+        except Exception:
+            pass
         try:
             await bot.set_my_commands(
                 BOT_COMMANDS[lang_code],

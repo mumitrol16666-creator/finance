@@ -31,7 +31,7 @@ from app.domain.services.reports_service import (
 )
 from app.handlers.common import deny_feature_message, cancel_to_main_menu, build_main_menu_markup, _cleanup_ui, _ensure_minimized_menu
 from app.ui.formatters import fmt_money
-from app.ui.i18n import t, text_matches_key
+from app.ui.i18n import t, text_matches_key, t_category
 from app.ui.keyboards import cancel_kb, reports_kb, minimized_menu_kb
 
 router = Router()
@@ -366,7 +366,7 @@ def _build_categories_lines(lang: str, expense_total: int, cats: list[tuple], *,
     shown = 0
     for row in cats[:limit]:
         name, emoji, total = row[0], row[1], row[2]
-        label = (name or "").strip() or t(lang, "NO_CATEGORY")
+        label = t_category((name or "").strip(), lang) or t(lang, "NO_CATEGORY")
         prefix = f"{emoji} " if emoji else ""
         value = int(total or 0)
         shown += value

@@ -36,7 +36,7 @@ from app.db.repositories.budgets_repo import (
 
 from app.handlers.common import cancel_to_main_menu, is_cancel_text, deny_feature_message, build_main_menu_markup, neutralize_keyboard
 from app.domain.services.access_service import FEATURE_TRANSFER, can_use_feature
-from app.ui.i18n import text_matches_key, t as _i18n_t
+from app.ui.i18n import text_matches_key, t as _i18n_t, t_category
 from app.ui.keyboards import (
     cancel_kb,
     accounts_kb,
@@ -55,16 +55,27 @@ PARSE_MODE = "HTML"
 # =========================================================
 # Common helpers
 # =========================================================
-def _format_month(month: str | None) -> str:
+def _format_month(month: str | None, lang: str = "ru") -> str:
     if not month:
         return ""
 
     try:
         y, m = month.split("-")
-        months = [
-            "январь", "февраль", "март", "апрель", "май", "июнь",
-            "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"
-        ]
+        if lang == "en":
+            months = [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+            ]
+        elif lang == "kk":
+            months = [
+                "қаңтар", "ақпан", "наурыз", "сәуір", "мамыр", "маусым",
+                "шілде", "тамыз", "қыркүйек", "қазан", "қараша", "желтоқсан"
+            ]
+        else:
+            months = [
+                "январь", "февраль", "март", "апрель", "май", "июнь",
+                "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"
+            ]
         return f"{months[int(m) - 1]} {y}"
     except Exception:
         return month
@@ -434,6 +445,7 @@ def _action_buttons_kb(
     edit3_text: str | None = None,
     edit3_cb: str | None = None,
     save_text: str = "✅ Сохранить",
+    cancel_text: str = "❌ Отмена",
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text=save_text, callback_data=save_cb)]
@@ -451,7 +463,7 @@ def _action_buttons_kb(
         rows.append([InlineKeyboardButton(text=edit3_text, callback_data=edit3_cb)])
 
     rows.append(
-        [InlineKeyboardButton(text="❌ Отмена", callback_data=save_cb.rsplit(":", 1)[0] + ":cancel")]
+        [InlineKeyboardButton(text=cancel_text, callback_data=save_cb.rsplit(":", 1)[0] + ":cancel")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -472,93 +484,98 @@ def _overdraft_kb(
     )
 
 
-def _exp_confirm_kb() -> InlineKeyboardMarkup:
+def _exp_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     return _action_buttons_kb(
         "expcfm:save",
-        edit1_text="✏️ Категория",
+        edit1_text=_i18n_t(lang, "TX_EDIT_CAT"),
         edit1_cb="expcfm:category",
-        edit2_text="✏️ Комментарий",
+        edit2_text=_i18n_t(lang, "TX_EDIT_NOTE"),
         edit2_cb="expcfm:note",
+        save_text=_i18n_t(lang, "BTN_SAVE"),
+        cancel_text=_i18n_t(lang, "BTN_CANCEL"),
     )
 
 
-def _inc_confirm_kb() -> InlineKeyboardMarkup:
+def _inc_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     return _action_buttons_kb(
         "inccfm:save",
-        edit1_text="✏️ Категория",
+        edit1_text=_i18n_t(lang, "TX_EDIT_CAT"),
         edit1_cb="inccfm:category",
-        edit2_text="✏️ Комментарий",
+        edit2_text=_i18n_t(lang, "TX_EDIT_NOTE"),
         edit2_cb="inccfm:note",
+        save_text=_i18n_t(lang, "BTN_SAVE"),
+        cancel_text=_i18n_t(lang, "BTN_CANCEL"),
     )
 
 
-def _tr_confirm_kb() -> InlineKeyboardMarkup:
+def _tr_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     return _action_buttons_kb(
         "trcfm:save",
-        edit1_text="✏️ Откуда",
+        edit1_text=_i18n_t(lang, "TX_EDIT_FROM"),
         edit1_cb="trcfm:from",
-        edit2_text="✏️ Куда",
+        edit2_text=_i18n_t(lang, "TX_EDIT_TO"),
         edit2_cb="trcfm:to",
-        edit3_text="✏️ Комментарий",
+        edit3_text=_i18n_t(lang, "TX_EDIT_NOTE"),
         edit3_cb="trcfm:note",
-        save_text="✅ Выполнить",
+        save_text=_i18n_t(lang, "TX_BTN_PROCEED_TR"),
+        cancel_text=_i18n_t(lang, "BTN_CANCEL"),
     )
 
 
-def _exp_summary_lines(data: dict) -> str:
+def _exp_summary_lines(data: dict, lang: str = "ru") -> str:
     lines = []
 
     if data.get("amount") is not None:
-        lines.append(f"💸 Сумма: <b>{fmt_money(int(data['amount']))}</b>")
+        lines.append(f"{_i18n_t(lang, 'TX_SUM')}: <b>{fmt_money(int(data['amount']))}</b>")
 
     if data.get("account_name"):
-        lines.append(f"💳 Счёт: <b>{escape(str(data['account_name']))}</b>")
+        lines.append(f"{_i18n_t(lang, 'TX_ACC')}: <b>{escape(str(data['account_name']))}</b>")
 
     if data.get("category_name"):
         emoji = (data.get("category_emoji") or "").strip()
-        label = f"{emoji} {escape(str(data['category_name']))}".strip()
-        lines.append(f"🧾 Категория: <b>{label}</b>")
+        label = f"{emoji} {escape(t_category(str(data['category_name']), lang))}".strip()
+        lines.append(f"{_i18n_t(lang, 'TX_CAT')}: <b>{label}</b>")
 
     if data.get("note"):
-        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+        lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
 
     return "\n".join(lines)
 
 
-def _inc_summary_lines(data: dict) -> str:
+def _inc_summary_lines(data: dict, lang: str = "ru") -> str:
     lines = []
 
     if data.get("amount") is not None:
-        lines.append(f"💵 Сумма: <b>{fmt_money(int(data['amount']))}</b>")
+        lines.append(f"{_i18n_t(lang, 'TX_INC_SUM')}: <b>{fmt_money(int(data['amount']))}</b>")
 
     if data.get("account_name"):
-        lines.append(f"💳 Счёт: <b>{escape(str(data['account_name']))}</b>")
+        lines.append(f"{_i18n_t(lang, 'TX_ACC')}: <b>{escape(str(data['account_name']))}</b>")
 
     if data.get("category_name"):
         emoji = (data.get("category_emoji") or "").strip()
-        label = f"{emoji} {escape(str(data['category_name']))}".strip()
-        lines.append(f"💼 Категория: <b>{label}</b>")
+        label = f"{emoji} {escape(t_category(str(data['category_name']), lang))}".strip()
+        lines.append(f"{_i18n_t(lang, 'TX_INC_CAT')}: <b>{label}</b>")
 
     if data.get("note"):
-        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+        lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
 
     return "\n".join(lines)
 
 
-def _tr_summary_lines(data: dict) -> str:
-    lines = ["🔁 <b>Новый перевод</b>", ""]
+def _tr_summary_lines(data: dict, lang: str = "ru") -> str:
+    lines = [_i18n_t(lang, 'TX_TR_STEP_1').split('\\n')[0], ""]
 
     if data.get("amount") is not None:
-        lines.append(f"💸 Сумма: <b>{fmt_money(int(data['amount']))}</b>")
+        lines.append(f"{_i18n_t(lang, 'TX_SUM')}: <b>{fmt_money(int(data['amount']))}</b>")
 
     if data.get("from_name"):
-        lines.append(f"📤 Откуда: <b>{escape(str(data['from_name']))}</b>")
+        lines.append(f"{_i18n_t(lang, 'TX_FROM')}: <b>{escape(str(data['from_name']))}</b>")
 
     if data.get("to_name"):
-        lines.append(f"📥 Куда: <b>{escape(str(data['to_name']))}</b>")
+        lines.append(f"{_i18n_t(lang, 'TX_TO')}: <b>{escape(str(data['to_name']))}</b>")
 
     if data.get("note"):
-        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+        lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
 
     return "\n".join(lines)
 
@@ -628,13 +645,7 @@ async def _try_auto_pick_only_account(
 
 async def _exp_render_amount(target: Message | CallbackQuery, state: FSMContext):
     lang = (await state.get_data()).get("lang", "ru")
-    text = (
-        "💸 <b>Новый расход</b>\n\n"
-        "Шаг 1 из 5.\n"
-        "Введи сумму цифрами.\n\n"
-        "Пример: <code>4500</code>"
-    )
-    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
+    await _flow_render(target, state, _i18n_t(lang, "TX_EXP_STEP_1"), reply_markup=cancel_kb(lang))
 
 
 async def _exp_render_account(target: Message | CallbackQuery, state: FSMContext, db):
@@ -646,7 +657,7 @@ async def _exp_render_account(target: Message | CallbackQuery, state: FSMContext
         await _flow_render(
             target,
             state,
-            f"{_exp_summary_lines(data)}\n\n{_i18n_t(lang, 'TX_NO_ACTIVE_ACCOUNTS')}",
+            f"{_exp_summary_lines(data, lang)}\n\n{_i18n_t(lang, 'TX_NO_ACTIVE_ACCOUNTS')}",
             reply_markup=cancel_kb(lang),
         )
         return
@@ -655,9 +666,8 @@ async def _exp_render_account(target: Message | CallbackQuery, state: FSMContext
     ):
         return
     text = (
-        f"{_exp_summary_lines(data)}\n\n"
-        "Шаг 2 из 5.\n"
-        "Выбери счёт:"
+        f"{_exp_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_EXP_STEP_2')}"
     )
     await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "expacc", lang))
 
@@ -681,9 +691,8 @@ async def _exp_render_category(target: Message | CallbackQuery, state: FSMContex
             left_map[cid] = limit - spent
 
     text = (
-        f"{_exp_summary_lines(data)}\n\n"
-        "Шаг 3 из 5.\n"
-        "Выбери категорию расхода:"
+        f"{_exp_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_EXP_STEP_3')}"
     )
 
     await _flow_render(
@@ -703,12 +712,12 @@ async def _exp_render_category(target: Message | CallbackQuery, state: FSMContex
 
 async def _exp_render_need_note(target: Message | CallbackQuery, state: FSMContext):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     text = (
-        f"{_exp_summary_lines(data)}\n\n"
-        "Шаг 4 из 5.\n"
-        "Добавить комментарий?"
+        f"{_exp_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_EXP_STEP_4_ASK')}"
     )
-    await _flow_render(target, state, text, reply_markup=yes_no_kb("expnote"))
+    await _flow_render(target, state, text, reply_markup=yes_no_kb("expnote", lang))
 
 
 async def _exp_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
@@ -716,16 +725,15 @@ async def _exp_render_note_input(target: Message | CallbackQuery, state: FSMCont
     lang = data.get("lang", "ru")
     max_len = await _note_max(db, target.from_user.id)
     text = (
-        f"{_exp_summary_lines(data)}\n\n"
-        "Шаг 4 из 5.\n"
-        f"Введи короткий комментарий сообщением ниже.\n"
-        f"До {max_len} символов."
+        f"{_exp_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_EXP_STEP_4_INPUT').format(max=max_len)}"
     )
     await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     amt = int(data["amount"])
     acc_id = int(data["account_id"])
     user_id = target.from_user.id
@@ -750,7 +758,7 @@ async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext
     data = await state.get_data()
 
     cat_emoji = (data.get("category_emoji") or "").strip()
-    cat_name = escape(str(data.get("category_name") or "Без категории"))
+    cat_name = escape(t_category(str(data.get("category_name") or _i18n_t(lang, "TX_CAT_LIMIT_NONE")), lang))
     cat_label = f"{cat_emoji} {cat_name}".strip()
 
     category_id = int(data["category_id"])
@@ -758,40 +766,39 @@ async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext
     month = await user_month_key(db, user_id)
     spent_before = await month_spent_by_category(db, user_id, month, category_id)
     after_spent = spent_before + amt
-
     lines = [
-        "💸 <b>Подтверждение расхода</b>",
+        f"{_i18n_t(lang, 'TX_EXP_CONFIRM_HEAD')}",
         "",
-        f"🧾 Категория: <b>{cat_label}</b>",
+        f"{_i18n_t(lang, 'TX_CAT')}: <b>{cat_label}</b>",
     ]
 
     if isinstance(category_limit, int) and category_limit > 0:
         left_after = category_limit - after_spent
-        lines.append(f"📉 Лимит категории: <b>{fmt_money(category_limit)}</b>")
-        lines.append(f"📊 Уже потрачено: <b>{fmt_money(spent_before)}</b>")
+        lines.append(_i18n_t(lang, "TX_EXP_CONFIRM_LIMIT").format(limit=fmt_money(category_limit)))
+        lines.append(_i18n_t(lang, "TX_EXP_CONFIRM_SPENT").format(spent=fmt_money(spent_before)))
 
         if left_after >= 0:
-            lines.append(f"🟢 Остаток после операции: <b>{fmt_money(left_after)}</b>")
+            lines.append(_i18n_t(lang, "TX_EXP_CONFIRM_LEFT").format(left=fmt_money(left_after)))
         else:
-            lines.append(f"🔴 Перерасход после операции: <b>{fmt_money(abs(left_after))}</b>")
+            lines.append(_i18n_t(lang, "TX_EXP_CONFIRM_OVER").format(over=fmt_money(abs(left_after))))
     else:
-        lines.append("📉 Лимит категории: <b>не задан</b>")
+        lines.append(_i18n_t(lang, "TX_EXP_CONFIRM_LIMIT_NONE"))
 
     lines.extend([
-        f"💸 Сумма: <b>-{fmt_money(int(data['amount']))}</b>",
-        f"💳 Счёт: <b>{escape(str(data.get('account_name') or '—'))}</b>",
-        f"📊 Баланс: <b>{fmt_money(int(bal_before))} → {fmt_money(int(bal_after))}</b>",
+        _i18n_t(lang, "TX_EXP_CONFIRM_AMOUNT").format(amount=fmt_money(int(data['amount']))),
+        _i18n_t(lang, "TX_EXP_CONFIRM_ACCOUNT").format(account=escape(str(data.get('account_name') or '—'))),
+        _i18n_t(lang, "TX_EXP_CONFIRM_BALANCE").format(before=fmt_money(int(bal_before)), after=fmt_money(int(bal_after))),
     ])
 
     if data.get("note"):
-        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+        lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
 
     if int(bal_after) < 0:
-        lines += ["", "⚠️ После операции счёт уйдёт в минус."]
+        lines += ["", _i18n_t(lang, "TX_EXP_CONFIRM_MINUS")]
 
-    lines += ["", "Шаг 5 из 5.", "Сохранить?"]
+    lines += ["", f"{_i18n_t(lang, 'TX_EXP_STEP_5')}", f"{_i18n_t(lang, 'TX_EXP_CONFIRM_SAVE')}"]
 
-    await _flow_render(target, state, "\n".join(lines), reply_markup=_exp_confirm_kb())
+    await _flow_render(target, state, "\n".join(lines), reply_markup=_exp_confirm_kb(lang))
 
 
 # =========================================================
@@ -1021,7 +1028,8 @@ async def exp_confirm(c: CallbackQuery, state: FSMContext, db):
     action = c.data.split(":")[1]
 
     if action == "cancel":
-        await _flow_finish(c, state, "Отменено.", db)
+        lang = (await state.get_data()).get("lang", "ru")
+        await _flow_finish(c, state, _i18n_t(lang, "CANCELLED").split(".")[0] + ".", db)
         return
 
     if action == "category":
@@ -1107,17 +1115,18 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
         else str(data.get("balance_after") or "—")
     )
 
+    lang = data.get("lang", "ru")
     msg = (
-        "✅ <b>Расход добавлен</b>\n\n"
-        f"🧾 Категория: {escape(cat_label)}\n"
-        f"💸 Сумма: <b>-{fmt_money(int(data['amount']))}</b>\n"
-        f"💳 Счёт: {escape(str(data['account_name']))}\n"
-        f"📊 Баланс: <b>{bal_before_txt} → {bal_after_txt}</b>\n"
-        f"\n<i>ID операции: {tx_id}</i>"
+        f"{_i18n_t(lang, 'TX_EXP_SUCCESS')}\n\n"
+        f"{_i18n_t(lang, 'TX_CAT')}: {escape(cat_label)}\n"
+        f"{_i18n_t(lang, 'TX_EXP_CONFIRM_AMOUNT').format(amount=fmt_money(int(data['amount'])))}\n"
+        f"{_i18n_t(lang, 'TX_EXP_CONFIRM_ACCOUNT').format(account=escape(str(data['account_name'])))}\n"
+        f"{_i18n_t(lang, 'TX_EXP_CONFIRM_BALANCE').format(before=bal_before_txt, after=bal_after_txt)}\n"
+        f"\n<i>ID: {tx_id}</i>"
     )
 
     if data.get("note"):
-        msg += f"\n📝 Комментарий: <i>{escape(str(data['note']))}</i>"
+        msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"
 
     dl = meta.get("daily_limit")
     after_day = meta.get("after_total")
@@ -1125,23 +1134,23 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     if isinstance(dl, int) and isinstance(after_day, int) and dl > 0:
         left = dl - after_day
         if st_day == "warn":
-            msg += f"\n\n⚠️ Почти дневной лимит. Остаток: <b>{fmt_money(left)}</b>"
+            msg += _i18n_t(lang, "TX_DAILY_LIMIT_WARN").format(left=fmt_money(left))
         elif st_day == "over":
-            msg += f"\n\nПревышение дневного лимита: {fmt_money(abs(left))}"
+            msg += _i18n_t(lang, "TX_DAILY_LIMIT_OVER").format(left=fmt_money(abs(left)))
         elif st_day == "hard_over":
-            msg += f"\n\n🚫 Жёсткое превышение дневного лимита: <b>{fmt_money(abs(left))}</b>"
+            msg += _i18n_t(lang, "TX_DAILY_LIMIT_HARD_OVER").format(left=fmt_money(abs(left)))
 
     cb = meta.get("cat_budget")
     st_cat = meta.get("cat_state")
     left_cat = meta.get("cat_left")
-    month = _format_month(meta.get("month"))
+    month = _format_month(meta.get("month"), lang)
     if isinstance(cb, int) and cb > 0 and isinstance(month, str) and isinstance(left_cat, int):
         if st_cat == "warn":
-            msg += f"\n\n⚠️ Почти лимит категории ({escape(month)}). Остаток: <b>{fmt_money(left_cat)}</b>"
+            msg += _i18n_t(lang, "TX_CAT_LIMIT_WARN").format(month=escape(month), left=fmt_money(left_cat))
         elif st_cat == "over":
-            msg += f"\n\nПревышение лимита категории ({escape(month)}): {fmt_money(abs(left_cat))}"
+            msg += _i18n_t(lang, "TX_CAT_LIMIT_OVER").format(month=escape(month), left=fmt_money(abs(left_cat)))
         elif st_cat == "hard_over":
-            msg += f"\n\n🚫 Жёсткий перерасход по категории ({escape(month)}): <b>{fmt_money(abs(left_cat))}</b>"
+            msg += _i18n_t(lang, "TX_CAT_LIMIT_HARD_OVER").format(month=escape(month), left=fmt_money(abs(left_cat)))
 
     if feedback:
         msg += f"\n\n<i>{escape(str(feedback))}</i>"
@@ -1155,13 +1164,7 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
 
 async def _inc_render_amount(target: Message | CallbackQuery, state: FSMContext):
     lang = (await state.get_data()).get("lang", "ru")
-    text = (
-        "✅ <b>Новый доход</b>\n\n"
-        "Шаг 1 из 5.\n"
-        "Введи сумму цифрами.\n\n"
-        "Пример: <code>20000</code>"
-    )
-    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
+    await _flow_render(target, state, _i18n_t(lang, "TX_INC_STEP_1"), reply_markup=cancel_kb(lang))
 
 
 async def _inc_render_account(target: Message | CallbackQuery, state: FSMContext, db):
@@ -1173,7 +1176,7 @@ async def _inc_render_account(target: Message | CallbackQuery, state: FSMContext
         await _flow_render(
             target,
             state,
-            f"{_inc_summary_lines(data)}\n\n{_i18n_t(lang, 'TX_NO_ACTIVE_ACCOUNTS')}",
+            f"{_inc_summary_lines(data, lang)}\n\n{_i18n_t(lang, 'TX_NO_ACTIVE_ACCOUNTS')}",
             reply_markup=cancel_kb(lang),
         )
         return
@@ -1182,9 +1185,8 @@ async def _inc_render_account(target: Message | CallbackQuery, state: FSMContext
     ):
         return
     text = (
-        f"{_inc_summary_lines(data)}\n\n"
-        "Шаг 2 из 5.\n"
-        "Выбери счёт:"
+        f"{_inc_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_INC_STEP_2')}"
     )
     await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "incacc", lang))
 
@@ -1194,9 +1196,8 @@ async def _inc_render_category(target: Message | CallbackQuery, state: FSMContex
     lang = data.get("lang", "ru")
     cats = await list_categories(db, target.from_user.id, "income")
     text = (
-        f"{_inc_summary_lines(data)}\n\n"
-        "Шаг 3 из 5.\n"
-        "Выбери категорию дохода:"
+        f"{_inc_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_INC_STEP_3')}"
     )
     page = int(data.get("inc_cat_page", 0) or 0)
     await _flow_render(target, state, text, reply_markup=categories_kb(cats, "inccat", page=page, add_cb="inccat:add", lang=lang))
@@ -1204,12 +1205,12 @@ async def _inc_render_category(target: Message | CallbackQuery, state: FSMContex
 
 async def _inc_render_need_note(target: Message | CallbackQuery, state: FSMContext):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     text = (
-        f"{_inc_summary_lines(data)}\n\n"
-        "Шаг 4 из 5.\n"
-        "Добавить комментарий?"
+        f"{_inc_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_INC_STEP_4_ASK')}"
     )
-    await _flow_render(target, state, text, reply_markup=yes_no_kb("incnote"))
+    await _flow_render(target, state, text, reply_markup=yes_no_kb("incnote", lang))
 
 
 async def _inc_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
@@ -1217,16 +1218,15 @@ async def _inc_render_note_input(target: Message | CallbackQuery, state: FSMCont
     lang = data.get("lang", "ru")
     max_len = await _note_max(db, target.from_user.id)
     text = (
-        f"{_inc_summary_lines(data)}\n\n"
-        "Шаг 4 из 5.\n"
-        f"Введи короткий комментарий сообщением ниже.\n"
-        f"До {max_len} символов."
+        f"{_inc_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_INC_STEP_4_INPUT').format(max=max_len)}"
     )
     await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _inc_render_confirm(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
 
     acc = await _validate_account(db, target.from_user.id, int(data["account_id"]))
     if not acc:
@@ -1244,24 +1244,23 @@ async def _inc_render_confirm(target: Message | CallbackQuery, state: FSMContext
     data = await state.get_data()
 
     cat_emoji = (data.get("category_emoji") or "").strip()
-    cat_name = escape(str(data.get("category_name") or "Без категории"))
+    cat_name = escape(t_category(str(data.get("category_name") or _i18n_t(lang, "TX_CAT_LIMIT_NONE")), lang))
     cat_label = f"{cat_emoji} {cat_name}".strip()
-
     lines = [
-        "✅ <b>Подтверждение дохода</b>",
+        f"{_i18n_t(lang, 'TX_INC_CONFIRM_HEAD')}",
         "",
-        f"💼 Категория: <b>{cat_label}</b>",
-        f"💵 Сумма: <b>+{fmt_money(int(data['amount']))}</b>",
-        f"💳 Счёт: <b>{escape(str(data['account_name']))}</b>",
-        f"📊 Баланс: <b>{fmt_money(bal_before)} → {fmt_money(bal_after)}</b>",
+        f"{_i18n_t(lang, 'TX_CAT')}: <b>{cat_label}</b>",
+        _i18n_t(lang, "TX_INC_CONFIRM_AMOUNT").format(amount=fmt_money(int(data['amount']))),
+        _i18n_t(lang, "TX_EXP_CONFIRM_ACCOUNT").format(account=escape(str(data['account_name']))),
+        _i18n_t(lang, "TX_EXP_CONFIRM_BALANCE").format(before=fmt_money(bal_before), after=fmt_money(bal_after)),
     ]
 
     if data.get("note"):
-        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+        lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
 
-    lines += ["", "Провести доход?"]
+    lines += ["", f"{_i18n_t(lang, 'TX_INC_CONFIRM_ASK')}"]
 
-    await _flow_render(target, state, "\n".join(lines), reply_markup=_inc_confirm_kb())
+    await _flow_render(target, state, "\n".join(lines), reply_markup=_inc_confirm_kb(lang))
 
 # =========================================================
 # Income handlers
@@ -1389,7 +1388,8 @@ async def inc_confirm(c: CallbackQuery, state: FSMContext, db):
     action = c.data.split(":")[1]
 
     if action == "cancel":
-        await _flow_finish(c, state, "Отменено.", db)
+        lang = (await state.get_data()).get("lang", "ru")
+        await _flow_finish(c, state, _i18n_t(lang, "CANCELLED").split(".")[0] + ".", db)
         return
 
     if action == "category":
@@ -1488,32 +1488,35 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
 
     delta = month_total - prev_month_total
 
+    lang = data.get("lang", "ru")
+    month_txt = _format_month(month, lang)
+    prev_month_txt = _format_month(prev_month, lang)
     msg = (
-        "✅ <b>Доход добавлен</b>\n\n"
-        f"💼 Категория: {escape(cat_label)}\n"
-        f"💵 Сумма: <b>+{fmt_money(int(data['amount']))}</b>\n"
-        f"💳 Счёт: {escape(str(data['account_name']))}\n"
-        f"📊 Баланс: <b>{bal_after_txt}</b>\n\n"
-        f"📈 Доход за {escape(month_txt)}: <b>{fmt_money(month_total)}</b>\n"
-        f"🧾 Операций за {escape(month_txt)}: <b>{month_count}</b>\n"
-        f"💼 По категории за {escape(month_txt)}: <b>{fmt_money(cat_month_total)}</b>\n"
-        f"🏆 Крупнейший доход месяца: <b>{fmt_money(month_max)}</b>\n"
+        f"{_i18n_t(lang, 'TX_INC_SUCCESS')}\n\n"
+        f"{_i18n_t(lang, 'TX_CAT')}: {escape(cat_label)}\n"
+        f"{_i18n_t(lang, 'TX_INC_CONFIRM_AMOUNT').format(amount=fmt_money(int(data['amount'])))}\n"
+        f"{_i18n_t(lang, 'TX_EXP_CONFIRM_ACCOUNT').format(account=escape(str(data['account_name'])))}\n"
+        f"{_i18n_t(lang, 'TX_ACC')}: <b>{bal_after_txt}</b>\n\n"
+        f"{_i18n_t(lang, 'TX_INC_MONTH_TOTAL').format(month=escape(month_txt), total=fmt_money(month_total))}\n"
+        f"{_i18n_t(lang, 'TX_INC_MONTH_COUNT').format(month=escape(month_txt), count=month_count)}\n"
+        f"{_i18n_t(lang, 'TX_INC_CAT_MONTH_TOTAL').format(month=escape(month_txt), total=fmt_money(cat_month_total))}\n"
+        f"{_i18n_t(lang, 'TX_INC_MONTH_MAX').format(total=fmt_money(month_max))}\n"
     )
 
     if prev_month_total > 0:
         if delta > 0:
-            msg += f"↗️ К {escape(prev_month_txt)}: <b>+{fmt_money(delta)}</b>\n"
+            msg += _i18n_t(lang, "TX_INC_MONTH_GROWTH").format(month=escape(prev_month_txt), delta=fmt_money(delta)) + "\n"
         elif delta < 0:
-            msg += f"↘️ К {escape(prev_month_txt)}: <b>-{fmt_money(abs(delta))}</b>\n"
+            msg += _i18n_t(lang, "TX_INC_MONTH_DECLINE").format(month=escape(prev_month_txt), delta=fmt_money(abs(delta))) + "\n"
         else:
-            msg += f"➡️ К {escape(prev_month_txt)}: <b>без изменений</b>\n"
+            msg += _i18n_t(lang, "TX_INC_MONTH_EQUAL").format(month=escape(prev_month_txt)) + "\n"
     else:
-        msg += f"📁 За {escape(prev_month_txt)}: <b>нет данных</b>\n"
+        msg += _i18n_t(lang, "TX_INC_MONTH_NO_DATA").format(month=escape(prev_month_txt)) + "\n"
 
-    msg += f"\n<i>ID операции: {tx_id}</i>"
+    msg += f"\n<i>ID: {tx_id}</i>"
 
     if data.get("note"):
-        msg += f"\n📝 Комментарий: <i>{escape(str(data['note']))}</i>"
+        msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"
 
     await _flow_finish(ctx, state, msg, db)
 
@@ -1523,45 +1526,39 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
 
 async def _tr_render_amount(target: Message | CallbackQuery, state: FSMContext):
     lang = (await state.get_data()).get("lang", "ru")
-    text = (
-        "🔁 <b>Новый перевод</b>\n\n"
-        "Шаг 1 из 5.\n"
-        "Введи сумму цифрами.\n\n"
-        "Пример: <code>50000</code>"
-    )
-    await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
+    await _flow_render(target, state, _i18n_t(lang, "TX_TR_STEP_1"), reply_markup=cancel_kb(lang))
 
 
 async def _tr_render_from(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     accs = await list_accounts(db, target.from_user.id)
     text = (
-        f"{_tr_summary_lines(data)}\n\n"
-        "Шаг 2 из 5.\n"
-        "Выбери счёт списания:"
+        f"{_tr_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_TR_STEP_2')}"
     )
-    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "trfrom"))
+    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "trfrom", lang))
 
 
 async def _tr_render_to(target: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     accs = await list_accounts(db, target.from_user.id)
     text = (
-        f"{_tr_summary_lines(data)}\n\n"
-        "Шаг 3 из 5.\n"
-        "Выбери счёт зачисления:"
+        f"{_tr_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_TR_STEP_3')}"
     )
-    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "trto"))
+    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "trto", lang))
 
 
 async def _tr_render_need_note(target: Message | CallbackQuery, state: FSMContext):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
     text = (
-        f"{_tr_summary_lines(data)}\n\n"
-        "Шаг 4 из 5.\n"
-        "Добавить комментарий?"
+        f"{_tr_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_TR_STEP_4_ASK')}"
     )
-    await _flow_render(target, state, text, reply_markup=yes_no_kb("trnote"))
+    await _flow_render(target, state, text, reply_markup=yes_no_kb("trnote", lang))
 
 
 async def _tr_render_note_input(target: Message | CallbackQuery, state: FSMContext, db):
@@ -1569,16 +1566,15 @@ async def _tr_render_note_input(target: Message | CallbackQuery, state: FSMConte
     lang = data.get("lang", "ru")
     max_len = await _note_max(db, target.from_user.id)
     text = (
-        f"{_tr_summary_lines(data)}\n\n"
-        "Шаг 4 из 5.\n"
-        f"Введи короткий комментарий сообщением ниже.\n"
-        f"До {max_len} символов."
+        f"{_tr_summary_lines(data, lang)}\n\n"
+        f"{_i18n_t(lang, 'TX_TR_STEP_4_INPUT').format(max=max_len)}"
     )
     await _flow_render(target, state, text, reply_markup=cancel_kb(lang))
 
 
 async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext):
     data = await state.get_data()
+    lang = data.get("lang", "ru")
 
     from_before = int(data["from_before"])
     from_after = from_before - int(data["amount"])
@@ -1587,23 +1583,23 @@ async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext)
     data = await state.get_data()
 
     lines = [
-        "🔁 <b>Подтверждение перевода</b>",
+        f"{_i18n_t(lang, 'TX_TR_CONFIRM_HEAD')}",
         "",
-        f"📤 Откуда: <b>{escape(str(data['from_name']))}</b>",
-        f"📥 Куда: <b>{escape(str(data['to_name']))}</b>",
-        f"💸 Сумма: <b>{fmt_money(int(data['amount']))}</b>",
-        f"📊 После списания: <b>{fmt_money(int(from_before))} → {fmt_money(int(from_after))}</b>",
+        _i18n_t(lang, "TX_TR_CONFIRM_FROM").format(account=escape(str(data['from_name']))),
+        _i18n_t(lang, "TX_TR_CONFIRM_TO").format(account=escape(str(data['to_name']))),
+        _i18n_t(lang, "TX_TR_CONFIRM_SUM").format(amount=fmt_money(int(data['amount']))),
+        _i18n_t(lang, "TX_TR_CONFIRM_BALANCE").format(before=fmt_money(int(from_before)), after=fmt_money(int(from_after))),
     ]
 
     if data.get("note"):
-        lines.append(f"📝 Комментарий: <i>{escape(str(data['note']))}</i>")
+        lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
 
     if from_after < 0:
-        lines += ["", "⚠️ После перевода счёт списания уйдёт в минус."]
+        lines += ["", _i18n_t(lang, "TX_TR_CONFIRM_MINUS")]
 
-    lines += ["", "Шаг 5 из 5.", "Выполнить перевод?"]
+    lines += ["", f"{_i18n_t(lang, 'TX_TR_STEP_5')}", f"{_i18n_t(lang, 'TX_TR_CONFIRM_PROCEED')}"]
 
-    await _flow_render(target, state, "\n".join(lines), reply_markup=_tr_confirm_kb())
+    await _flow_render(target, state, "\n".join(lines), reply_markup=_tr_confirm_kb(lang))
 
 
 # =========================================================
@@ -1723,7 +1719,8 @@ async def tr_confirm(c: CallbackQuery, state: FSMContext, db):
     action = c.data.split(":")[1]
 
     if action == "cancel":
-        await _flow_finish(c, state, "Отменено.", db)
+        lang = (await state.get_data()).get("lang", "ru")
+        await _flow_finish(c, state, _i18n_t(lang, "CANCELLED").split(".")[0] + ".", db)
         return
 
     if action == "from":
@@ -1750,18 +1747,18 @@ async def tr_confirm(c: CallbackQuery, state: FSMContext, db):
         from_after = data.get("from_after")
 
         if isinstance(from_after, int) and from_after < 0:
-            text = (
-                "⚠️ <b>Подтверждение перерасхода</b>\n\n"
-                f"📤 Счёт списания: <b>{escape(str(data['from_name']))}</b>\n"
-                f"📊 Баланс: <b>{fmt_money(int(data['from_before']))} → {fmt_money(int(data['from_after']))}</b>\n\n"
-                "Выполнить перевод?"
+            lang = data.get("lang", "ru")
+            text = _i18n_t(lang, "TX_TR_OD_TITLE").format(
+                account=escape(str(data['from_name'])),
+                before=fmt_money(int(data['from_before'])),
+                after=fmt_money(int(data['from_after']))
             )
             await state.set_state(TransferFlow.confirm_overdraft)
             await _flow_render(
                 c,
                 state,
                 text,
-                reply_markup=_overdraft_kb("trod", yes_text="✅ Провести", no_text="⬅️ Назад"),
+                reply_markup=_overdraft_kb("trod", yes_text=_i18n_t(lang, "TX_EXP_OD_YES"), no_text=_i18n_t(lang, "TX_EXP_OD_NO")),
             )
             await c.answer()
             return
@@ -1805,18 +1802,19 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     from_balance_txt = fmt_money(int(from_balance)) if isinstance(from_balance, int) else "—"
     to_balance_txt = fmt_money(int(to_balance)) if isinstance(to_balance, int) else "—"
 
+    lang = data.get("lang", "ru")
     msg = (
-        "🔁 <b>Перевод между счетами выполнен</b>\n\n"
-        f"📤 Откуда: <b>{escape(str(data['from_name']))}</b>\n"
-        f"📥 Куда: <b>{escape(str(data['to_name']))}</b>\n"
-        f"💸 Сумма: <b>{fmt_money(int(data['amount']))}</b>\n\n"
+        f"{_i18n_t(lang, 'TX_TR_SUCCESS')}\n\n"
+        f"{_i18n_t(lang, 'TX_FROM')}: <b>{escape(str(data['from_name']))}</b>\n"
+        f"{_i18n_t(lang, 'TX_TO')}: <b>{escape(str(data['to_name']))}</b>\n"
+        f"{_i18n_t(lang, 'TX_SUM')}: <b>{fmt_money(int(data['amount']))}</b>\n\n"
         f"📊 {escape(str(data['from_name']))}: <b>{from_balance_txt}</b>\n"
         f"📊 {escape(str(data['to_name']))}: <b>{to_balance_txt}</b>\n"
         f"\n<i>ID: {tx1}/{tx2}</i>"
     )
 
     if data.get("note"):
-        msg += f"\n📝 Комментарий: <i>{escape(str(data['note']))}</i>"
+        msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"
 
     await _flow_finish(ctx, state, msg, db)
 
