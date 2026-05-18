@@ -113,3 +113,23 @@ async def _audit_log(
     except Exception:
         # Migration not yet applied or table missing — don't block the user.
         pass
+
+
+async def get_expenses_for_period(
+    db: aiosqlite.Connection, user_id: int, start_iso: str, end_iso: str
+) -> list[tuple[int, str, str]]:
+    """Returns a list of tuples: (amount, category_name, category_emoji)
+    for all expenses in the given period.
+    """
+    cur = await db.execute(
+        """
+        SELECT t.amount, COALESCE(c.name, 'Без категории') as category_name, COALESCE(c.emoji, '') as category_emoji
+        FROM transactions t
+        LEFT JOIN categories c ON c.id = t.category_id
+        WHERE t.user_id = ? AND t.type = 'expense' AND t.ts >= ? AND t.ts < ? AND t.deleted_at IS NULL
+        """,
+        (user_id, start_iso, end_iso),
+    )
+    rows = await cur.fetchall()
+    return [(-row[0], row[1], row[2]) for row in rows]
+

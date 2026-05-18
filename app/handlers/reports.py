@@ -752,6 +752,7 @@ async def reports_cb(c: CallbackQuery, db: aiosqlite.Connection, state: FSMConte
     user_id = c.from_user.id
 
     if c.data == "rp:to_menu":
+        await neutralize_keyboard(c)
         await cancel_to_main_menu(c, state, db)
         return
 

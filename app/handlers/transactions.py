@@ -28,6 +28,7 @@ from app.domain.services.accounting_service import (
 from app.db.repositories.accounts_repo import list_accounts, get_account
 from app.db.repositories.categories_repo import list_categories, get_category, create_category, name_exists_any_kind
 from app.db.repositories.settings_repo import get_settings, get_lang
+from app.db.repositories.users_repo import get_streak
 from app.db.repositories.budgets_repo import (
     get_category_budget,
     month_spent_by_category,
@@ -35,7 +36,7 @@ from app.db.repositories.budgets_repo import (
 )
 
 from app.handlers.common import cancel_to_main_menu, is_cancel_text, deny_feature_message, build_main_menu_markup, neutralize_keyboard
-from app.domain.services.access_service import FEATURE_TRANSFER, can_use_feature
+from app.domain.services.access_service import FEATURE_TRANSFER, FEATURE_AI, can_use_feature
 from app.ui.i18n import text_matches_key, t as _i18n_t, t_category
 from app.ui.keyboards import (
     cancel_kb,
@@ -433,6 +434,55 @@ async def _flow_finish(
     await state.clear()
     lang = await get_lang(db, ctx.from_user.id) if db is not None else "ru"
     await ctx.answer(text, reply_markup=await build_main_menu_markup(db, ctx.from_user.id, lang), parse_mode=PARSE_MODE)
+
+
+async def _check_and_send_streak_reward(ctx: Message | CallbackQuery, db, streak_before: int) -> None:
+    if db is None:
+        return
+    user_id = ctx.from_user.id
+    
+    # 1. Check if user already has FEATURE_AI (Premium)
+    is_premium = await can_use_feature(db, user_id, FEATURE_AI)
+    if is_premium:
+        return
+        
+    # 2. Get current streak
+    streak_after, _, _ = await get_streak(db, user_id)
+    
+    # 3. Trigger only when streak reaches 7
+    if streak_before == 6 and streak_after == 7:
+        lang = await get_lang(db, user_id)
+        
+        if lang == "en":
+            text = "🔥 <b>Incredible discipline!</b>\n" \
+                   "You've been tracking your finances for 7 days in a row. Such financial focus is only seen in 5% of users.\n\n" \
+                   "As a discipline master, I'm unlocking personal access to Premium Analytics and the AI Consultant for you. Claim Full Access and take your finances to the next level!"
+            btn_text = "Claim Reward for 150 ⭐️"
+        elif lang == "kk":
+            text = "🔥 <b>Ғажайып тәртіп!</b>\n" \
+                   "Сіз қатарынан 7 күн бойы есеп жүргізіп келесіз. Қаржыға мұндай назар аудару пайдаланушылардың тек 5%-ында ғана кездеседі.\n\n" \
+                   "Тәртіп шебері ретінде мен сізге Premium-аналитика мен ИИ-Консультантқа жеке қолжетімділікті ашамын. Full Access-ті алыңыз және қаржыңызды келесі деңгейге көтеріңіз!"
+            btn_text = "Марапатты 150 ⭐️-ға алу"
+        else:
+            text = "🔥 <b>Невероятная дисциплина!</b>\n" \
+                   "Ты ведешь учет уже 7 дней подряд. Такой фокус на финансах встречается только у 5% пользователей.\n\n" \
+                   "Как мастеру дисциплины, я открываю тебе персональный доступ к Premium-аналитике и ИИ-Консультанту. Забери Full Access и переведи свои финансы на следующий уровень!"
+            btn_text = "Забрать награду за 150 ⭐️"
+
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=btn_text, callback_data="upgrade:activate")]
+            ]
+        )
+        
+        bot = ctx.bot
+        chat_id = ctx.chat.id if isinstance(ctx, Message) else ctx.message.chat.id
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=markup,
+            parse_mode=PARSE_MODE
+        )
 
 
 def _action_buttons_kb(
@@ -1089,6 +1139,10 @@ async def exp_od(c: CallbackQuery, state: FSMContext, db):
 async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
 
+    streak_before = 0
+    if db is not None:
+        streak_before, _, _ = await get_streak(db, ctx.from_user.id)
+
     tx_id, meta = await add_expense_v2(
         db,
         ctx.from_user.id,
@@ -1144,18 +1198,63 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     st_cat = meta.get("cat_state")
     left_cat = meta.get("cat_left")
     month = _format_month(meta.get("month"), lang)
-    if isinstance(cb, int) and cb > 0 and isinstance(month, str) and isinstance(left_cat, int):
-        if st_cat == "warn":
-            msg += _i18n_t(lang, "TX_CAT_LIMIT_WARN").format(month=escape(month), left=fmt_money(left_cat))
-        elif st_cat == "over":
-            msg += _i18n_t(lang, "TX_CAT_LIMIT_OVER").format(month=escape(month), left=fmt_money(abs(left_cat)))
+
+    is_over_limit = st_cat in ("over", "hard_over") and isinstance(cb, int) and cb > 0 and isinstance(month, str) and isinstance(left_cat, int)
+
+    has_premium = False
+    if db is not None:
+        has_premium = await can_use_feature(db, ctx.from_user.id, FEATURE_AI)
+
+    if not is_over_limit or has_premium:
+        if isinstance(cb, int) and cb > 0 and isinstance(month, str) and isinstance(left_cat, int):
+            if st_cat == "warn":
+                msg += _i18n_t(lang, "TX_CAT_LIMIT_WARN").format(month=escape(month), left=fmt_money(left_cat))
+            elif st_cat == "over":
+                msg += _i18n_t(lang, "TX_CAT_LIMIT_OVER").format(month=escape(month), left=fmt_money(abs(left_cat)))
+            elif st_cat == "hard_over":
+                msg += _i18n_t(lang, "TX_CAT_LIMIT_HARD_OVER").format(month=escape(month), left=fmt_money(abs(left_cat)))
+    else:
+        base_alert = ""
+        if st_cat == "over":
+            base_alert = _i18n_t(lang, "TX_CAT_LIMIT_OVER").format(month=escape(month), left=fmt_money(abs(left_cat))).strip()
         elif st_cat == "hard_over":
-            msg += _i18n_t(lang, "TX_CAT_LIMIT_HARD_OVER").format(month=escape(month), left=fmt_money(abs(left_cat)))
+            base_alert = _i18n_t(lang, "TX_CAT_LIMIT_HARD_OVER").format(month=escape(month), left=fmt_money(abs(left_cat))).strip()
+
+        if lang == "en":
+            promo = "\n\n🤖 <b>Don't know how to make it to the end of the month?</b>\n" \
+                    "My AI Consultant can analyze your remaining balances and suggest where you can safely reallocate funds to balance your budget. Unlock smart analytics right now!"
+            btn_text = "AI Help for 150 ⭐️"
+        elif lang == "kk":
+            promo = "\n\n🤖 <b>Айдың соңына қалай жетуді білмейсіз бе?</b>\n" \
+                    "Менің ИИ-Консультантым сіздің қалдықтарыңызды талдап, бюджетті теңестіру үшін қаражатты қайдан қауіпсіз қайта бөлуге болатынын айта алады. Ақылды аналитиканы дәл қазір ашыңыз!"
+            btn_text = "ИИ көмегі 150 ⭐️"
+        else:
+            promo = "\n\n🤖 <i>Не знаете, как дотянуть до конца месяца?</i>\n" \
+                    "Мой ИИ-Консультант может проанализировать ваши остатки и подсказать, откуда безопасно перераспределить средства, чтобы свести дебет с кредитом. Разблокируйте умную аналитику прямо сейчас!"
+            btn_text = "Помощь ИИ за 150 ⭐️"
+
+        alert_text = f"🚨 {base_alert}{promo}"
 
     if feedback:
         msg += f"\n\n<i>{escape(str(feedback))}</i>"
 
     await _flow_finish(ctx, state, msg, db)
+    await _check_and_send_streak_reward(ctx, db, streak_before)
+
+    if is_over_limit and not has_premium:
+        bot = ctx.bot
+        chat_id = ctx.chat.id if isinstance(ctx, Message) else ctx.message.chat.id
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=btn_text, callback_data="upgrade:activate")]
+            ]
+        )
+        await bot.send_message(
+            chat_id=chat_id,
+            text=alert_text,
+            reply_markup=markup,
+            parse_mode=PARSE_MODE
+        )
 
 
 # =========================================================
@@ -1413,6 +1512,10 @@ async def inc_confirm(c: CallbackQuery, state: FSMContext, db):
 async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
 
+    streak_before = 0
+    if db is not None:
+        streak_before, _, _ = await get_streak(db, ctx.from_user.id)
+
     tx_id = await add_income(
         db,
         ctx.from_user.id,
@@ -1519,6 +1622,7 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
         msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"
 
     await _flow_finish(ctx, state, msg, db)
+    await _check_and_send_streak_reward(ctx, db, streak_before)
 
 # =========================================================
 # Transfer screens

@@ -26,7 +26,7 @@ async def get_streak(db: aiosqlite.Connection, user_id: int) -> tuple[int, int, 
         return 0, 0, None
     return int(row[0] or 0), int(row[1] or 0), (str(row[2]) if row[2] else None)
 
-async def update_streak_on_activity(db: aiosqlite.Connection, user_id: int, local_date: str):
+async def update_streak_on_activity(db: aiosqlite.Connection, user_id: int, local_date: str) -> int:
     """Update streak when user makes a transaction in their local date (YYYY-MM-DD).
     Safe to call multiple times per day.
     """
@@ -36,20 +36,20 @@ async def update_streak_on_activity(db: aiosqlite.Connection, user_id: int, loca
     )
     row = await cur.fetchone()
     if not row:
-        return
+        return 0
 
     current = int(row[0] or 0)
     best = int(row[1] or 0)
     last = str(row[2]) if row[2] else None
 
     if last == local_date:
-        return  # already counted today
+        return current  # already counted today
 
     from datetime import date, timedelta
     try:
         today = date.fromisoformat(local_date)
     except Exception:
-        return
+        return current
 
     if last:
         try:
@@ -71,6 +71,7 @@ async def update_streak_on_activity(db: aiosqlite.Connection, user_id: int, loca
         "UPDATE users SET current_streak=?, max_streak=?, last_activity_date=? WHERE user_id=?",
         (current, best, local_date, user_id),
     )
+    return current
 
 
 async def get_access_profile(db: aiosqlite.Connection, user_id: int):
@@ -118,3 +119,23 @@ async def grant_full_access(db: aiosqlite.Connection, user_id: int, days: int = 
 
 async def set_newbie_defaults(db: aiosqlite.Connection, user_id: int):
     await db.execute("UPDATE users SET mode='newbie', progress_level=0, full_access=0 WHERE user_id=?", (user_id,))
+
+
+async def get_free_exports_used(db: aiosqlite.Connection, user_id: int) -> int:
+    """
+    Возвращает количество использованных бесплатных Excel-выгрузок.
+    Если поля нет (или юзер новый), возвращает 0.
+    """
+    cur = await db.execute("SELECT COALESCE(free_exports_used, 0) FROM users WHERE user_id = ?", (user_id,))
+    row = await cur.fetchone()
+    return int(row[0]) if row else 0
+
+
+async def increment_free_export(db: aiosqlite.Connection, user_id: int) -> None:
+    """
+    Увеличивает счетчик бесплатных Excel-выгрузок на 1.
+    """
+    await db.execute(
+        "UPDATE users SET free_exports_used = COALESCE(free_exports_used, 0) + 1 WHERE user_id = ?",
+        (user_id,),
+    )

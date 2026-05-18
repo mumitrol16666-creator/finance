@@ -188,6 +188,7 @@ async def _open_hub(target: Message | CallbackQuery, state: FSMContext, db: aios
 
     # Fallback if no flow_message_id or if called from a Message
     if isinstance(target, CallbackQuery):
+        await neutralize_keyboard(target)
         await _cleanup_ui(target.bot, target.message.chat.id, data)
     else:
         await _cleanup_ui(target.bot, target.chat.id, data)
@@ -214,6 +215,7 @@ async def deny_feature_message(ctx: Message | CallbackQuery, db: aiosqlite.Conne
     markup = upgrade_info_kb(lang, price=_full_access_price())
     
     if isinstance(ctx, CallbackQuery):
+        await neutralize_keyboard(ctx)
         # We try to answer the callback so it doesn't spin
         try:
             await ctx.answer()

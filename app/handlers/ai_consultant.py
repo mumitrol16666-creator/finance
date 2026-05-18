@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import aiosqlite
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from app.db.repositories.ai_context_repo import save_ai_context_note
 from app.db.repositories.settings_repo import (
@@ -17,11 +17,14 @@ from app.db.repositories.settings_repo import (
     set_ai_usage,
     set_financial_goal,
 )
+from app.db.repositories.tx_repo import get_expenses_for_period
 from app.domain.services.access_service import FEATURE_AI, can_use_feature
 from app.domain.services.ai_consultant_service import build_ai_context
 from app.domain.services.ai_llm_service import render_final_ai_question, render_final_ai_report
+from app.domain.services.reports_service import month_bounds_utc
+from app.ui.formatters import fmt_money
 from app.fsm.states import AiConsultantFlow
-from app.handlers.common import cancel_to_main_menu, deny_feature_message
+from app.handlers.common import cancel_to_main_menu, deny_feature_message, neutralize_keyboard
 from app.ui.i18n import text_matches_key, t
 from app.ui.keyboards import (
     ai_consultant_kb,
@@ -324,10 +327,93 @@ async def _enter_ai(target: Message | CallbackQuery, state: FSMContext, db: aios
     )
 
 
+async def _show_ai_teaser(target: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection) -> None:
+    await _collapse_ui(target, state)
+    await state.clear()
+    
+    if isinstance(target, Message):
+        try:
+            await target.delete()
+        except Exception:
+            pass
+    else:
+        await target.answer()
+
+    user_id = target.from_user.id
+    lang = await get_lang(db, user_id)
+    tz_name = await get_timezone(db, user_id)
+    
+    # Get month bounds in UTC
+    start, end, _, _ = month_bounds_utc(tz_name)
+    start_iso = start.astimezone(timezone.utc).isoformat()
+    end_iso = end.astimezone(timezone.utc).isoformat()
+    
+    # Fetch expenses for the period
+    expenses = await get_expenses_for_period(db, user_id, start_iso, end_iso)
+    
+    # Check if empty
+    if not expenses:
+        # Send base offer
+        if lang == "en":
+            text = "🧠 My AI brain is ready, but you have no transactions logged this month. Unlock me for 150 ⭐️, and I will start analyzing your every step!"
+            btn_text = "Unlock AI for 150 ⭐️"
+        elif lang == "kk":
+            text = "🧠 Менің AI-миым жұмысқа дайын, бірақ осы айда әлі жазбаларыңыз жоқ. Мені 150 ⭐️-ға ашыңыз, мен сіздің әрбір қадамыңызды талдай бастаймын!"
+            btn_text = "ИИ-ді 150 ⭐️-ға ашу"
+        else:
+            text = "🧠 Мой ИИ-мозг готов к работе, но пока у вас нет записей в этом месяце. Разблокируйте меня за 150 ⭐️, и я начну анализировать каждый ваш шаг!"
+            btn_text = "Разблокировать ИИ за 150 ⭐️"
+    else:
+        # Compute Top-1 category and amount
+        from collections import defaultdict
+        cat_sums = defaultdict(int)
+        for amount, cat_name, cat_emoji in expenses:
+            display_name = f"{cat_emoji} {cat_name}".strip() if cat_emoji else cat_name
+            cat_sums[display_name] += amount
+        
+        # Sort by total descending
+        sorted_cats = sorted(cat_sums.items(), key=lambda x: x[1], reverse=True)
+        top_category, top_amount_val = sorted_cats[0]
+        top_amount = fmt_money(top_amount_val)
+        
+        # Formulate teaser text
+        if lang == "en":
+            text = "🧠 <i>I've briefly analyzed your expenses for this month.</i>\n" \
+                   f"I see that the main part of your budget goes to category <b>[{top_category}]</b> ({top_amount}).\n\n" \
+                   "I have 3 specific tips on how to optimize these expenses and save up to 15% next month...\n" \
+                   "░░░░░░░░░░░░░░░░░░░░\n" \
+                   "[FULL ACCESS REQUIRED TO VIEW DEEP ANALYSIS]"
+            btn_text = "Unlock AI for 150 ⭐️"
+        elif lang == "kk":
+            text = "🧠 <i>Осы айдағы шығындарыңызды жылдам талдап шықтым.</i>\n" \
+                   f"Бюджеттің негізгі бөлігі <b>[{top_category}]</b> санатына кетіп жатқанын көріп тұрмын ({top_amount}).\n\n" \
+                   "Шығындарды оңтайландыру және келесі айда 15%-ға дейін үнемдеу туралы 3 нақты кеңесім бар...\n" \
+                   "░░░░░░░░░░░░░░░░░░░░\n" \
+                   "[ТОЛЫҚ ТАЛДАУДЫ КӨРУ ҮШІН ТОЛЫҚ ҚОЛЖЕТІМДІЛІК ҚАЖЕТ]"
+            btn_text = "ИИ-ді 150 ⭐️-ға ашу"
+        else:
+            text = "🧠 <i>Я бегло проанализировал твои расходы за этот месяц.</i>\n" \
+                   f"Я вижу, что основная часть бюджета уходит на категорию <b>[{top_category}]</b> ({top_amount}).\n\n" \
+                   "У меня есть 3 конкретных совета, как оптимизировать эти траты и сэкономить до 15% в следующем месяце...\n" \
+                   "░░░░░░░░░░░░░░░░░░░░\n" \
+                   "[ДЛЯ ПРОСМОТРА ПОЛНОГО АНАЛИЗА НУЖЕН FULL ACCESS]"
+            btn_text = "Разблокировать ИИ за 150 ⭐️"
+
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=btn_text, callback_data="upgrade:activate")],
+            [InlineKeyboardButton(text=t(lang, "AI_BACK"), callback_data="ai:back")]
+        ]
+    )
+    
+    await state.update_data(ui_scope="ai_consultant_teaser")
+    await _render_screen(target, state, text, reply_markup=markup)
+
+
 @router.callback_query(F.data == "ai:open")
 async def ai_entry_from_reports(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     if not await can_use_feature(db, c.from_user.id, FEATURE_AI):
-        await deny_feature_message(c, db, c.from_user.id)
+        await _show_ai_teaser(c, state, db)
         return
     await _enter_ai(c, state, db)
 
@@ -335,7 +421,7 @@ async def ai_entry_from_reports(c: CallbackQuery, state: FSMContext, db: aiosqli
 @router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_AI"))
 async def ai_entry(m: Message, state: FSMContext, db: aiosqlite.Connection):
     if not await can_use_feature(db, m.from_user.id, FEATURE_AI):
-        await deny_feature_message(m, db, m.from_user.id)
+        await _show_ai_teaser(m, state, db)
         return
     await _enter_ai(m, state, db)
 
@@ -501,5 +587,6 @@ async def ai_download(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
 
 @router.callback_query(F.data == "ai:back")
 async def ai_back(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     await cancel_to_main_menu(c, state, db)
 
