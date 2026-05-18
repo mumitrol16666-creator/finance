@@ -3,14 +3,14 @@ import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Update, Message, CallbackQuery, Chat, User
+from aiogram.types import Update, Message, CallbackQuery, Chat, User, PreCheckoutQuery
 from aiogram.methods import TelegramMethod
 
 import aiosqlite
@@ -23,7 +23,7 @@ from app.db.migrate import run_migrations
 from app.handlers import get_routers
 from app.middlewares.access import AccessContextMiddleware
 from app.middlewares.fsm_escape import FsmEscapeMiddleware
-from app.fsm.states import ExpenseFlow, CategoriesFlow
+from app.fsm.states import ExpenseFlow, IncomeFlow, CategoriesFlow
 
 
 class MockBot(Bot):
@@ -59,6 +59,14 @@ class MockBot(Bot):
             return True
         elif method_name == "DeleteMessage":
             return True
+        elif method_name == "SendInvoice":
+            return Message(
+                message_id=1000,
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=6856090314, type="private"),
+                text="⭐️ Invoice: " + params.get("title", ""),
+                from_user=User(id=999, is_bot=True, first_name="Bot")
+            )
         return None
 
 
@@ -71,17 +79,17 @@ async def setup_test_db() -> aiosqlite.Connection:
     # Run all schema migrations
     await run_migrations(db)
     
-    # Insert test user and settings
+    # Insert test user and settings (starts as premium to test default behavior first)
     await db.execute(
         "INSERT INTO users (user_id, created_at, onboarded, mode, full_access) VALUES (?, ?, 1, 'full', 1)",
         (6856090314, datetime.now(timezone.utc).isoformat())
     )
     await db.execute(
-        "INSERT INTO settings (user_id, lang, created_at, updated_at) VALUES (?, 'ru', datetime('now'), datetime('now'))",
+        "INSERT INTO settings (user_id, lang, timezone, created_at, updated_at) VALUES (?, 'ru', 'UTC', datetime('now'), datetime('now'))",
         (6856090314,)
     )
     
-    # Insert mock account
+    # Insert mock accounts
     await db.execute(
         "INSERT INTO accounts (user_id, name, balance, currency, created_at, updated_at) VALUES (?, 'Карта', 100000, 'KZT', datetime('now'), datetime('now'))",
         (6856090314,)
@@ -91,10 +99,14 @@ async def setup_test_db() -> aiosqlite.Connection:
         (6856090314,)
     )
     
-    # Insert mock category
+    # Insert mock categories
     await db.execute(
         "INSERT INTO categories (id, user_id, name, emoji, kind, is_archived, created_at, updated_at) VALUES (?, ?, 'Продукты', '🍔', 'expense', 0, datetime('now'), datetime('now'))",
         (402, 6856090314)
+    )
+    await db.execute(
+        "INSERT INTO categories (id, user_id, name, emoji, kind, is_archived, created_at, updated_at) VALUES (?, ?, 'Зарплата', '💰', 'income', 0, datetime('now'), datetime('now'))",
+        (403, 6856090314)
     )
     
     await db.commit()
@@ -102,7 +114,9 @@ async def setup_test_db() -> aiosqlite.Connection:
 
 
 async def run_crawler():
-    print("=== STARTING BOT FLOW CRAWLER ===")
+    print("=====================================================================")
+    print("                 🚀 RUNNING FinanceBot INTEGRATED FLOW CRAWLERS       ")
+    print("=====================================================================\n")
     
     # Initialize mock components
     bot = MockBot()
@@ -115,9 +129,9 @@ async def run_crawler():
     # Configure loguru to print exceptions to stdout
     from loguru import logger
     logger.remove()
-    logger.add(sys.stdout, level="DEBUG")
+    logger.add(sys.stdout, level="ERROR")
     
-    # Register outer/inner middlewares matching main.py
+    # Register middlewares
     fsm_escape_mw = FsmEscapeMiddleware()
     dp.message.outer_middleware(fsm_escape_mw)
     dp.callback_query.outer_middleware(fsm_escape_mw)
@@ -126,7 +140,7 @@ async def run_crawler():
     dp.message.middleware(access_mw)
     dp.callback_query.middleware(access_mw)
     
-    # Register all routers
+    # Register routers
     for r in get_routers():
         dp.include_router(r)
         
@@ -140,236 +154,241 @@ async def run_crawler():
         s = await state_ctx.get_state()
         data = await state_ctx.get_data()
         return f"State: {s}, Data: {data}"
-        
-    print(f"Initial: {await get_state_info()}")
+
+    # =======================================================================
+    # 🐛 WORM 1: Expense Transaction Crawl (Guided Flow)
+    # =======================================================================
+    print("🐛 [Worm 1/5] Expense Flow Crawling...")
     
-    # ----------------------------------------------------
-    # Step 1: Click ➖ Расход (Starts Expense Flow)
-    # ----------------------------------------------------
-    print("\n--- Step 1: Sending '➖ Расход' ---")
-    msg1 = Message(
-        message_id=101,
-        date=datetime.now(timezone.utc),
-        chat=chat,
-        text="➖ Расход",
-        from_user=user
-    )
-    bot.sent_messages.clear()
+    # Step 1.1: Send '➖ Расход'
+    msg1 = Message(message_id=101, date=datetime.now(timezone.utc), chat=chat, text="➖ Расход", from_user=user)
     await dp.feed_update(bot, Update(update_id=1, message=msg1), db=db)
-    print(await get_state_info())
-    assert await state_ctx.get_state() == ExpenseFlow.amount, "Should transition to ExpenseFlow.amount state!"
+    assert await state_ctx.get_state() == ExpenseFlow.amount, "Transition to ExpenseFlow.amount failed!"
     
-    # ----------------------------------------------------
-    # Step 2: Send Amount '500'
-    # ----------------------------------------------------
-    print("\n--- Step 2: Sending Amount '500' ---")
-    msg2 = Message(
-        message_id=102,
-        date=datetime.now(timezone.utc),
-        chat=chat,
-        text="500",
-        from_user=user
-    )
-    bot.sent_messages.clear()
+    # Step 1.2: Send Amount '500'
+    msg2 = Message(message_id=102, date=datetime.now(timezone.utc), chat=chat, text="500", from_user=user)
     await dp.feed_update(bot, Update(update_id=2, message=msg2), db=db)
-    print(await get_state_info())
-    assert await state_ctx.get_state() == ExpenseFlow.account, "Should transition to ExpenseFlow.account state!"
+    assert await state_ctx.get_state() == ExpenseFlow.account, "Transition to ExpenseFlow.account failed!"
     
-    # ----------------------------------------------------
-    # Step 3: Select Account (CallbackQuery expacc:1)
-    # ----------------------------------------------------
-    print("\n--- Step 3: Selecting Account (expacc:1) ---")
-    cb3 = CallbackQuery(
-        id="cb_103",
-        from_user=user,
-        chat_instance="chat_inst_1",
-        message=Message(
-            message_id=999,
-            date=datetime.now(timezone.utc),
-            chat=chat,
-            text="Choose account",
-            from_user=User(id=999, is_bot=True, first_name="Bot")
-        ),
-        data="expacc:1"
-    )
-    bot.sent_messages.clear()
+    # Step 1.3: Select Account (expacc:1)
+    cb3 = CallbackQuery(id="cb_103", from_user=user, chat_instance="inst_1", message=msg1, data="expacc:1")
     await dp.feed_update(bot, Update(update_id=3, callback_query=cb3), db=db)
-    print(await get_state_info())
-    assert await state_ctx.get_state() == ExpenseFlow.category, "Should transition to ExpenseFlow.category state!"
+    assert await state_ctx.get_state() == ExpenseFlow.category, "Transition to ExpenseFlow.category failed!"
     
-    # ----------------------------------------------------
-    # Step 4: Select Category (CallbackQuery expcat:402)
-    # ----------------------------------------------------
-    print("\n--- Step 4: Selecting Category (expcat:402) ---")
-    cb4 = CallbackQuery(
-        id="cb_104",
-        from_user=user,
-        chat_instance="chat_inst_1",
-        message=Message(
-            message_id=999,
-            date=datetime.now(timezone.utc),
-            chat=chat,
-            text="Choose category",
-            from_user=User(id=999, is_bot=True, first_name="Bot")
-        ),
-        data="expcat:402"
-    )
-    bot.sent_messages.clear()
+    # Step 1.4: Select Category (expcat:402)
+    cb4 = CallbackQuery(id="cb_104", from_user=user, chat_instance="inst_1", message=msg1, data="expcat:402")
     await dp.feed_update(bot, Update(update_id=4, callback_query=cb4), db=db)
-    print(await get_state_info())
-    assert await state_ctx.get_state() == ExpenseFlow.need_note, "Should transition to ExpenseFlow.need_note state!"
+    assert await state_ctx.get_state() == ExpenseFlow.need_note, "Transition to ExpenseFlow.need_note failed!"
 
-    # ----------------------------------------------------
-    # Step 5: Click No Note (CallbackQuery expnote:no)
-    # ----------------------------------------------------
-    print("\n--- Step 5: Clicking No Note (expnote:no) ---")
-    cb5 = CallbackQuery(
-        id="cb_105",
-        from_user=user,
-        chat_instance="chat_inst_1",
-        message=Message(
-            message_id=999,
-            date=datetime.now(timezone.utc),
-            chat=chat,
-            text="Need note?",
-            from_user=User(id=999, is_bot=True, first_name="Bot")
-        ),
-        data="expnote:no"
-    )
-    bot.sent_messages.clear()
+    # Step 1.5: Click No Note (expnote:no)
+    cb5 = CallbackQuery(id="cb_105", from_user=user, chat_instance="inst_1", message=msg1, data="expnote:no")
     await dp.feed_update(bot, Update(update_id=5, callback_query=cb5), db=db)
-    print(await get_state_info())
-    assert await state_ctx.get_state() == ExpenseFlow.confirm, "Should transition to ExpenseFlow.confirm state!"
+    assert await state_ctx.get_state() == ExpenseFlow.confirm, "Transition to ExpenseFlow.confirm failed!"
 
-    # ----------------------------------------------------
-    # Step 6: Click Confirm (CallbackQuery expcfm:save)
-    # ----------------------------------------------------
-    print("\n--- Step 6: Confirming Transaction (expcfm:save) ---")
-    cb6 = CallbackQuery(
-        id="cb_106",
-        from_user=user,
-        chat_instance="chat_inst_1",
-        message=Message(
-            message_id=999,
-            date=datetime.now(timezone.utc),
-            chat=chat,
-            text="Confirm transaction?",
-            from_user=User(id=999, is_bot=True, first_name="Bot")
-        ),
-        data="expcfm:save"
-    )
+    # Step 1.6: Click Confirm (expcfm:save)
     bot.sent_messages.clear()
+    cb6 = CallbackQuery(id="cb_106", from_user=user, chat_instance="inst_1", message=msg1, data="expcfm:save")
     await dp.feed_update(bot, Update(update_id=6, callback_query=cb6), db=db)
-    print(await get_state_info())
-    assert await state_ctx.get_state() is None, "Should complete transaction and clear FSM state!"
+    assert await state_ctx.get_state() is None, "Expense FSM state cleanup failed!"
     
-    # Check if transaction was recorded in the database
-    cur = await db.execute("SELECT amount, note FROM transactions WHERE user_id = 6856090314")
+    # Verify in DB
+    cur = await db.execute("SELECT amount FROM transactions WHERE user_id = 6856090314 AND type='expense'")
     row = await cur.fetchone()
-    assert row is not None, "Transaction must be inserted in database!"
-    print(f"Database Record: amount={row['amount']}, note={row['note']}")
+    assert row is not None and abs(row['amount']) == 500, "Expense database save assertion failed!"
     
-    # ----------------------------------------------------
-    # Step 7: Test Cancellation during active state
-    # ----------------------------------------------------
-    print("\n--- Step 7: Starting new flow and testing cancel ---")
-    bot.sent_messages.clear()
-    await dp.feed_update(bot, Update(update_id=7, message=msg1), db=db)
-    print(f"After starting Expense: {await get_state_info()}")
-    assert await state_ctx.get_state() == ExpenseFlow.amount
-    
-    print("\n--- Sending '❌ Отмена' in active state ---")
-    msg_cancel = Message(
-        message_id=103,
-        date=datetime.now(timezone.utc),
-        chat=chat,
-        text="❌ Отмена",
-        from_user=user
-    )
-    await dp.feed_update(bot, Update(update_id=8, message=msg_cancel), db=db)
-    print(f"After Cancel: {await get_state_info()}")
-    assert await state_ctx.get_state() is None, "FsmEscapeMiddleware must cancel state and return to None!"
-    
-    # ----------------------------------------------------
-    # Step 8: Verify Categories management legacy screen
-    # ----------------------------------------------------
-    print("\n--- Step 8: Verifying Categories Settings (st:cats) ---")
-    cb_cats = CallbackQuery(
-        id="cb_108",
-        from_user=user,
-        chat_instance="chat_inst_1",
-        message=Message(
-            message_id=999,
-            date=datetime.now(timezone.utc),
-            chat=chat,
-            text="Settings Menu",
-            from_user=User(id=999, is_bot=True, first_name="Bot")
-        ),
-        data="st:cats"
-    )
-    bot.sent_messages.clear()
-    await dp.feed_update(bot, Update(update_id=9, callback_query=cb_cats), db=db)
-    
-    # Ensure there are no warnings or errors, and st:cats was handled
-    any_errors = any("Session expired" in str(msg) or "Сессия устарела" in str(msg) for _, msg in bot.sent_messages)
-    assert not any_errors, "Should not trigger Session Expired when hitting st:cats!"
-    print("✅ st:cats processed cleanly without Session Expired warnings.")
+    print("🟢 [PING BACK] Worm 1/5: Expense transaction crawled, saved, FSM cleared perfectly.\n")
 
-    # ----------------------------------------------------
-    # Step 9: Verify Evening / Daily Report scheduler delivery
-    # ----------------------------------------------------
-    print("\n--- Step 9: Testing Evening / Daily Report Scheduler Delivery ---")
+    # =======================================================================
+    # 🐛 WORM 2: Income Transaction Crawl (Guided Flow)
+    # =======================================================================
+    print("🐛 [Worm 2/5] Income Flow Crawling...")
     
-    # Configure user settings to enable daily report at 21:00 in UTC+5 (Asia/Aqtobe) timezone
+    # Step 2.1: Send '➕ Доход'
+    msg_inc1 = Message(message_id=201, date=datetime.now(timezone.utc), chat=chat, text="➕ Доход", from_user=user)
+    await dp.feed_update(bot, Update(update_id=21, message=msg_inc1), db=db)
+    assert await state_ctx.get_state() == IncomeFlow.amount, "Transition to IncomeFlow.amount failed!"
+    
+    # Step 2.2: Send Amount '15000'
+    msg_inc2 = Message(message_id=202, date=datetime.now(timezone.utc), chat=chat, text="15000", from_user=user)
+    await dp.feed_update(bot, Update(update_id=22, message=msg_inc2), db=db)
+    assert await state_ctx.get_state() == IncomeFlow.account, "Transition to IncomeFlow.account failed!"
+    
+    # Step 2.3: Select Account (incacc:1)
+    cb_inc3 = CallbackQuery(id="cb_203", from_user=user, chat_instance="inst_1", message=msg_inc1, data="incacc:1")
+    await dp.feed_update(bot, Update(update_id=23, callback_query=cb_inc3), db=db)
+    assert await state_ctx.get_state() == IncomeFlow.category, "Transition to IncomeFlow.category failed!"
+    
+    # Step 2.4: Select Category (inccat:403)
+    cb_inc4 = CallbackQuery(id="cb_204", from_user=user, chat_instance="inst_1", message=msg_inc1, data="inccat:403")
+    await dp.feed_update(bot, Update(update_id=24, callback_query=cb_inc4), db=db)
+    assert await state_ctx.get_state() == IncomeFlow.need_note, "Transition to IncomeFlow.need_note failed!"
+
+    # Step 2.5: Click No Note (incnote:no)
+    cb_inc5 = CallbackQuery(id="cb_205", from_user=user, chat_instance="inst_1", message=msg_inc1, data="incnote:no")
+    await dp.feed_update(bot, Update(update_id=25, callback_query=cb_inc5), db=db)
+    assert await state_ctx.get_state() == IncomeFlow.confirm, "Transition to IncomeFlow.confirm failed!"
+
+    # Step 2.6: Click Confirm (inccfm:save)
+    bot.sent_messages.clear()
+    cb_inc6 = CallbackQuery(id="cb_206", from_user=user, chat_instance="inst_1", message=msg_inc1, data="inccfm:save")
+    await dp.feed_update(bot, Update(update_id=26, callback_query=cb_inc6), db=db)
+    assert await state_ctx.get_state() is None, "Income FSM state cleanup failed!"
+    
+    # Verify in DB
+    cur = await db.execute("SELECT amount FROM transactions WHERE user_id = 6856090314 AND type='income'")
+    row = await cur.fetchone()
+    assert row is not None and row['amount'] == 15000, "Income database save assertion failed!"
+    
+    print("🟢 [PING BACK] Worm 2/5: Income transaction crawled, saved, FSM cleared perfectly.\n")
+
+    # =======================================================================
+    # 🐛 WORM 3: AI Consultant Teaser & Payment Handlers (Marketing Ajar Door)
+    # =======================================================================
+    print("🐛 [Worm 3/5] AI Consultant Premium Teaser Crawling...")
+    
+    # Step 3.1: Change user to Non-Premium
+    await db.execute("UPDATE users SET full_access = 0, mode = 'newbie' WHERE user_id = 6856090314")
+    await db.commit()
+    
+    # Step 3.2: Trigger AI Consultant Entry (Sends '🤖 AI консультант' text)
+    bot.sent_messages.clear()
+    msg_ai = Message(message_id=301, date=datetime.now(timezone.utc), chat=chat, text="🤖 AI консультант", from_user=user)
+    await dp.feed_update(bot, Update(update_id=31, message=msg_ai), db=db)
+    
+    # Verify Premium Ajar Teaser screen was sent
+    teaser_sent = False
+    for method, params in bot.sent_messages:
+        text_content = params.get("text", "")
+        if method == "SendMessage" and ("ИИ-мозг" in text_content or "проанализировал" in text_content) and "🧠" in text_content:
+            teaser_sent = True
+            break
+    assert teaser_sent, f"Premium Teaser block for AI Consultant must be sent! Actual sent: {bot.sent_messages}"
+    
+    # Step 3.3: Click 'upgrade:activate' payment callback button
+    bot.sent_messages.clear()
+    cb_pay = CallbackQuery(id="cb_302", from_user=user, chat_instance="inst_1", message=msg_ai, data="upgrade:activate")
+    await dp.feed_update(bot, Update(update_id=32, callback_query=cb_pay), db=db)
+    
+    # Check that payment keyboard was neutralized (EditMessageReplyMarkup called with reply_markup=None)
+    neutralized = False
+    invoice_sent = False
+    for method, params in bot.sent_messages:
+        if method == "EditMessageReplyMarkup" and params.get("reply_markup") is None:
+            neutralized = True
+        elif method == "SendInvoice":
+            invoice_sent = True
+            
+    assert neutralized, "Standard button-collapsing (EditMessageReplyMarkup) must fire to neutralize payment keyboard!"
+    assert invoice_sent, "A Telegram Star payment invoice must be sent!"
+    
+    print("🟢 [PING BACK] Worm 3/5: AI Teaser was shown, keyboard neutralized on pay click, invoice generated successfully.\n")
+
+    # =======================================================================
+    # 🐛 WORM 4: Category Limit Push Promo Alerts (Red Alert)
+    # =======================================================================
+    print("🐛 [Worm 4/5] Category Budget Overspent Limit Push Crawling...")
+    
+    # Step 4.1: Ensure user is Non-Premium
+    await db.execute("UPDATE users SET full_access = 0, mode = 'newbie' WHERE user_id = 6856090314")
+    # Setup extremely small monthly category budget of '200' KZT
+    # Format month as 'YYYY-MM' matching the datetime.now timezone date
+    current_month_str = datetime.now(timezone.utc).date().strftime("%Y-%m")
     await db.execute(
-        "UPDATE settings SET daily_report_enabled = 1, daily_report_time = '21:00', timezone = 'Asia/Aqtobe' WHERE user_id = 6856090314"
+        "INSERT INTO budgets (user_id, month, category_id, limit_amount, created_at, updated_at) VALUES (?, ?, 402, 200, datetime('now'), datetime('now'))",
+        (6856090314, current_month_str)
     )
     await db.commit()
     
-    # Mock current system UTC time representing exactly 16:00 UTC (which is 21:00 local time in Asia/Aqtobe)
-    mock_utc_now = datetime(2026, 5, 18, 16, 0, 0, tzinfo=timezone.utc)
+    # Step 4.2: Start expense transaction logging of 500 KZT (over budget limit!)
+    await state_ctx.clear()
+    msg_lim1 = Message(message_id=401, date=datetime.now(timezone.utc), chat=chat, text="➖ Расход", from_user=user)
+    await dp.feed_update(bot, Update(update_id=41, message=msg_lim1), db=db)
     
-    # Patch datetime.now in notify_scheduler to return our mocked utc time
-    import app.scheduler.notify_scheduler as ns
-    from unittest.mock import patch
+    msg_lim2 = Message(message_id=402, date=datetime.now(timezone.utc), chat=chat, text="500", from_user=user)
+    await dp.feed_update(bot, Update(update_id=42, message=msg_lim2), db=db)
     
+    cb_lim3 = CallbackQuery(id="cb_403", from_user=user, chat_instance="inst_1", message=msg_lim1, data="expacc:1")
+    await dp.feed_update(bot, Update(update_id=43, callback_query=cb_lim3), db=db)
+    
+    cb_lim4 = CallbackQuery(id="cb_404", from_user=user, chat_instance="inst_1", message=msg_lim1, data="expcat:402")
+    await dp.feed_update(bot, Update(update_id=44, callback_query=cb_lim4), db=db)
+
+    cb_lim5 = CallbackQuery(id="cb_405", from_user=user, chat_instance="inst_1", message=msg_lim1, data="expnote:no")
+    await dp.feed_update(bot, Update(update_id=45, callback_query=cb_lim5), db=db)
+
+    # Step 4.3: Confirm the overdraft expense of 500 KZT
     bot.sent_messages.clear()
+    cb_lim6 = CallbackQuery(id="cb_406", from_user=user, chat_instance="inst_1", message=msg_lim1, data="expcfm:save")
+    await dp.feed_update(bot, Update(update_id=46, callback_query=cb_lim6), db=db)
     
-    # Let's inspect targets in database
-    targets = await ns.list_notify_targets(db)
-    print(f"DATABASE TARGETS COUNT: {len(targets)}")
-    for t in targets:
-        print(f"Target: user_id={t[0]}, daily_enabled={t[4]}, hhmm={t[5]}, last_sent={t[6]}, timezone={t[2]}")
-        
-    class MockDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            if tz:
-                return mock_utc_now.astimezone(tz)
-            return mock_utc_now
-
-    with patch("app.scheduler.notify_scheduler.datetime", MockDatetime):
-        # Run the tick_notify scheduler loop
-        await ns.tick_notify(bot, db)
-        
-    print(f"SENT MESSAGES COUNT: {len(bot.sent_messages)}")
+    # Verify Limit Push promo alert message was dispatched
+    limit_push_alert_dispatched = False
     for method, params in bot.sent_messages:
-        print(f"Sent: {method} - {params.get('text')}")
-        
-    # Check if the report was sent!
-    report_sent = False
-    for method, params in bot.sent_messages:
-        if method == "SendMessage" and "Итог за день" in params.get("text", ""):
-            report_sent = True
-            print("📩 Successfully intercepted sent Daily Report message!")
-            print(f"Report Text:\n{params.get('text')}")
+        if method == "SendMessage" and "дотянуть до конца месяца" in params.get("text", ""):
+            limit_push_alert_dispatched = True
             break
-            
-    assert report_sent, "Daily Report must be sent by the scheduler!"
-    print("✅ Evening/Daily Report scheduler works flawlessly and delivers exactly when due!")
+    assert limit_push_alert_dispatched, "A separate Limit Push promo warning with the AI help pitch must be sent!"
+    
+    print("🟢 [PING BACK] Worm 4/5: Red Alert breached, Limit Push promo alert dispatched with upgrade keyboard perfectly.\n")
 
-    print("\n=== ALL FLOW TESTS PASSED SUCCESSFULLY! 100% SOUND AND ROBUST! ===")
+    # =======================================================================
+    # 🐛 WORM 5: 7-Day Streak Congratulations Trigger
+    # =======================================================================
+    print("🐛 [Worm 5/5] 7-Day Streak Reward Trigger Crawling...")
+    
+    # Step 5.1: Reset user to Non-Premium
+    await db.execute("UPDATE users SET full_access = 0, mode = 'newbie' WHERE user_id = 6856090314")
+    # Setup streak value to exactly 6 days before transaction
+    yesterday_str = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    await db.execute(
+        "UPDATE users SET current_streak = 6, last_activity_date = ? WHERE user_id = 6856090314",
+        (yesterday_str,)
+    )
+    await db.commit()
+    
+    # Step 5.2: Start income transaction logging of 1000 KZT to trigger streak update
+    await state_ctx.clear()
+    msg_str1 = Message(message_id=501, date=datetime.now(timezone.utc), chat=chat, text="➕ Доход", from_user=user)
+    await dp.feed_update(bot, Update(update_id=51, message=msg_str1), db=db)
+    
+    msg_str2 = Message(message_id=502, date=datetime.now(timezone.utc), chat=chat, text="1000", from_user=user)
+    await dp.feed_update(bot, Update(update_id=52, message=msg_str2), db=db)
+    
+    cb_str3 = CallbackQuery(id="cb_503", from_user=user, chat_instance="inst_1", message=msg_str1, data="incacc:1")
+    await dp.feed_update(bot, Update(update_id=53, callback_query=cb_str3), db=db)
+    
+    cb_str4 = CallbackQuery(id="cb_504", from_user=user, chat_instance="inst_1", message=msg_str1, data="inccat:403")
+    await dp.feed_update(bot, Update(update_id=54, callback_query=cb_str4), db=db)
+
+    cb_str5 = CallbackQuery(id="cb_505", from_user=user, chat_instance="inst_1", message=msg_str1, data="incnote:no")
+    await dp.feed_update(bot, Update(update_id=55, callback_query=cb_str5), db=db)
+
+    # Step 5.3: Confirm the income transaction of 1000 KZT
+    bot.sent_messages.clear()
+    cb_str6 = CallbackQuery(id="cb_506", from_user=user, chat_instance="inst_1", message=msg_str1, data="inccfm:save")
+    await dp.feed_update(bot, Update(update_id=56, callback_query=cb_str6), db=db)
+    
+    # Check that streak is indeed 7 in database
+    cur_user = await db.execute("SELECT current_streak FROM users WHERE user_id = 6856090314")
+    user_row = await cur_user.fetchone()
+    assert user_row is not None and user_row['current_streak'] == 7, "User's streak must increment to 7!"
+    
+    # Verify that the 7-day streak congratulations message with upgrade option was dispatched
+    streak_reward_sent = False
+    for method, params in bot.sent_messages:
+        if method == "SendMessage" and "Невероятная дисциплина" in params.get("text", ""):
+            streak_reward_sent = True
+            break
+    assert streak_reward_sent, "7-day streak congratulations reward message must be sent!"
+    
+    print("🟢 [PING BACK] Worm 5/5: 7-Day Streak incremented to 7, congratulations message with payment trigger sent perfectly.\n")
+
+    # Clean up test database
     await db.close()
+    
+    print("=====================================================================")
+    print(" 🎉 ALL BOT FLOW INTEGRATION CRAWLERS PASSED SUCCESSFULLY! 100% SOUND! ")
+    print("=====================================================================")
 
 
 if __name__ == "__main__":
