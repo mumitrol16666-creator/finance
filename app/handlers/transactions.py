@@ -1830,3 +1830,26 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
 async def _amount_non_text_fallback(m: Message, state: FSMContext, db):
     lang = await get_lang(db, m.from_user.id)
     await m.answer(_i18n_t(lang, "ENTER_AMOUNT_HINT"))
+
+
+# ---------------------------------------------------------------------------
+# Callback session expiry fallback: if the user clicks any transactions callback
+# buttons (accounts, categories, notes, confirms) but their FSM state is lost
+# or doesn't match the flow, we cleanly inform them and remove the keyboard.
+# ---------------------------------------------------------------------------
+@router.callback_query(
+    F.data.startswith("expacc:") | F.data.startswith("expcat:") | F.data.startswith("expnote:") | F.data.startswith("expcfm:") | F.data.startswith("expod:") |
+    F.data.startswith("incacc:") | F.data.startswith("inccat:") | F.data.startswith("incnote:") | F.data.startswith("inccfm:") |
+    F.data.startswith("trfrom:") | F.data.startswith("trto:") | F.data.startswith("trnote:") | F.data.startswith("trcfm:") | F.data.startswith("trod:")
+)
+async def _transaction_session_expired_fallback(c: CallbackQuery, state: FSMContext, db):
+    lang = await get_lang(db, c.from_user.id)
+    await neutralize_keyboard(c)
+    
+    err_text = {
+        "ru": "⚠️ Сессия устарела. Начни операцию заново, нажав кнопку «Расход» или «Доход».",
+        "en": "⚠️ Session expired. Please start the transaction again by clicking 'Expense' or 'Income'.",
+        "kk": "⚠️ Сессия ескірді. «Шығыс» немесе «Кіріс» батырмасын басып, әрекетті қайта бастаңыз.",
+    }.get(lang, "⚠️ Сессия устарела. Начни операцию заново.")
+    
+    await c.answer(err_text, show_alert=True)
