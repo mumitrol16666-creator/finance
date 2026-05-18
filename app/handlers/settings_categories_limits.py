@@ -48,7 +48,12 @@ async def _ensure_settings_reply_keyboard(target: Message | CallbackQuery, state
     if data.get("settings_reply_message_id"):
         return
     sender = target.message.answer if isinstance(target, CallbackQuery) else target.answer
-    sent = await sender("Режим настроек открыт.", reply_markup=cancel_kb(lang), disable_notification=True)
+    txt = {
+        "ru": "Режим настроек открыт.",
+        "en": "Settings mode is open.",
+        "kk": "Баптау режимі ашық.",
+    }.get(lang, "Режим настроек открыт.")
+    sent = await sender(txt, reply_markup=cancel_kb(lang), disable_notification=True)
     extra_ids = data.get("extra_prompt_message_ids") or []
     if not isinstance(extra_ids, list):
         extra_ids = [extra_ids]
@@ -82,8 +87,9 @@ def _month_title(month: str, lang: str) -> str:
         return month
 
 
-def _label(name: str, emoji: str | None) -> str:
-    return f"{emoji + ' ' if emoji else ''}{name}"
+def _label(name: str, emoji: str | None, lang: str = "ru") -> str:
+    from app.ui.i18n import t_category
+    return f"{emoji + ' ' if emoji else ''}{t_category(name, lang)}"
 
 
 def _T(lang: str, key: str, **kwargs) -> str:
@@ -370,7 +376,7 @@ async def _build_category_rows(db: aiosqlite.Connection, user_id: int, lang: str
     month, statuses, spent_map = await _expense_status_map(db, user_id)
     rows: list[tuple[str, str]] = []
     for cid, name, emoji in cats:
-        title = _label(name, emoji)
+        title = _label(name, emoji, lang)
         if kind == "expense":
             status = statuses.get(int(cid))
             spent = int(spent_map.get(int(cid), 0))
@@ -455,7 +461,7 @@ async def show_category_card(target: Message | CallbackQuery, state: FSMContext,
     spent = int(spent_map.get(int(category_id), 0))
     limit_amount = await get_category_budget(db, target.from_user.id, month, category_id) if kind == "expense" else None
     left = (int(limit_amount) - spent) if limit_amount is not None else None
-    label = _label(name, emoji)
+    label = _label(name, emoji, lang)
     if kind == "expense":
         if limit_amount is None:
             text = _T(lang, "cat_card_no_limit", name=label, kind=_T(lang, "kind_expense"), spent=_fmt_money(spent))
@@ -663,7 +669,7 @@ async def catlim_limit_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Con
     await _start_input(
         c,
         state,
-        screen_text=_T(lang, "set_limit_title", name=_label(row[1], row[2]), current=_fmt_money(limit_amount) if limit_amount is not None else "не задан" if lang == 'ru' else ("not set" if lang == 'en' else "орнатылмаған"), spent=_fmt_money(spent)),
+        screen_text=_T(lang, "set_limit_title", name=_label(row[1], row[2], lang), current=_fmt_money(limit_amount) if limit_amount is not None else "не задан" if lang == 'ru' else ("not set" if lang == 'en' else "орнатылмаған"), spent=_fmt_money(spent)),
         prompt_text=_T(lang, "input_hint_limit"),
         next_state=BudgetFlow.enter_amount,
         extra={
@@ -720,7 +726,7 @@ async def catlim_limit_remove_cb(c: CallbackQuery, state: FSMContext, db: aiosql
     await _render(
         c,
         state,
-        _T(lang, "remove_limit_confirm", name=_label(row[1], row[2]), current=_fmt_money(current)),
+        _T(lang, "remove_limit_confirm", name=_label(row[1], row[2], lang), current=_fmt_money(current)),
         _confirm_kb(yes_cb=f"st:catlim:limit_remove_confirm:{category_id}", back_cb=f"st:catlim:item:{category_id}", lang=lang, remove_limit=True),
     )
     await _safe_answer(c)
@@ -755,7 +761,7 @@ async def catlim_delete_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
     await _render(
         c,
         state,
-        _T(lang, "delete_confirm", name=_label(row[1], row[2])),
+        _T(lang, "delete_confirm", name=_label(row[1], row[2], lang)),
         _confirm_kb(yes_cb=f"st:catlim:delete_confirm:{category_id}", back_cb=f"st:catlim:item:{category_id}", lang=lang),
     )
     await _safe_answer(c)

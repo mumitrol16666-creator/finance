@@ -1,6 +1,6 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
-from app.ui.i18n import t
+from app.ui.i18n import t, t_category
 
 
 def newbie_menu(lang: str = "ru", days_left: int | None = None) -> ReplyKeyboardMarkup:
@@ -230,7 +230,7 @@ def categories_kb(
 
     kb = InlineKeyboardBuilder()
     for cid, name, emoji in visible:
-        label = f"{emoji + ' ' if emoji else ''}{name}"
+        label = f"{emoji + ' ' if emoji else ''}{t_category(name, lang)}"
         kb.button(text=label, callback_data=f"{prefix}:{cid}")
 
     rows = [2] * ((len(visible) + 1) // 2)
@@ -256,7 +256,7 @@ def categories_kb(
 def categories_kb_with_add(cats: list[tuple[int,str,str|None]], prefix: str, add_cb: str, lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for cid, name, emoji in cats:
-        label = f"{emoji+' ' if emoji else ''}{name}"
+        label = f"{emoji+' ' if emoji else ''}{t_category(name, lang)}"
         kb.button(text=label, callback_data=f"{prefix}:{cid}")
     kb.button(text=t(lang, "BTN_ADD_CATEGORY"), callback_data=add_cb)
     kb.button(text=t(lang, "BTN_CANCEL"), callback_data="cancel")
@@ -397,7 +397,7 @@ def cats_kind_kb(lang: str = "ru") -> InlineKeyboardMarkup:
 def cats_list_manage_kb(cats: list[tuple[int,str,str|None]], kind: str, lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for cid, name, emoji in cats:
-        label = f"{emoji+' ' if emoji else ''}{name}"
+        label = f"{emoji+' ' if emoji else ''}{t_category(name, lang)}"
         kb.button(text=label, callback_data=f"st:cats:pick:{cid}")
     kb.button(text=t(lang, "BTN_ADD_CATEGORY"), callback_data=f"st:cats:add:{kind}")
     kb.button(text=t(lang, "BTN_BACK"), callback_data="st:cats")
@@ -442,7 +442,7 @@ def budgets_categories_kb(cats, right_map: dict[int, str] | None = None, badge_m
     badge_map = badge_map or {}
     badge_prefix = {"over": "🔴 ", "warn": "🟡 ", "ok": "🟢 ", "plain": "⚪️ "}
     for cid, name, emoji in cats:
-        title = f"{(emoji + ' ') if emoji else ''}{name}"
+        title = f"{(emoji + ' ') if emoji else ''}{t_category(name, lang)}"
         if cid in right_map:
             badge = badge_prefix.get(badge_map.get(cid, "plain"), "")
             title = f"{title} — {badge}{right_map[cid]}"

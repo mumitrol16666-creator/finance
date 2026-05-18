@@ -1498,155 +1498,156 @@ async def discover_recurring_candidates_ai(db: aiosqlite.Connection, user_id: in
 
 
 async def discover_recurring_candidates(db: aiosqlite.Connection, user_id: int, days: int = 90) -> list[dict]:
-    """Finds potential recurring transactions in history. Uses AI if available, else falls back to simple logic."""
-    from app.integrations.openai_client import has_openai_key
-    if has_openai_key():
-        try:
-            return await discover_recurring_candidates_ai(db, user_id, days)
-        except Exception:
-            # Fallback to legacy logic below
-            pass
-            
-    # Legacy logic (for safety or when no AI key)
-    now = datetime.now(timezone.utc)
-    # ... (the rest of the existing logic)
-    start_date = now - timedelta(days=days)
+    """Finds potential recurring transactions in history using a strict mathematical algorithm:
+    Must be present 3 months in a row, strictly once a month, same amount, same name, same day of month (+/- 5 days tolerance),
+    and must not overlap with existing recurring templates or active debts.
+    """
+    from datetime import datetime, timedelta, timezone
     
-    # Fetch all transactions
+    # 1. Fetch existing recurring templates & debts
+    existing_expenses = await list_recurring_expenses(db, user_id)
+    existing_incomes = await list_recurring_incomes(db, user_id)
+    existing_debts = await list_active_debts(db, user_id)
+
+    existing_exp_titles = {str(r[1]).strip().lower() for r in existing_expenses if r[1]}
+    existing_inc_titles = {str(r[1]).strip().lower() for r in existing_incomes if r[1]}
+    existing_debt_titles = {str(r[1]).strip().lower() for r in existing_debts if r[1]}
+
+    # Fetch transactions from the last 100 days
+    start_date = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
     cur = await db.execute(
         """
         SELECT t.type, t.amount, COALESCE(t.note, '') as note, c.name as category_name, t.category_id, t.account_id, t.ts
         FROM transactions t
         LEFT JOIN categories c ON c.id = t.category_id
-        WHERE t.user_id = ? AND t.ts >= ? AND t.deleted_at IS NULL
+        WHERE t.user_id = ? AND t.ts >= ? AND t.deleted_at IS NULL AND t.type IN ('expense', 'income')
+        ORDER BY t.ts ASC
         """,
-        (user_id, start_date.isoformat())
+        (user_id, start_date)
     )
     rows = await cur.fetchall()
-    
-    # Get existing recurring titles and debts to avoid duplicates
-    existing_expenses = await list_recurring_expenses(db, user_id)
-    existing_incomes = await list_recurring_incomes(db, user_id)
-    existing_debts = await list_active_debts(db, user_id)
-    
-    # Data for filtering
-    # Manually assign types since they are from different tables
-    existing_items = []
-    for r in existing_expenses:
-        item = dict(r)
-        item["type"] = "expense"
-        existing_items.append(item)
-    for r in existing_incomes:
-        item = dict(r)
-        item["type"] = "income"
-        existing_items.append(item)
-        
-    # Set of (amount, type) pairs to avoid duplicates by money
-    existing_amounts = {(abs(int(r["amount"])), r["type"]) for r in existing_items}
-    # Set of existing words to avoid similar titles
-    existing_words = set()
-    for r in [*existing_items, *existing_debts]:
-        title_words = str(r["title"]).lower().strip().split()
-        existing_words.update([w for w in title_words if len(w) > 2]) # only words > 2 chars
-        
-    debt_titles = [str(r["title"]).lower().strip() for r in existing_debts if r["title"]]
-    
-    candidates: dict[str, dict] = {}
-    
-    for row in rows:
-        ttype = str(row["type"])
-        if ttype == "transfer":
+
+    # Group by (type, amount, note_cleaned)
+    groups = {}
+    for r in rows:
+        ttype = r[0]
+        amount = abs(int(r[1]))
+        note = r[2].strip()
+        if not note:
             continue
-            
-        amount = abs(int(row["amount"]))
-        # 1. Amount + Type check (The most reliable for same-priced subscriptions)
-        if (amount, ttype) in existing_amounts:
-            continue
-            
-        note = str(row["note"]).strip()
-        cat_name = str(row["category_name"] or "Без категории")
+        note_lower = note.lower()
+
+        # Duplicate checking
+        is_dup = False
+        if ttype == "expense":
+            if note_lower in existing_exp_titles:
+                is_dup = True
+            for t in existing_exp_titles:
+                if t in note_lower or note_lower in t:
+                    is_dup = True
+        elif ttype == "income":
+            if note_lower in existing_inc_titles:
+                is_dup = True
+            for t in existing_inc_titles:
+                if t in note_lower or note_lower in t:
+                    is_dup = True
         
-        # We look for notes first, then categories if note is empty
-        key = note.lower() if note else f"cat:{cat_name.lower()}"
-        if not key or key == "cat:без категории":
+        for dt in existing_debt_titles:
+            if dt in note_lower or note_lower in dt:
+                is_dup = True
+                
+        if is_dup:
             continue
-            
-        # 1. Check for Matches
-        amount_match = (amount, ttype) in existing_amounts
-        
-        key_words = key.split()
-        title_match = any(w in existing_words for w in key_words if len(w) > 2)
-        
-        # 2. Skip logic: only if BOTH match (Extreme confidence)
-        if amount_match and title_match:
-            continue
-            
-        # 3. Unsure logic: if EITHER matches
-        is_unsure = amount_match or title_match
-        
-        # 4. Partial match check for debts (always skip debts if name matches)
-        is_debt_payment = False
-        for dt in debt_titles:
-            if dt in key or key in dt:
-                is_debt_payment = True
-                break
-        if is_debt_payment:
-            continue
-            
-        # Add to candidates
-        if key not in candidates:
-            candidates[key] = {
-                "title": note if note else cat_name,
-                "type": ttype,
-                "amounts": [],
-                "count": 0,
-                "category_id": row["category_id"],
-                "account_id": row["account_id"],
-                "is_keyword": any(token in key for token in ESSENTIAL_HINTS),
-                "last_ts": row["ts"],
-                "is_unsure": is_unsure
+
+        key = (ttype, amount, note_lower)
+        if key not in groups:
+            groups[key] = {
+                "title": note,
+                "category_id": r[4],
+                "account_id": r[5],
+                "dates": [],
+                "rows": []
             }
         
-        candidates[key]["amounts"].append(amount)
-        candidates[key]["count"] += 1
-        if is_unsure: # If at least one transaction was unsure, mark the whole candidate
-            candidates[key]["is_unsure"] = True
-            
-        # Keep most recent category/account
-        if row["ts"] > candidates[key]["last_ts"]:
-            candidates[key]["category_id"] = row["category_id"]
-            candidates[key]["account_id"] = row["account_id"]
-            candidates[key]["last_ts"] = row["ts"]
+        try:
+            dt = datetime.fromisoformat(r[6].replace("Z", "+00:00"))
+            groups[key]["dates"].append(dt)
+            groups[key]["rows"].append(r)
+        except Exception:
+            continue
 
-    # Filter candidates: either keyword match OR repeated at least 2 times
     final_candidates = []
-    for key, c in candidates.items():
-        if c["is_keyword"] or c["count"] >= 2:
-            # Average amount
-            avg_amount = int(sum(c["amounts"]) / len(c["amounts"]))
+    for (ttype, amount, note_lower), g in groups.items():
+        dates = g["dates"]
+        if len(dates) < 3:
+            continue
+        
+        # Group dates by calendar month: (year, month) -> list of days
+        months = {}
+        for dt in dates:
+            m_key = (dt.year, dt.month)
+            if m_key not in months:
+                months[m_key] = []
+            months[m_key].append(dt.day)
+        
+        # Sort keys
+        m_keys = sorted(months.keys())
+        if len(m_keys) < 3:
+            continue
+        
+        found_consecutive = False
+        consecutive_keys = []
+        for i in range(len(m_keys) - 2):
+            k1, k2, k3 = m_keys[i], m_keys[i+1], m_keys[i+2]
             
-            # Day of month from last transaction
-            try:
-                last_dt = datetime.fromisoformat(c["last_ts"].replace("Z", "+00:00"))
-                day_of_month = last_dt.day
-            except Exception:
-                day_of_month = 15
-                
-            # Unique ID to prevent double-adds
-            import hashlib
-            cid = hashlib.md5(f"{c['title']}{avg_amount}{c['type']}".encode()).hexdigest()[:12]
+            y1, mo1 = k1
+            y2, mo2 = k2
+            y3, mo3 = k3
             
-            final_candidates.append({
-                "cid": cid,
-                "title": c["title"],
-                "type": c["type"],
-                "amount": avg_amount,
-                "category_id": c["category_id"],
-                "account_id": c["account_id"],
-                "day_of_month": day_of_month,
-                "reason": "keyword" if c["is_keyword"] else "frequency"
-            })
+            # Verify they are consecutive calendar months
+            diff1 = (y2 - y1) * 12 + (mo2 - mo1)
+            diff2 = (y3 - y2) * 12 + (mo3 - mo2)
             
-    # Sort by keyword first, then frequency
-    final_candidates.sort(key=lambda x: (0 if x["reason"] == "keyword" else 1, x["title"]))
+            if diff1 == 1 and diff2 == 1:
+                # Strictly once a month check
+                if len(months[k1]) == 1 and len(months[k2]) == 1 and len(months[k3]) == 1:
+                    d1 = months[k1][0]
+                    d2 = months[k2][0]
+                    d3 = months[k3][0]
+                    
+                    # Preferably in the same day (tolerance <= 5 days)
+                    if max(d1, d2, d3) - min(d1, d2, d3) <= 5:
+                        found_consecutive = True
+                        consecutive_keys = [k1, k2, k3]
+                        break
+        
+        if not found_consecutive:
+            continue
+            
+        d1 = months[consecutive_keys[0]][0]
+        d2 = months[consecutive_keys[1]][0]
+        d3 = months[consecutive_keys[2]][0]
+        day_of_month = int(round((d1 + d2 + d3) / 3))
+        
+        # Day of month should be between 1 and 28
+        day_of_month = max(1, min(day_of_month, 28))
+        
+        import hashlib
+        cid = hashlib.md5(f"{g['title']}{amount}{ttype}".encode()).hexdigest()[:12]
+        
+        last_row = g["rows"][-1]
+        
+        final_candidates.append({
+            "cid": cid,
+            "title": g["title"],
+            "type": ttype,
+            "amount": amount,
+            "category_id": last_row[4],
+            "account_id": last_row[5],
+            "day_of_month": day_of_month,
+            "reason": "3 months in a row"
+        })
+            
+    # Sort alphabetically by title
+    final_candidates.sort(key=lambda x: x["title"])
     return final_candidates[:10]

@@ -12,6 +12,7 @@ from app.db.repositories.categories_repo import (
     create_category, rename_category, set_category_emoji, archive_category
 )
 from app.db.repositories.settings_repo import get_lang
+from app.ui.i18n import t_category
 
 router = Router()
 
@@ -160,7 +161,7 @@ async def st_cats_pick(c: CallbackQuery, state: FSMContext, db):
     _id, name, emoji, kind, _arch = row
     await state.clear()
     await state.update_data(cats_kind=kind, cat_id=cid)
-    label = f"{emoji + ' ' if emoji else ''}{name}"
+    label = f"{emoji + ' ' if emoji else ''}{t_category(name, lang)}"
     await _render(c, state, f"{_L(lang)['category']}: {label}", reply_markup=cat_actions_kb(cid, lang))
     await c.answer()
 

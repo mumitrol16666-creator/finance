@@ -65,6 +65,37 @@ async def get_category(db: aiosqlite.Connection, user_id: int, category_id: int)
     )
     return await cur.fetchone()
 
+REVERSE_CATEGORY_LOOKUP = {
+    # English
+    "food": "еда",
+    "transport": "транспорт",
+    "home": "дом",
+    "subscriptions": "подписки",
+    "entertainment": "развлечения",
+    "health": "здоровье",
+    "clothing": "одежда",
+    "education": "обучение",
+    "other": "прочее",
+    "salary": "зарплата",
+    "business": "бизнес",
+    "gift": "подарок",
+    "refunds": "возврат",
+    
+    # Kazakh
+    "тамақ": "еда",
+    "көлік": "транспорт",
+    "үй": "дом",
+    "жазылымдар": "подписки",
+    "ойын-сауық": "развлечения",
+    "денсаулық": "здоровье",
+    "киім": "одежда",
+    "оқу": "обучение",
+    "басқа": "прочее",
+    "жалақы": "зарплата",
+    "сыйлық": "подарок",
+    "қайтару": "возврат",
+}
+
 async def find_category_by_name_ci(
     db: aiosqlite.Connection,
     user_id: int,
@@ -78,6 +109,9 @@ async def find_category_by_name_ci(
     n = (name or "").strip().lower()
     if not n:
         return None
+
+    # Reverse lookup for localized names
+    n = REVERSE_CATEGORY_LOOKUP.get(n, n)
 
     cur = await db.execute(
         """
@@ -134,9 +168,19 @@ async def find_category_by_note_hint(db: aiosqlite.Connection, user_id: int, kin
     if not note:
         return None
     low = note.lower()
+
+    from app.db.repositories.settings_repo import get_lang
+    try:
+        lang = await get_lang(db, user_id)
+    except Exception:
+        lang = "ru"
+
+    from app.ui.i18n import t_category
     cats = await list_categories(db, user_id, kind)
     for cid, name, emoji in cats:
-        if name and name.lower() in low:
+        name_lower = name.lower() if name else ""
+        translated_name = t_category(name, lang).lower() if name else ""
+        if name_lower and (name_lower in low or translated_name in low):
             return cid, name, emoji
     return None
 
