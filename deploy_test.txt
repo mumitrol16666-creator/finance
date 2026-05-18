@@ -1,3 +1,3 @@
 Deploy test trigger.
-Timestamp: 2026-05-18 14:16
-Status: testing single root folder deploy logic on server (/root/Finance_bot).
+Timestamp: 2026-05-18 14:18
+Status: testing SSH REPO_URL and auto remote origin setup.
