@@ -176,7 +176,7 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
 
     for r in rows_list:
         tx_id, ts, ttype, amount, account, category, emoji, note = r
-        val = int(amount or 0)
+        val = abs(int(amount or 0))  # Normalize all amounts to positive absolute values
         
         month_str = "Unknown"
         if ts and len(str(ts)) >= 7:
@@ -192,6 +192,7 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
             category_data[cat_display] += val
 
     wb = Workbook()
+    wb.properties.calcMode = 'auto'  # Set calculation mode to automatic for Excel standard compliance
 
     # --- SHEET 1: DASHBOARD ---
     ws = wb.active
@@ -288,17 +289,20 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
         inc = monthly_data[m_str]["income"]
         exp = monthly_data[m_str]["expense"]
         
+        # Pre-calculated values for absolute compatibility across all devices
+        net_val = inc - exp
+        sav_val = net_val / inc if inc > 0 else 0
+        
         ws.cell(row=row_idx, column=1, value=m_str).alignment = Alignment(horizontal="center")
         ws.cell(row=row_idx, column=2, value=inc)
         ws.cell(row=row_idx, column=3, value=exp)
-        
-        net_cell = ws.cell(row=row_idx, column=4, value=f"=B{row_idx}-C{row_idx}")
-        sav_cell = ws.cell(row=row_idx, column=5, value=f"=IF(B{row_idx}>0, D{row_idx}/B{row_idx}, 0)")
+        ws.cell(row=row_idx, column=4, value=net_val)
+        ws.cell(row=row_idx, column=5, value=sav_val)
         
         ws.cell(row=row_idx, column=2).number_format = '#,##0'
         ws.cell(row=row_idx, column=3).number_format = '#,##0'
-        net_cell.number_format = '#,##0'
-        sav_cell.number_format = '0.0%'
+        ws.cell(row=row_idx, column=4).number_format = '#,##0'
+        ws.cell(row=row_idx, column=5).number_format = '0.0%'
         
         for c in range(1, 6):
             cell = ws.cell(row=row_idx, column=c)
@@ -309,12 +313,15 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
         row_idx += 1
 
     # Total Row for Monthly Table
+    monthly_net_total = total_income - total_expense
+    monthly_sav_total = monthly_net_total / total_income if total_income > 0 else 0
+
     ws.cell(row=row_idx, column=1, value=L["total"]).font = font_bold
     ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center")
-    ws.cell(row=row_idx, column=2, value=f"=SUM(B8:B{row_idx-1})").font = font_bold
-    ws.cell(row=row_idx, column=3, value=f"=SUM(C8:C{row_idx-1})").font = font_bold
-    ws.cell(row=row_idx, column=4, value=f"=B{row_idx}-C{row_idx}").font = font_bold
-    ws.cell(row=row_idx, column=5, value=f"=IF(B{row_idx}>0, D{row_idx}/B{row_idx}, 0)").font = font_bold
+    ws.cell(row=row_idx, column=2, value=total_income).font = font_bold
+    ws.cell(row=row_idx, column=3, value=total_expense).font = font_bold
+    ws.cell(row=row_idx, column=4, value=monthly_net_total).font = font_bold
+    ws.cell(row=row_idx, column=5, value=monthly_sav_total).font = font_bold
     
     ws.cell(row=row_idx, column=2).number_format = '#,##0'
     ws.cell(row=row_idx, column=3).number_format = '#,##0'
@@ -341,17 +348,19 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
 
     sorted_cats = sorted(category_data.items(), key=lambda x: x[1], reverse=True)
     c_row_idx = 8
+    total_category_spent = sum(category_data.values())
     
     if sorted_cats:
         for cat_name, spent in sorted_cats:
             ws.cell(row=c_row_idx, column=8, value=cat_name)
             ws.cell(row=c_row_idx, column=9, value=spent)
             
-            # Share formula
-            share_cell = ws.cell(row=c_row_idx, column=10, value=f"=I{c_row_idx}/I{len(sorted_cats) + 8}")
+            # Pre-calculated share for bulletproof compatibility
+            share_val = spent / total_category_spent if total_category_spent > 0 else 0
+            ws.cell(row=c_row_idx, column=10, value=share_val)
             
             ws.cell(row=c_row_idx, column=9).number_format = '#,##0'
-            share_cell.number_format = '0.0%'
+            ws.cell(row=c_row_idx, column=10).number_format = '0.0%'
             
             for c in range(8, 11):
                 cell = ws.cell(row=c_row_idx, column=c)
@@ -364,8 +373,8 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
         # Total Row for Category Table
         ws.cell(row=c_row_idx, column=8, value=L["total"]).font = font_bold
         ws.cell(row=c_row_idx, column=8).alignment = Alignment(horizontal="center")
-        ws.cell(row=c_row_idx, column=9, value=f"=SUM(I8:I{c_row_idx-1})").font = font_bold
-        ws.cell(row=c_row_idx, column=10, value=f"=SUM(J8:J{c_row_idx-1})").font = font_bold
+        ws.cell(row=c_row_idx, column=9, value=total_category_spent).font = font_bold
+        ws.cell(row=c_row_idx, column=10, value=1.0 if total_category_spent > 0 else 0.0).font = font_bold
         
         ws.cell(row=c_row_idx, column=9).number_format = '#,##0'
         ws.cell(row=c_row_idx, column=10).number_format = '0.0%'
