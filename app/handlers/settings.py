@@ -1168,12 +1168,20 @@ async def st_acc_add_type(c: CallbackQuery, state: FSMContext, db: aiosqlite.Con
     except ValueError as e:
         await db.rollback()
         if str(e) == "active_name_exists":
-            msg = {
-                "ru": "Счёт с таким названием уже существует среди активных.",
-                "en": "An active account with this name already exists.",
-                "kk": "Осындай атаумен белсенді шот бар.",
-            }.get(lang, "Счёт с таким названием уже существует.")
-            await c.message.answer(msg, parse_mode=PARSE_MODE)
+            error_screen = {
+                "ru": "⚠️ <b>Счёт с таким названием уже существует среди активных.</b>\n\nПожалуйста, введи другое, уникальное название для этого счёта.",
+                "en": "⚠️ <b>An active account with this name already exists.</b>\n\nPlease enter a different, unique name for this account.",
+                "kk": "⚠️ <b>Осындай атаумен белсенді шот бар.</b>\n\nБұл шот үшін басқа, бірегей атауды енгізіңіз.",
+            }.get(lang, "⚠️ Счёт с таким названием уже существует.")
+            await state.update_data(add_name=None)
+            await _enter_input_mode(
+                c,
+                state,
+                screen_text=error_screen,
+                prompt_text=_s(lang, "example_kaspi"),
+                next_state=SettingsFlow.add_name,
+                return_to="accounts_menu",
+            )
             return
         raise
     except Exception:
@@ -1252,11 +1260,12 @@ async def st_acc_rename_new(m: Message, state: FSMContext, db: aiosqlite.Connect
     except ValueError as e:
         await db.rollback()
         if str(e) == "active_name_exists":
+            lang = (await state.get_data()).get("lang", "ru")
             msg = {
-                "ru": "Активный счёт с таким названием уже существует.",
-                "en": "An active account with this name already exists.",
-                "kk": "Осындай атаумен белсенді шот бар.",
-            }.get((await state.get_data()).get("lang", "ru"), "Активный счёт с таким названием уже существует.")
+                "ru": "⚠️ <b>Активный счёт с таким названием уже существует.</b>\n\nВведи другое название для этого счёта:",
+                "en": "⚠️ <b>An active account with this name already exists.</b>\n\nPlease enter a different name for this account:",
+                "kk": "⚠️ <b>Осындай атаумен белсенді шот бар.</b>\n\nБұл шот үшін басқа атау енгізіңіз:",
+            }.get(lang, "⚠️ Активный счёт с таким названием уже существует.")
             await m.answer(msg, parse_mode=PARSE_MODE)
             return
         raise
