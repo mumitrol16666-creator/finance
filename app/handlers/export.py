@@ -567,14 +567,58 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     except Exception:
         pass
 
+    # Determine free trial status
+    await db.execute("CREATE TABLE IF NOT EXISTS user_free_trial (user_id INTEGER PRIMARY KEY, premium_exports_used INTEGER NOT NULL DEFAULT 0)")
+    await db.commit()
+
+    cur = await db.execute("SELECT premium_exports_used FROM user_free_trial WHERE user_id = ?", (user_id,))
+    row = await cur.fetchone()
+    exports_used = row[0] if row else 0
+
+    use_premium_xlsx = False
+    is_free_trial_now = False
+
     if full_access:
+        use_premium_xlsx = True
+    elif exports_used == 0:
+        # Give them exactly 1 free premium export as a trial!
+        use_premium_xlsx = True
+        is_free_trial_now = True
+
+    if use_premium_xlsx:
         payload = _build_xlsx(rows, lang, currency)
         if payload is not None:
             filename = f"finance_{label}.xlsx"
             await c.message.answer_document(BufferedInputFile(payload, filename=filename))
+            
+            if is_free_trial_now:
+                # Mark as used
+                await db.execute("INSERT OR REPLACE INTO user_free_trial (user_id, premium_exports_used) VALUES (?, 1)", (user_id,))
+                await db.commit()
+                
+                # Send celebratory 1-time free trial congratulation
+                trial_msg = {
+                    "ru": (
+                        "🎁 **Поздравляем! Вам начислен 1 тест-драйв премиум-отчёта!**\n\n"
+                        "Мы подготовили для вас роскошный Excel-файл с интерактивными графиками и аналитическим дашбордом совершенно бесплатно. Оцените удобство и красоту профессиональной аналитики!\n\n"
+                        "*(Следующие экспорты в Excel будут доступны при активации Полного доступа в настройках)*"
+                    ),
+                    "en": (
+                        "🎁 **Congratulations! You have received 1 free premium report trial!**\n\n"
+                        "We have prepared a gorgeous Excel file with interactive charts and an analytical dashboard for you completely free. Experience the power and beauty of professional analytics!\n\n"
+                        "*(Subsequent Excel exports will be unlocked with Full Access)*"
+                    ),
+                    "kk": (
+                        "🎁 **Құттықтаймыз! Сізге 1 тегін премиум есеп тест-драйвы берілді!**\n\n"
+                        "Біз сіз үшін интерактивті графиктер мен талдау дашборды бар керемет Excel файлын мүлдем тегін дайындадық. Кәсіби талдаудың ыңғайлылығы мен сұлулығын бағалаңыз!\n\n"
+                        "*(Келесі Excel экспорттары параметрлерде Толық қолжетімділікті белсендіргенде ашылады)*"
+                    )
+                }.get(lang, "🎁 **Поздравляем! Вам начислен 1 тест-драйв премиум-отчёта!**")
+                
+                await c.message.answer(trial_msg, parse_mode="Markdown")
             return
 
-    # Fallback to CSV for free users or if openpyxl failed
+    # Fallback to CSV for free users (who already used their trial) or if openpyxl failed
     payload_csv = _build_csv(rows, lang, currency)
     filename = f"finance_{label}.csv"
     await c.message.answer_document(BufferedInputFile(payload_csv, filename=filename))
