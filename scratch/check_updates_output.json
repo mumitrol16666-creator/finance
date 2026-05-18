@@ -1,0 +1,256 @@
+{
+  "getMe": {
+    "ok": true,
+    "result": {
+      "id": 8651526412,
+      "is_bot": true,
+      "first_name": "Финансовый гений ( пробный)",
+      "username": "FIntrack24_bot",
+      "can_join_groups": true,
+      "can_read_all_group_messages": false,
+      "supports_inline_queries": false,
+      "supports_guest_queries": false,
+      "can_connect_to_business": false,
+      "has_main_web_app": false,
+      "has_topics_enabled": false,
+      "allows_users_to_create_topics": false,
+      "can_manage_bots": false
+    }
+  },
+  "getUpdates": {
+    "ok": true,
+    "result": [
+      {
+        "update_id": 88059284,
+        "message": {
+          "message_id": 7076,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096316,
+          "text": "❌ Расход"
+        }
+      },
+      {
+        "update_id": 88059285,
+        "message": {
+          "message_id": 7077,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096317,
+          "text": "✅ Доход"
+        }
+      },
+      {
+        "update_id": 88059286,
+        "message": {
+          "message_id": 7078,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096317,
+          "text": "💼 Счета и переводы"
+        }
+      },
+      {
+        "update_id": 88059287,
+        "message": {
+          "message_id": 7079,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096348,
+          "text": "❌ Расход"
+        }
+      },
+      {
+        "update_id": 88059288,
+        "message": {
+          "message_id": 7080,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096349,
+          "text": "✅ Доход"
+        }
+      },
+      {
+        "update_id": 88059289,
+        "message": {
+          "message_id": 7081,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096350,
+          "text": "✅ Доход"
+        }
+      },
+      {
+        "update_id": 88059290,
+        "message": {
+          "message_id": 7082,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096350,
+          "text": "💼 Счета и переводы"
+        }
+      },
+      {
+        "update_id": 88059291,
+        "message": {
+          "message_id": 7083,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096351,
+          "text": "⚙️ Настройки"
+        }
+      },
+      {
+        "update_id": 88059292,
+        "message": {
+          "message_id": 7084,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096351,
+          "text": "⚙️ Настройки"
+        }
+      },
+      {
+        "update_id": 88059293,
+        "message": {
+          "message_id": 7085,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779096881,
+          "text": "Пр"
+        }
+      },
+      {
+        "update_id": 88059294,
+        "message": {
+          "message_id": 7086,
+          "from": {
+            "id": 8092822438,
+            "is_bot": false,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "language_code": "ru"
+          },
+          "chat": {
+            "id": 8092822438,
+            "first_name": "Влад",
+            "username": "cooldown2900",
+            "type": "private"
+          },
+          "date": 1779098023,
+          "text": "❌ Расход"
+        }
+      }
+    ]
+  }
+}
