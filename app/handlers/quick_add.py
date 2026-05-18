@@ -191,12 +191,9 @@ async def _handoff_to_transactions(
 
 @router.message(F.text.regexp(r"\d{2,}") & ~F.text.startswith("/"))
 async def quick_autostart(m: Message, state: FSMContext, db):
-    if await state.get_state():
-        return
-
-    # Если в сообщении нет букв (просто число типа "15000"), не триггерим быстрый ввод
-    if not any(c.isalpha() for c in (m.text or "")):
-        return
+    # Отключаем автоматический парсинг текстовых сообщений во избежание ложных срабатываний.
+    # Ввод транзакций должен осуществляться строго через кнопки меню «Расход» / «Доход».
+    return
 
     # 1. Проверяем, стоит ли использовать AI (если есть ключ и текст сложный)
     # Сложный = много слов или есть намеки на несколько сумм
