@@ -1425,9 +1425,9 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
                         if lang == "en":
                             progression_hint = f"💡 **Pro Tip:** You have Full Access active! Tap <b>Accounts & Transfers</b> 🔄 to set up your subscription, rent, or salary to unlock automatic month forecast! 📈"
                         elif lang == "kk":
-                            progression_hint = f"💡 **Кеңес:** Толық қолжетімділік белсенді! Автоматты айлық болжамды ашу үшін <b>Шоттар және Аудармалар</b> 🔄 бөлімінде жазылымдарды, жалдау ақысын немесе жалақыны баптаңыз! 📈"
+                            progression_hint = f"💡 **Кеңес:** Толық қолжетімділік белсенді! Автоматты айлық болжамды ашу үшін <b>Шоттар мен аударымдар</b> 🔄 бөлімінде жазылымдарды, жалдау ақысын немесе жалақыны баптаңыз! 📈"
                         else:
-                            progression_hint = f"💡 **Лайфхак:** У тебя активен Полный доступ! Зайди в <b>Accounts & Transfers</b> 🔄 и добавь аренду, подписки или зарплату, чтобы включить автоматический прогноз баланса на месяц! 📈"
+                            progression_hint = f"💡 **Лайфхак:** У тебя активен Полный доступ! Зайди в <b>Счета и переводы</b> 🔄 и добавь аренду, подписки или зарплату, чтобы включить автоматический прогноз баланса на месяц! 📈"
                 
                 if progression_hint:
                     title = {"ru": "💡 <b>Подсказка</b>", "en": "💡 <b>Hint</b>", "kk": "💡 <b>Нұсқау</b>"}.get(lang, "💡 <b>Подсказка</b>")
