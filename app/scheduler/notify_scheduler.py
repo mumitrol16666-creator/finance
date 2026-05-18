@@ -922,8 +922,6 @@ async def tick_notify(bot, db: aiosqlite.Connection):
     ) in targets:
         try:
             uid = int(user_id)
-            if _is_suppressed(uid):
-                continue
             tz, tz_norm = _safe_tz(str(tz_name or "UTC"))
 
             local_now = now_utc.astimezone(tz)
@@ -966,7 +964,7 @@ async def tick_notify(bot, db: aiosqlite.Connection):
                 in_nudge_window = nudge_start <= local_now <= nudge_end
 
                 should_send = False
-                if in_nudge_window:
+                if in_nudge_window and not _is_suppressed(uid):
                     if not nudge_last_sent_at:
                         should_send = True
                     else:
