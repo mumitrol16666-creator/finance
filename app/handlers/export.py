@@ -77,7 +77,7 @@ async def _fetch_rows(
     return await cur.fetchall()
 
 
-def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None:
+def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str, user_id: int = 0) -> bytes | None:
     """Render rows into a beautifully formatted, printable multi-sheet Excel workbook.
     
     Includes a "Dashboard" sheet with summary cards, monthly breakdown, category breakdown
@@ -426,12 +426,11 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
         
         plt.tight_layout()
         
-        buf_m = io.BytesIO()
-        plt.savefig(buf_m, format="png", dpi=120, bbox_inches="tight")
+        temp_path_m = f"temp_m_{user_id}.png"
+        plt.savefig(temp_path_m, format="png", dpi=120, bbox_inches="tight")
         plt.close(fig)
         
-        buf_m.seek(0)
-        img_m = Image(buf_m)
+        img_m = Image(temp_path_m)
         ws.add_image(img_m, f"A{last_month_row + 3}")
 
     # Chart 2: Category Structure (Pie Chart)
@@ -454,12 +453,11 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
         
         plt.tight_layout()
         
-        buf_c = io.BytesIO()
-        plt.savefig(buf_c, format="png", dpi=120, bbox_inches="tight")
+        temp_path_c = f"temp_c_{user_id}.png"
+        plt.savefig(temp_path_c, format="png", dpi=120, bbox_inches="tight")
         plt.close(fig)
         
-        buf_c.seek(0)
-        img_c = Image(buf_c)
+        img_c = Image(temp_path_c)
         ws.add_image(img_c, f"H{last_cat_row + 3}")
 
     # Set exact column widths for gorgeous layout
@@ -509,6 +507,16 @@ def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str) -> bytes | None
     # Save to buffer
     buf = io.BytesIO()
     wb.save(buf)
+    
+    # Safely delete temp files
+    import os
+    for path in [f"temp_m_{user_id}.png", f"temp_c_{user_id}.png"]:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+                
     return buf.getvalue()
 
 
@@ -634,7 +642,7 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
         is_free_trial_now = True
 
     if use_premium_xlsx:
-        payload = _build_xlsx(rows, lang, currency)
+        payload = _build_xlsx(rows, lang, currency, user_id)
         if payload is not None:
             filename = f"finance_{label}.xlsx"
             await c.message.answer_document(BufferedInputFile(payload, filename=filename))
