@@ -41,7 +41,7 @@ jobs:
             set -e
 
             APP_DIR="/root/Finance_bot"
-            REPO_URL="git@github.com:${{ github.repository }}.git"
+            REPO_URL="https://github.com/${{ github.repository }}.git"
             BRANCH="master"
 
             echo "▸ Deploying $BRANCH to $APP_DIR …"
