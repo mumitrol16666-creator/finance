@@ -45,7 +45,7 @@ jobs:
             ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
 
             APP_DIR="/opt/finance-bot"
-            REPO_URL="git@github.com:${{ github.repository }}.git"
+            REPO_URL="https://github.com/${{ github.repository }}.git"
             BRANCH="master"
 
             echo "▸ Deploying $BRANCH to $APP_DIR …"
