@@ -78,8 +78,8 @@ async def main():
 
     # Graceful FSM escape for stuck users
     fsm_escape_mw = FsmEscapeMiddleware()
-    dp.message.middleware(fsm_escape_mw)
-    dp.callback_query.middleware(fsm_escape_mw)
+    dp.message.outer_middleware(fsm_escape_mw)
+    dp.callback_query.outer_middleware(fsm_escape_mw)
 
     # Inject lang / access_ctx once per update so handlers don't refetch.
     access_mw = AccessContextMiddleware()
