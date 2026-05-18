@@ -1,3 +1,3 @@
 Deploy test trigger.
-Timestamp: 2026-05-18 14:09
-Status: testing bulletproof git checkout logic on server.
+Timestamp: 2026-05-18 14:16
+Status: testing single root folder deploy logic on server (/root/Finance_bot).
