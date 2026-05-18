@@ -1390,6 +1390,48 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
         critical = ("просрочен", "минус", "пробит", "overdue", "broken", "negative", "архив", "старт")
         if hint and any(k in hint.lower() for k in critical):
             text += f"\n───\n{hint}"
+        else:
+            from app.db.repositories.users_repo import get_access_profile
+            profile = await get_access_profile(db, user_id)
+            if profile:
+                current_streak = int(profile[1] or 0)
+                max_streak = int(profile[2] or 0)
+                mode = str(profile[4] or "newbie").lower()
+                progress_level = int(profile[5] or 0)
+                
+                streak_val = max(current_streak, max_streak)
+                progression_hint = None
+                
+                if progress_level < 2:
+                    if lang == "en":
+                        progression_hint = f"💡 **Path to Mastery:** Log transactions for <b>{streak_val}/3</b> days in a row to unlock <b>\"Reports & Budgets\"</b>! 🚀"
+                    elif lang == "kk":
+                        progression_hint = f"💡 **Жетістікке жол:** <b>«Есептер мен бюджеттер»</b> бөлімін ашу үшін қатарынан <b>{streak_val}/3</b> күн бюджетті жүргізіңіз! 🚀"
+                    else:
+                        progression_hint = f"💡 **Путь к мастерству:** Веди бюджет <b>{streak_val}/3</b> дн. подряд, чтобы открыть <b>«Отчёты и Бюджеты»</b>! 🚀"
+                elif mode == "newbie":
+                    if lang == "en":
+                        progression_hint = f"⭐ **Goal Unlocked!** You can now see Reports. Get <b>Full Access</b> in settings ⚙️ to unlock Debts, Smart Planning & AI Financial Coach! 💎"
+                    elif lang == "kk":
+                        progression_hint = f"⭐ **Мақсат орындалды!** Есептер бөлімі ашылды. Қарыздарды, Жоспарлауды және AI кеңесшісін ашу үшін баптауларда ⚙️ <b>Full Access</b> алыңыз! 💎"
+                    else:
+                        progression_hint = f"⭐ **Цель достигнута!** Отчёты открыты. Оформи <b>Full Access</b> в настройках ⚙️, чтобы открыть Долги, Умное планирование и AI-Консультанта! 💎"
+                else:
+                    # Full access user with no active moves
+                    recurring_snapshot = context.get("recurring_snapshot") or {}
+                    planned_snapshot = context.get("planned_snapshot") or {}
+                    debt_snapshot = context.get("debt_snapshot") or {}
+                    if not (recurring_snapshot.get("count") or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
+                        if lang == "en":
+                            progression_hint = f"💡 **Pro Tip:** You have Full Access active! Tap <b>Accounts & Transfers</b> 🔄 to set up your subscription, rent, or salary to unlock automatic month forecast! 📈"
+                        elif lang == "kk":
+                            progression_hint = f"💡 **Кеңес:** Full Access белсенді! Автоматты айлық болжамды ашу үшін <b>Шоттар және Аудармалар</b> 🔄 бөлімінде жазылымдарды, жалдау ақысын немесе жалақыны баптаңыз! 📈"
+                        else:
+                            progression_hint = f"💡 **Лайфхак:** У тебя активен Full Access! Зайди в <b>Accounts & Transfers</b> 🔄 и добавь аренду, подписки или зарплату, чтобы включить автоматический прогноз баланса на месяц! 📈"
+                
+                if progression_hint:
+                    title = {"ru": "💡 <b>Подсказка</b>", "en": "💡 <b>Hint</b>", "kk": "💡 <b>Нұсқау</b>"}.get(lang, "💡 <b>Подсказка</b>")
+                    text += f"\n───\n{title}\n{progression_hint}"
         return text
     except Exception: return t(lang, "MENU_LABEL")
 
