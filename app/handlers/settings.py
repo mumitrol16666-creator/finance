@@ -1312,7 +1312,30 @@ async def st_acc_balance_new(m: Message, state: FSMContext, db: aiosqlite.Connec
         return
 
     try:
+        # Fetch the old balance to calculate the adjustment delta
+        acc = await get_account(db, m.from_user.id, int(acc_id))
+        old_balance = acc[2] if acc else 0
+        delta = new_balance - old_balance
+
+        await db.execute("BEGIN IMMEDIATE")
+        
         await set_account_balance(db, m.from_user.id, int(acc_id), int(new_balance), now_iso())
+        
+        if delta != 0:
+            from app.db.repositories.tx_repo import create_tx
+            
+            tx_type = "income" if delta > 0 else "expense"
+            lang = data.get("lang", "ru")
+            
+            note = {
+                "ru": "🔧 Корректировка баланса (ручной ввод)",
+                "en": "🔧 Balance adjustment (manual correction)",
+                "kk": "🔧 Балансты түзету (қолмен енгізу)",
+            }.get(lang, "🔧 Корректировка баланса (ручной ввод)")
+            
+            # Log the system transaction to maintain perfect transaction-to-balance reconciliation
+            await create_tx(db, m.from_user.id, now_iso(), tx_type, delta, int(acc_id), None, note, now_iso())
+            
         await db.commit()
     except Exception:
         await db.rollback()
