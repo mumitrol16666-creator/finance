@@ -827,6 +827,7 @@ async def st_acc_view_archive(c: CallbackQuery, state: FSMContext, db: aiosqlite
 
 @router.callback_query(F.data.startswith("st:acc:view:archive:confirm:"))
 async def st_acc_view_archive_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     acc_id = int(c.data.split(":")[-1])
     lang = await get_lang(db, c.from_user.id)
     acc = await get_account(db, c.from_user.id, acc_id)
@@ -1432,6 +1433,7 @@ async def st_acc_archived_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
 
 @router.callback_query(F.data.startswith("st:acc:restore:"))
 async def st_acc_restore(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     acc_id = int(c.data.split(":")[-1])
     try:
         await restore_account(db, c.from_user.id, acc_id, now_iso())
@@ -1461,6 +1463,7 @@ async def st_acc_restore(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conn
 
 @router.callback_query(F.data.startswith("st:acc:delete:"))
 async def st_acc_delete(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     acc_id = int(c.data.split(":")[-1])
     lang = await get_lang(db, c.from_user.id)
     if await account_has_transactions(db, c.from_user.id, acc_id):
