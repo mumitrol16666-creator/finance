@@ -1301,18 +1301,77 @@ async def _build_today_feed(db: aiosqlite.Connection, user_id: int, tz_name: str
     meta = build_period_meta("day", tz_name, now_utc)
     rows = await _fetch_rows(db, user_id, meta.start, meta.end)
     if not rows: return ""
-    lines = []
-    for row in rows[-5:]:
-        try: dt = datetime.fromisoformat(row[1]).astimezone(tz)
-        except Exception: dt = datetime.now(tz)
-        time_str = dt.strftime("%H:%M")
+
+    filtered_items = []
+    today_income = 0
+    today_expense = 0
+    currency = await _fetch_currency(db, user_id)
+
+    for row in rows:
         amount = int(row[3])
-        cat_emoji = row[5] or "🔹"
-        label = (row[6] if row[6] else row[4])[:18]
-        currency = await _fetch_currency(db, user_id)
-        lines.append(f"<code>{time_str}</code> · {cat_emoji} {label} · <b>{fmt_money(amount, currency)}</b>")
+        t_type = row[2]
+
+        # Calculate totals for all today's transactions
+        if t_type == "income":
+            today_income += amount
+        elif t_type == "expense":
+            today_expense += abs(amount)
+
+        # Skip the incoming transfer side to avoid duplication in feed
+        if t_type == "transfer" and amount > 0:
+            continue
+
+        try:
+            dt = datetime.fromisoformat(row[1]).astimezone(tz)
+        except Exception:
+            dt = datetime.now(tz)
+        time_str = dt.strftime("%H:%M")
+
+        if t_type == "transfer":
+            cat_emoji = "🔁"
+            label = {"ru": "Перевод", "en": "Transfer", "kk": "Аударым"}.get(lang, "Перевод")
+            display_amount = abs(amount)
+        else:
+            cat_emoji = row[5] or "🔹"
+            label = (row[6] if row[6] else row[4])[:18]
+            display_amount = amount
+
+        # Format display amount with sign
+        if t_type == "income":
+            amount_str = f"+{fmt_money(display_amount, currency)}"
+        elif t_type == "expense":
+            amount_str = f"-{fmt_money(abs(display_amount), currency)}"
+        else:
+            # Transfer: neutral representation
+            amount_str = fmt_money(display_amount, currency)
+
+        filtered_items.append(
+            f"<code>{time_str}</code> · {cat_emoji} {label} · <b>{amount_str}</b>"
+        )
+
+    if not filtered_items:
+        return ""
+
     title = {"ru": "🕒 <b>Сегодня:</b>", "en": "🕒 <b>Today:</b>", "kk": "🕒 <b>Бүгін:</b>"}.get(lang, "🕒 <b>Сегодня:</b>")
-    return f"\n{title}\n" + "\n".join(lines)
+    feed_body = "\n".join(filtered_items[-5:])
+
+    totals_line = ""
+    if today_income > 0 or today_expense > 0:
+        parts = []
+        if today_income > 0:
+            parts.append(f"🟢 +{fmt_money(today_income, currency)}")
+        if today_expense > 0:
+            parts.append(f"🔴 -{fmt_money(today_expense, currency)}")
+        
+        lbl = {
+            "ru": "Итого за день",
+            "en": "Today's total",
+            "kk": "Бүгінгі жиынтық"
+        }.get(lang, "Итого за день")
+        
+        totals_line = f"\n───\n<b>{lbl}:</b> " + " · ".join(parts)
+
+    return f"\n{title}\n{feed_body}{totals_line}"
 
 
 async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str = "ru") -> str:
