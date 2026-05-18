@@ -40,7 +40,7 @@ jobs:
           script: |
             set -e
 
-            APP_DIR="/opt/finance-bot"
+            APP_DIR="/root/Finance_bot"
             REPO_URL="https://github.com/${{ github.repository }}.git"
             BRANCH="master"
 
@@ -70,6 +70,14 @@ jobs:
             # Install / update dependencies
             .venv/bin/pip install --upgrade pip
             .venv/bin/pip install -r requirements.txt
+
+            # Update systemd service file
+            if [ -f "finance-bot.service" ]; then
+              echo "▸ Updating systemd service file ..."
+              sudo cp finance-bot.service /etc/systemd/system/finance-bot.service
+              sudo systemctl daemon-reload
+              sudo systemctl enable finance-bot
+            fi
 
             # Restart the bot (systemd service)
             sudo systemctl restart finance-bot
