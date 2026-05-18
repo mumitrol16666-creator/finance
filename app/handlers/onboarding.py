@@ -77,6 +77,7 @@ async def ob_cancel(c: CallbackQuery, state: FSMContext, db):
 
 @router.callback_query(F.data == 'ob:start')
 async def ob_start(c: CallbackQuery, state: FSMContext, db):
+    await neutralize_keyboard(c)
     await state.clear()
     await state.update_data(flow_message_id=c.message.message_id, ui_scope='onboarding')
     lang = await get_lang(db, c.from_user.id)
@@ -85,6 +86,7 @@ async def ob_start(c: CallbackQuery, state: FSMContext, db):
 
 @router.callback_query(F.data.startswith('ob:cur:'))
 async def ob_currency(c: CallbackQuery, state: FSMContext, db):
+    await neutralize_keyboard(c)
     cur = c.data.split(':')[2]
     await save_currency(db, c.from_user.id, cur)
     lang = await get_lang(db, c.from_user.id)
@@ -142,6 +144,7 @@ async def ob_acc_bal(m: Message, state: FSMContext, db):
 
 @router.callback_query(F.data.startswith('ob:moreacc:'))
 async def ob_more_acc(c: CallbackQuery, state: FSMContext, db):
+    await neutralize_keyboard(c)
     ans = c.data.split(':')[2]
     lang = await get_lang(db, c.from_user.id)
     if ans == 'yes':
@@ -161,6 +164,7 @@ async def ob_more_acc(c: CallbackQuery, state: FSMContext, db):
 
 @router.callback_query(F.data.startswith('ob:daily:'))
 async def ob_daily(c: CallbackQuery, state: FSMContext, db):
+    await neutralize_keyboard(c)
     ans = c.data.split(':')[2]
     lang = await get_lang(db, c.from_user.id)
     if ans == 'no':
@@ -175,6 +179,7 @@ async def ob_daily(c: CallbackQuery, state: FSMContext, db):
 
 @router.callback_query(F.data.startswith('ob:time:'))
 async def ob_time_pick(c: CallbackQuery, state: FSMContext, db):
+    await neutralize_keyboard(c)
     part = c.data.split(':')[2:]
     lang = await get_lang(db, c.from_user.id)
     if part[0] == 'other':
