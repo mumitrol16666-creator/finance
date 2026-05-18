@@ -196,6 +196,16 @@ def _generate(system_prompt: str, user_prompt: str) -> str:
     return response.output_text.strip()
 
 
+def _generate_with_history(system_prompt: str, messages: list[dict[str, str]]) -> str:
+    client = get_openai_client()
+    payload = [{"role": "system", "content": system_prompt}] + messages
+    response = client.responses.create(
+        model=get_openai_model(),
+        input=payload,
+    )
+    return response.output_text.strip()
+
+
 async def render_final_ai_report(context: dict[str, Any]) -> tuple[str, str]:
     quality = context.get("data_quality") or {}
     if not quality.get("sufficient_for_deep_report"):
@@ -218,12 +228,21 @@ async def render_final_ai_report(context: dict[str, Any]) -> tuple[str, str]:
     return llm_text, llm_text + "\n\n" + ("─" * 32) + "\n\n" + local_download
 
 
-async def render_final_ai_question(context: dict[str, Any], question: str) -> str:
+async def render_final_ai_question(context: dict[str, Any], question: str, chat_history: list[dict[str, str]] | None = None) -> str:
     local_text = render_ai_question_answer(context, question)
     if not has_openai_key():
         return local_text
     try:
-        llm_text = await asyncio.to_thread(_generate, SYSTEM_PROMPT_QUESTION, _build_question_prompt(context, question))
+        messages = []
+        if chat_history:
+            for turn in chat_history:
+                messages.append({"role": "user", "content": turn["q"]})
+                messages.append({"role": "assistant", "content": turn["a"]})
+        
+        # Последний ход передает актуальный финансовый контекст
+        messages.append({"role": "user", "content": _build_question_prompt(context, question)})
+        
+        llm_text = await asyncio.to_thread(_generate_with_history, SYSTEM_PROMPT_QUESTION, messages)
     except Exception:
         return local_text
     llm_text = sanitize_telegram_html(llm_text)
