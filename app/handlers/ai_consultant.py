@@ -432,10 +432,20 @@ async def ai_question_answer(m: Message, state: FSMContext, db: aiosqlite.Connec
     tz_name = await get_timezone(db, m.from_user.id)
     goal = await get_financial_goal(db, m.from_user.id)
     context = await build_ai_context(db, m.from_user.id, tz_name, "month", goal)
-    text = await render_final_ai_question(context, question)
+    
+    # Извлекаем историю диалога из FSM
+    state_data = await state.get_data()
+    chat_history = state_data.get("ai_chat_history", [])
+    
+    text = await render_final_ai_question(context, question, chat_history)
+    
+    # Сохраняем текущий ход в историю (держим последние 5 ходов во избежание раздувания)
+    chat_history.append({"q": question, "a": text})
+    chat_history = chat_history[-5:]
+    
     await state.set_state(None)
     await _clear_prompt(m, state)
-    await state.update_data(last_ai_question=question)
+    await state.update_data(last_ai_question=question, ai_chat_history=chat_history)
     await _render_screen(m, state, text, reply_markup=ai_question_actions_kb(lang))
 
 
