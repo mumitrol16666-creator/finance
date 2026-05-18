@@ -23,7 +23,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+import asyncio
 from app.db.repositories.settings_repo import get_lang, get_settings
+from app.db.repositories.users_repo import get_free_exports_used, increment_free_export
 from app.domain.services.reports_service import day_bounds_utc, month_bounds_utc, iso
 from app.domain.time_utils import now_in_user_tz
 from app.ui.i18n import t
@@ -75,6 +77,145 @@ async def _fetch_rows(
     sql += "ORDER BY t.ts ASC, t.id ASC"
     cur = await db.execute(sql, params)
     return await cur.fetchall()
+
+
+def _build_downgrade_preview_png(rows: list, lang: str, currency: str) -> bytes | None:
+    """
+    Генерирует премиальное превью графиков для бесплатного пользователя,
+    чтобы вызвать "эффект потери" и мотивировать к покупке.
+    """
+    if not rows:
+        return None
+
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import io
+    except ImportError:
+        return None
+
+    # 1. Агрегация данных
+    total_income = 0
+    total_expense = 0
+    expenses_by_cat = {}
+
+    for row in rows:
+        try:
+            tx_id, ts, ttype, amount, account, category, emoji, note = row
+        except Exception:
+            continue
+        
+        is_income = ttype == 'income' 
+        amt = abs(int(amount or 0))
+        
+        if is_income:
+            total_income += amt
+        else:
+            total_expense += amt
+            cat_name = str(category or "").strip()
+            if not cat_name:
+                cat_name = {
+                    "ru": "Другое",
+                    "en": "Other",
+                    "kk": "Басқа"
+                }.get(lang, "Другое")
+            expenses_by_cat[cat_name] = expenses_by_cat.get(cat_name, 0) + amt
+
+    # Берем Топ-5 категорий
+    top_categories = sorted(expenses_by_cat.items(), key=lambda x: x[1], reverse=True)[:5]
+    cat_labels = [item[0] for item in top_categories]
+    cat_sizes = [item[1] for item in top_categories]
+
+    # 2. Настройка фигуры и темы
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), dpi=150)
+    
+    # Темная премиальная тема (sleek dark mode)
+    bg_color = '#1E1E2E'
+    text_color = '#CDD6F4'
+    fig.patch.set_facecolor(bg_color)
+    
+    # Цвета графиков
+    color_income = '#A6E3A1'  # Мятный
+    color_expense = '#F38BA8' # Рубиновый
+    colors_pie = ['#89B4FA', '#F9E2AF', '#F38BA8', '#A6E3A1', '#CBA6F7']
+
+    # --- Левый график: Доходы vs Расходы ---
+    ax1.set_facecolor(bg_color)
+    
+    labels_dynamics = {
+        "ru": ['Доходы', 'Расходы'],
+        "en": ['Income', 'Expenses'],
+        "kk": ['Кірістер', 'Шығыстар']
+    }.get(lang, ['Доходы', 'Расходы'])
+    
+    title_dynamics = {
+        "ru": "Денежный поток",
+        "en": "Cash Flow",
+        "kk": "Ақша ағыны"
+    }.get(lang, "Денежный поток")
+    
+    bars = ax1.bar(labels_dynamics, [total_income, total_expense], color=[color_income, color_expense], width=0.5)
+    ax1.set_title(title_dynamics, color=text_color, fontsize=16, pad=20, weight='bold')
+    ax1.tick_params(colors=text_color, labelsize=12)
+    
+    # Убираем рамки
+    for spine in ax1.spines.values():
+        spine.set_visible(False)
+    ax1.grid(axis='y', color='#313244', linestyle='--', alpha=0.7)
+
+    # --- Правый график: Топ-5 категорий расходов ---
+    title_pie = {
+        "ru": "Топ расходов",
+        "en": "Top Expenses",
+        "kk": "Ең көп шығыстар"
+    }.get(lang, "Топ расходов")
+    
+    if cat_sizes:
+        _, texts, autotexts = ax2.pie(
+            cat_sizes, 
+            labels=cat_labels, 
+            colors=colors_pie,
+            autopct='%1.1f%%', 
+            startangle=140,
+            textprops={'color': text_color, 'fontsize': 12},
+            wedgeprops={'edgecolor': bg_color, 'linewidth': 2}
+        )
+        for autotext in autotexts:
+            autotext.set_color(bg_color)
+            autotext.set_weight('bold')
+        ax2.set_title(title_pie, color=text_color, fontsize=16, pad=20, weight='bold')
+    else:
+        ax2.set_facecolor(bg_color)
+        ax2.text(0.5, 0.5, {
+            "ru": "Нет расходов за период",
+            "en": "No expenses",
+            "kk": "Шығыстар жоқ"
+        }.get(lang, "Нет расходов"), color=text_color, ha='center', va='center', fontsize=14)
+        for spine in ax2.spines.values():
+            spine.set_visible(False)
+        ax2.set_xticks([])
+        ax2.set_yticks([])
+
+    # --- 3. Водяной знак ---
+    watermark_text = {
+        "ru": "ПРОФЕССИОНАЛЬНАЯ АНАЛИТИКА · FINANCEBOT",
+        "en": "PROFESSIONAL ANALYTICS · FINANCEBOT",
+        "kk": "КӘСІБИ ТАЛДАУ · FINANCEBOT"
+    }.get(lang, "ПРОФЕССИОНАЛЬНАЯ АНАЛИТИКА · FINANCEBOT")
+    
+    fig.text(0.5, 0.5, watermark_text, 
+             fontsize=32, color='white', alpha=0.04, 
+             ha='center', va='center', rotation=15, weight='bold')
+
+    # 4. Сохранение в байты
+    buf = io.BytesIO()
+    plt.tight_layout()
+    plt.savefig(buf, format='png', facecolor=fig.get_facecolor(), bbox_inches='tight', dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+    
+    return buf.getvalue()
 
 
 def _build_xlsx(rows: Iterable[tuple], lang: str, currency: str, user_id: int = 0) -> bytes | None:
@@ -625,13 +766,8 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     except Exception:
         pass
 
-    # Determine free trial status
-    await db.execute("CREATE TABLE IF NOT EXISTS user_free_trial (user_id INTEGER PRIMARY KEY, premium_exports_used INTEGER NOT NULL DEFAULT 0)")
-    await db.commit()
-
-    cur = await db.execute("SELECT premium_exports_used FROM user_free_trial WHERE user_id = ?", (user_id,))
-    row = await cur.fetchone()
-    exports_used = row[0] if row else 0
+    # Determine free trial status using migration-backed users column
+    exports_used = await get_free_exports_used(db, user_id)
 
     use_premium_xlsx = False
     is_free_trial_now = False
@@ -651,7 +787,7 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
             
             if is_free_trial_now:
                 # Mark as used
-                await db.execute("INSERT OR REPLACE INTO user_free_trial (user_id, premium_exports_used) VALUES (?, 1)", (user_id,))
+                await increment_free_export(db, user_id)
                 await db.commit()
                 
                 # Send celebratory 1-time free trial congratulation
@@ -681,58 +817,61 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     filename = f"finance_{label}.csv"
     await c.message.answer_document(BufferedInputFile(payload_csv, filename=filename))
     
-    # Check if they are a free user who has already used their trial
-    trial_notice = ""
-    if not full_access and exports_used > 0:
-        trial_notice = {
-            "ru": "⚠️ **Вы уже использовали свой 1 бесплатный пробный премиум-экспорт.**\n\n",
-            "en": "⚠️ **You have already used your 1 free premium export trial.**\n\n",
-            "kk": "⚠️ **Сіз 1 тегін премиум экспорт тест-драйвын пайдаланып қойдыңыз.**\n\n",
-        }.get(lang, "")
+    # Generate the stunning preview dynamically in a separate thread (asyncio.to_thread) to avoid blocking event loop
+    png_bytes = await asyncio.to_thread(_build_downgrade_preview_png, rows, lang, currency)
 
-    # Paywall pitching message to encourage upgrade
-    pitch = {
-        "ru": (
-            f"{trial_notice}"
-            "📊 **Ваш файл успешно экспортирован в формате CSV!**\n\n"
-            "🌟 *Хотите получить премиальный Excel-отчёт с интерактивными графиками, "
-            "разбивкой по месяцам/категориям и печатным дашбордом?*\n\n"
-            "Активируйте **Полный доступ** прямо сейчас, чтобы разблокировать профессиональную аналитику!"
-        ),
-        "en": (
-            f"{trial_notice}"
-            "📊 **Your CSV file is ready!**\n\n"
-            "🌟 *Want a premium Excel report with interactive charts, monthly/category cashflow breakdown "
-            "and printable dashboard?*\n\n"
-            "Activate **Full Access** right now to unlock advanced financial analytics!"
-        ),
-        "kk": (
-            f"{trial_notice}"
-            "📊 **Сіздің CSV файлыңыз сәтті дайындалды!**\n\n"
-            "🌟 *Интерактивті графиктермен, айлар/санаттар бойынша бөлінген және басып шығаруға болатын "
-            "премиум Excel есебін алғыңыз келе ме?*\n\n"
-            "Кәсіби талдауды ашу үшін қазір **Толық қолжетімділікті** белсендіріңіз!"
-        )
-    }.get(lang, "📊 **Ваш файл успешно экспортирован в формате CSV!**")
-    
-    # Build inline keyboard to direct them to the upgrade screen or main menu
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    
     upgrade_btn_text = {
-        "ru": "👑 Активировать Полный доступ",
-        "en": "👑 Activate Full Access",
-        "kk": "👑 Толық қолжетімділікті белсендіру",
-    }.get(lang, "👑 Активировать Полный доступ")
-    
+        "ru": "👑 Вернуть графики за 150 ⭐️",
+        "en": "👑 Restore charts for 150 ⭐️",
+        "kk": "👑 Графиктерді қайтару (150 ⭐️)",
+    }.get(lang, "👑 Вернуть графики за 150 ⭐️")
+
     menu_btn_text = {
         "ru": "🏠 В Главное меню",
         "en": "🏠 Main Menu",
         "kk": "🏠 Басты мәзірге",
     }.get(lang, "🏠 В Главное меню")
-    
+
     paywall_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=upgrade_btn_text, callback_data="upgrade:info")],
+        [InlineKeyboardButton(text=upgrade_btn_text, callback_data="upgrade:activate")],
         [InlineKeyboardButton(text=menu_btn_text, callback_data="hub:main")]
     ])
-    
-    await c.message.answer(pitch, parse_mode="Markdown", reply_markup=paywall_kb)
+
+    caption_text = {
+        "ru": (
+            "⚠️ **Вы уже использовали свой 1 бесплатный пробный премиум-экспорт.**\n\n"
+            "😔 **Посмотрите, какую красоту вы теряете без Полного доступа!**\n\n"
+            "На графике выше показана динамика ваших реальных расходов и доходов за выбранный период, "
+            "которую премиум-пользователи видят прямо внутри интерактивного Excel-отчета с авто-формулами и печатным дашбордом.\n\n"
+            "🔥 **Верните графики в свои отчёты прямо сейчас всего за 150 ⭐️!**"
+        ),
+        "en": (
+            "⚠️ **You have already used your 1 free premium export trial.**\n\n"
+            "😔 **Look at the beauty you are missing without Full Access!**\n\n"
+            "The chart above showcases the dynamic flow of your actual income and expenses during this period, "
+            "which premium users interact with inside their customized Excel workbook with active dashboards.\n\n"
+            "🔥 **Restore visual charts in your reports right now for just 150 ⭐️!**"
+        ),
+        "kk": (
+            "⚠️ **Сіз 1 тегін премиум экспорт тест-драйвын пайдаланып қойдыңыз.**\n\n"
+            "😔 **Толық қолжетімділіксіз қандай сұлулықты жоғалтып жатқаныңызды қараңыз!**\n\n"
+            "Жоғарыдағы график таңдалған кезеңдегі нақты кірістеріңіз бен шығыстарыңыздың динамикасын көрсетеді, "
+            "оны премиум қолданушылар формулалары мен дашборды бар интерактивті Excel есебінен көре алады.\n\n"
+            "🔥 **Қазірдің өзінде есептеріңізге графиктерді небәрі 150 ⭐️ қайтарыңыз!**"
+        )
+    }.get(lang, "")
+
+    if png_bytes:
+        photo = BufferedInputFile(png_bytes, filename="premium_preview.png")
+        await c.message.answer_photo(
+            photo=photo,
+            caption=caption_text,
+            parse_mode="Markdown",
+            reply_markup=paywall_kb
+        )
+    else:
+        await c.message.answer(
+            caption_text,
+            parse_mode="Markdown",
+            reply_markup=paywall_kb
+        )

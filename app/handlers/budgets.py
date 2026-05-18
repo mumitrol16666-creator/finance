@@ -848,5 +848,6 @@ async def budget_menu(c: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "bud:cancel")
 async def budget_cancel(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
     await cancel_to_main_menu(c, state, db)
     await c.message.answer("Отменено. Меню ниже.", reply_markup=main_menu())

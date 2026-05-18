@@ -1051,6 +1051,7 @@ async def debt_open(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContex
 
 @router.callback_query(F.data.startswith("debt:close:yes:"))
 async def debt_close_yes(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext):
+    await neutralize_keyboard(c)
     debt_id = int(c.data.split(":")[-1])
     await close_debt(db, c.from_user.id, debt_id)
 
@@ -1220,6 +1221,7 @@ async def debt_pay_amount_custom(m: Message, state: FSMContext, db: aiosqlite.Co
 
 @router.callback_query(F.data.startswith("debt:acc:"))
 async def debt_pick_account(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext):
+    await neutralize_keyboard(c)
     parts = c.data.split(":")
     if len(parts) != 5:
         await c.answer("Неверные данные.", show_alert=True)
