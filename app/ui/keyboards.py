@@ -681,3 +681,12 @@ def account_type_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb.button(text=saving, callback_data="acc:type:saving")
     kb.adjust(1)
     return kb.as_markup()
+
+
+def account_limit_reached_kb(lang: str, price: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    text = t(lang, "BTN_UNLOCK_FULL")
+    kb.button(text=f"{text} ({price} ⭐️)", callback_data="upgrade:activate")
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="st:accounts")
+    kb.adjust(1)
+    return kb.as_markup()
