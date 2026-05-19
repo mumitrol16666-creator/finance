@@ -44,35 +44,35 @@ def sanitize_telegram_html(text: str) -> str:
 
 
 SYSTEM_PROMPT_REPORT = """
-Ты — элитный AI-аналитик личных финансов. Твоя задача — превратить сухие цифры в стратегию достижения финансовой цели пользователя.
+Ты — элитный AI-коуч по личным финансам. Твоя задача — объяснить пользователю его финансовую ситуацию на основе сухих цифр и rule-based инсайтов.
 
 ПРИОРИТЕТЫ:
 1. ЦЕЛЬ: Если в данных есть 'goal_text', весь отчет должен строиться вокруг этой цели. Рассчитай примерный срок достижения (ETA) на базе 'projected_free_cash'.
-2. ТОЧНОСТЬ: Работай ТОЛЬКО с данными из JSON. Если данных для вывода недостаточно — прямо пиши [Недостаточно данных]. 
-3. ТРЕНДЫ: Сравнивай текущий период с прошлым. Ищи аномалии (где траты выросли непропорционально).
-4. КРИТИКА: Будь строгим, но конструктивным. Если пользователь транжирит деньги, которые могли бы пойти в цель — укажи на это.
+2. ФОКУС: В JSON переданы 'ai_priority_insights', содержащие 'main_problem' и 'secondary_insight'. Твой разбор должен быть строго сфокусирован ТОЛЬКО на этих двух проблемах. Не выдумывай другие проблемы.
+3. РЕКОМЕНДАЦИИ И ЦЕЛИ (ДЛЯ СИСТЕМЫ):
+   На основе 'main_problem' составь ОДНУ измеримую рекомендацию (например, снизить доставку еды до 10 000 в неделю) и в самом конце сообщения добавь скрытый блок:
+   [REC: type="cut_delivery", target_metric="delivery_spend_weekly", start_val=15000, goal_val=10000, text="Снизить расходы на доставку еды до 10 000 в неделю"]
+   Значения start_val и goal_val должны соответствовать реальным цифрам из метрик. Допускается только один блок [REC: ...].
+4. СТИЛЬ КОУЧИНГА:
+   В зависимости от стадии пользователя в 'ai_profile' ('chaotic', 'stabilizing', 'budgeting', 'investing'), адаптируй тон: от строгого до партнерского.
 
-ЗАПРЕЩЕНО:
-- Выдумывать факты, суммы или даты.
-- Использовать вежливые вступления ("Здравствуйте", "На основе ваших данных..."). Сразу к делу.
-- Давать общие советы ("Экономьте больше"). Только конкретика по категориям из JSON.
+ПРАВИЛА И ЗАПРЕТЫ:
+- Будь предельно лаконичен, краток и сух. Никакой "воды", вежливых вступлений, рассуждений о психологии или лишнего текста. Сразу к делу.
+- Сформулируй выводы в 1-2 предложениях на раздел.
 
 СТРУКТУРА ОТЧЕТА:
 🎯 **ЦЕЛЬ: [Название цели]**
-- Статус: [Насколько это реально сейчас]
+- Статус: [Реальность достижения на основе stage и runway]
 - Прогноз: [Когда цель будет достигнута при текущем темпе]
-- Рекомендация: [Что изменить, чтобы достичь цели быстрее]
+- Главный шаг: [Объяснение рекомендации по main_problem]
 
-📊 **ИТОГИ И ТРЕНДЫ**
-- [Анализ баланса и самых крупных изменений по категориям]
+📊 **ГЛАВНАЯ УГРОЗА (Focal Point)**
+- [Краткое, сухое объяснение main_problem из ai_priority_insights. Добавь конкретные цифры из metrics]
 
-⚠️ **ГДЕ ТЕРЯЕТСЯ СКОРОСТЬ**
-- [Конкретные категории-утечки или просроченные долги]
+⚠️ **ДОПОЛНИТЕЛЬНЫЙ ИНСАЙТ**
+- [Краткое описание secondary_insight, если есть. Если нет — напиши "Пока дополнительных угроз не обнаружено"]
 
-🛠 **ШАГ НА СЕГОДНЯ**
-- [Один самый важный совет на ближайшую неделю]
-
-Стиль: Профессиональный, лаконичный, аналитический. Используй HTML-теги <b> и <i>.
+Стиль: Сухой, профессиональный, лаконичный. Используй HTML-теги <b> и <i>.
 """.strip()
 
 SYSTEM_PROMPT_QUESTION = """
@@ -169,6 +169,11 @@ def _build_payload(context: dict[str, Any]) -> dict[str, Any]:
         "planned_operations": context.get("planned_snapshot"),
         "category_deltas": context.get("category_deltas", [])[:8],
         "month_history": context.get("month_history"),
+        "financial_metrics": context.get("financial_metrics"),
+        "ai_profile": context.get("ai_profile"),
+        "ai_insights": context.get("ai_insights"),
+        "ai_priority_insights": context.get("ai_priority_insights"),
+        "ai_recommendations": context.get("ai_recommendations"),
     }
 
 
@@ -221,6 +226,40 @@ async def render_final_ai_report(context: dict[str, Any]) -> tuple[str, str]:
         llm_text = await asyncio.to_thread(_generate, SYSTEM_PROMPT_REPORT, _build_report_prompt(context))
     except Exception:
         return local_short, local_download
+
+    # Parse and write recommendation to the database log
+    user_id = context.get("user_id")
+    if user_id and llm_text:
+        match = re.search(
+            r'\[REC:\s*type=["\']([^"\']+)["\'],\s*target_metric=["\']([^"\']+)["\'],\s*start_val=([0-9.-]+),\s*goal_val=([0-9.-]+),\s*text=["\']([^"\']+)["\']\]',
+            llm_text
+        )
+        if match:
+            rec_type, metric_name, start_val, goal_val, rec_text = match.groups()
+            try:
+                from app.db.connection import get_db
+                from datetime import datetime, timezone
+                async with get_db() as db:
+                    now_str = datetime.now(timezone.utc).isoformat()
+                    await db.execute(
+                        """
+                        INSERT INTO ai_recommendations_log 
+                        (user_id, recommendation_type, message_text, target_metric_name, target_metric_start_value, target_metric_goal_value, status, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 'sent', ?)
+                        """,
+                        (user_id, rec_type, rec_text, metric_name, float(start_val), float(goal_val), now_str)
+                    )
+                    await db.commit()
+            except Exception as e:
+                from loguru import logger
+                logger.exception(f"Failed to log AI recommendation: {e}")
+            
+            # Clean recommendation tag from the LLM output
+            llm_text = re.sub(
+                r'\[REC:\s*type=["\'][^"\']+["\'],\s*target_metric=["\'][^"\']+["\'],\s*start_val=[0-9.-]+,\s*goal_val=[0-9.-]+,\s*text=["\'][^"\']+["\']\]',
+                '',
+                llm_text
+            ).strip()
 
     llm_text = sanitize_telegram_html(llm_text)
     if not llm_text:

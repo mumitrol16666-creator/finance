@@ -795,6 +795,28 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
         possible_missing_recurring=_has_possible_missing_recurring(current_rows, previous_rows),
     )
 
+    # Fetch AI Memory Layer & Metrics
+    from app.domain.services.financial_analysis_engine import calculate_financial_metrics
+    metrics = await calculate_financial_metrics(db, user_id, tz_name)
+    
+    cur_profile = await db.execute("SELECT user_stage, behavioral_summary, discipline_score FROM ai_profile WHERE user_id=?", (user_id,))
+    row_prof = await cur_profile.fetchone()
+    if row_prof:
+        ai_profile = {"stage": row_prof[0], "behavioral_summary": row_prof[1], "discipline_score": row_prof[2]}
+    else:
+        ai_profile = {"stage": "chaotic", "behavioral_summary": "нет данных", "discipline_score": 100}
+        
+    cur_ins = await db.execute("SELECT insight_key, insight_text, confidence FROM ai_insights WHERE user_id=? AND status='active'", (user_id,))
+    rows_ins = await cur_ins.fetchall()
+    ai_insights = [{"key": r[0], "text": r[1], "confidence": r[2]} for r in rows_ins]
+    
+    from app.domain.services.ai_priority_engine import select_top_insights
+    ai_priority_insights = select_top_insights(ai_insights)
+    
+    cur_rec = await db.execute("SELECT recommendation_type, message_text, status, created_at FROM ai_recommendations_log WHERE user_id=? ORDER BY id DESC LIMIT 5", (user_id,))
+    rows_rec = await cur_rec.fetchall()
+    ai_recommendations = [{"type": r[0], "text": r[1], "status": r[2], "created_at": r[3]} for r in rows_rec]
+
     return {
         "meta": meta,
         "currency": currency,
@@ -828,6 +850,12 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
         "month_metrics": month_metrics,
         "clarification_note": clarification_note,
         "data_quality": data_quality,
+        "financial_metrics": metrics,
+        "ai_profile": ai_profile,
+        "ai_insights": ai_insights,
+        "ai_priority_insights": ai_priority_insights,
+        "ai_recommendations": ai_recommendations,
+        "user_id": user_id,
     }
 
 def _line(label: str, value: str) -> str:
