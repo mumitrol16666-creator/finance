@@ -1685,15 +1685,59 @@ async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext)
     await state.update_data(from_after=from_after)
 
     data = await state.get_data()
+    from_currency = data.get("from_currency", "KZT")
+    to_currency = data.get("to_currency", "KZT")
 
-    lines = [
-        f"{_i18n_t(lang, 'TX_TR_CONFIRM_HEAD')}",
-        "",
-        _i18n_t(lang, "TX_TR_CONFIRM_FROM").format(account=escape(str(data['from_name']))),
-        _i18n_t(lang, "TX_TR_CONFIRM_TO").format(account=escape(str(data['to_name']))),
-        _i18n_t(lang, "TX_TR_CONFIRM_SUM").format(amount=fmt_money(int(data['amount']))),
-        _i18n_t(lang, "TX_TR_CONFIRM_BALANCE").format(before=fmt_money(int(from_before)), after=fmt_money(int(from_after))),
-    ]
+    if from_currency != to_currency:
+        rate = data.get("exchange_rate", 1.0)
+        converted_amount = data.get("converted_amount", int(data["amount"]))
+        
+        # Build multivariant lines
+        if lang == "en":
+            lines = [
+                "🔄 **CROSS-CURRENCY TRANSFER**",
+                "",
+                f"📤 **From**: {escape(str(data['from_name']))} ({from_currency})",
+                f"📥 **To**: {escape(str(data['to_name']))} ({to_currency})",
+                "",
+                f"💰 **Sum to deduct**: **{fmt_money(int(data['amount']), from_currency)}**",
+                f"📊 **Exchange Rate**: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📥 **Will be credited**: **{fmt_money(converted_amount, to_currency)}**",
+                f"📊 **Source balance**: {fmt_money(int(from_before), from_currency)} ➡️ {fmt_money(int(from_after), from_currency)}"
+            ]
+        elif lang == "kk":
+            lines = [
+                "🔄 **МУЛЬТИВАЛЮТАЛЫҚ АУДАРЫМ**",
+                "",
+                f"📤 **Қайдан**: {escape(str(data['from_name']))} ({from_currency})",
+                f"📥 **Қайда**: {escape(str(data['to_name']))} ({to_currency})",
+                "",
+                f"💰 **Шығындалатын сома**: **{fmt_money(int(data['amount']), from_currency)}**",
+                f"📊 **Ағымдағы бағам**: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📥 **Шотқа түседі**: **{fmt_money(converted_amount, to_currency)}**",
+                f"📊 **Бастапқы баланс**: {fmt_money(int(from_before), from_currency)} ➡️ {fmt_money(int(from_after), from_currency)}"
+            ]
+        else: # ru
+            lines = [
+                "🔄 **МУЛЬТИВАЛЮТНЫЙ ПЕРЕВОД**",
+                "",
+                f"📤 **Откуда**: {escape(str(data['from_name']))} ({from_currency})",
+                f"📥 **Куда**: {escape(str(data['to_name']))} ({to_currency})",
+                "",
+                f"💰 **Сумма списания**: **{fmt_money(int(data['amount']), from_currency)}**",
+                f"📊 **Текущий курс**: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📥 **Будет зачислено**: **{fmt_money(converted_amount, to_currency)}**",
+                f"📊 **Баланс источника**: {fmt_money(int(from_before), from_currency)} ➡️ {fmt_money(int(from_after), from_currency)}"
+            ]
+    else:
+        lines = [
+            f"{_i18n_t(lang, 'TX_TR_CONFIRM_HEAD')}",
+            "",
+            _i18n_t(lang, "TX_TR_CONFIRM_FROM").format(account=escape(str(data['from_name']))),
+            _i18n_t(lang, "TX_TR_CONFIRM_TO").format(account=escape(str(data['to_name']))),
+            _i18n_t(lang, "TX_TR_CONFIRM_SUM").format(amount=fmt_money(int(data['amount']))),
+            _i18n_t(lang, "TX_TR_CONFIRM_BALANCE").format(before=fmt_money(int(from_before)), after=fmt_money(int(from_after))),
+        ]
 
     if data.get("note"):
         lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
@@ -1753,6 +1797,7 @@ async def tr_from(c: CallbackQuery, state: FSMContext, db):
         from_account=from_id,
         from_name=acc[1],
         from_before=acc[2],
+        from_currency=acc[4] or "KZT",
     )
     await state.set_state(TransferFlow.to_account)
 
@@ -1774,10 +1819,33 @@ async def tr_to(c: CallbackQuery, state: FSMContext, db):
         await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
         return
 
+    from_currency = data.get("from_currency", "KZT")
+    to_currency = acc[4] or "KZT"
+    rate = 1.0
+    converted_amount = int(data["amount"])
+
+    if from_currency != to_currency:
+        from app.services.currency import get_exchange_rate
+        try:
+            rate = await get_exchange_rate(from_currency, to_currency)
+            converted_amount = int(round(int(data["amount"]) * rate))
+        except Exception:
+            lang = data.get("lang", "ru")
+            err_msg = {
+                "ru": "⚠️ Извините, сервис курсов валют временно недоступен. Пожалуйста, попробуйте совершить перевод позже.",
+                "en": "⚠️ Sorry, the exchange rate service is temporarily unavailable. Please try your transfer again later.",
+                "kk": "⚠️ Кешіріңіз, валюта бағамдары қызметі уақытша қолжетімсіз. Аударылымды кейінірек қайталап көріңіз."
+            }.get(lang, "⚠️ Сервис курсов валют временно недоступен.")
+            await c.answer(err_msg, show_alert=True)
+            return
+
     await state.update_data(
         to_account=to_id,
         to_name=acc[1],
         to_before=acc[2],
+        to_currency=to_currency,
+        exchange_rate=rate,
+        converted_amount=converted_amount
     )
     await state.set_state(TransferFlow.need_note)
 
@@ -1887,6 +1955,12 @@ async def tr_od(c: CallbackQuery, state: FSMContext, db):
 
 async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
+    from_currency = data.get("from_currency", "KZT")
+    to_currency = data.get("to_currency", "KZT")
+
+    to_amount_pos = None
+    if from_currency != to_currency:
+        to_amount_pos = int(data.get("converted_amount", data["amount"]))
 
     tx1, tx2 = await add_transfer(
         db,
@@ -1895,6 +1969,7 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
         int(data["from_account"]),
         int(data["to_account"]),
         data.get("note"),
+        to_amount_pos,
     )
 
     from_acc = await get_account(db, ctx.from_user.id, int(data["from_account"]))
@@ -1903,19 +1978,40 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     from_balance = from_acc[2] if from_acc else None
     to_balance = to_acc[2] if to_acc else None
 
-    from_balance_txt = fmt_money(int(from_balance)) if isinstance(from_balance, int) else "—"
-    to_balance_txt = fmt_money(int(to_balance)) if isinstance(to_balance, int) else "—"
+    from_balance_txt = fmt_money(int(from_balance), from_currency) if isinstance(from_balance, int) else "—"
+    to_balance_txt = fmt_money(int(to_balance), to_currency) if isinstance(to_balance, int) else "—"
 
     lang = data.get("lang", "ru")
-    msg = (
-        f"{_i18n_t(lang, 'TX_TR_SUCCESS')}\n\n"
-        f"{_i18n_t(lang, 'TX_FROM')}: <b>{escape(str(data['from_name']))}</b>\n"
-        f"{_i18n_t(lang, 'TX_TO')}: <b>{escape(str(data['to_name']))}</b>\n"
-        f"{_i18n_t(lang, 'TX_SUM')}: <b>{fmt_money(int(data['amount']))}</b>\n\n"
-        f"📊 {escape(str(data['from_name']))}: <b>{from_balance_txt}</b>\n"
-        f"📊 {escape(str(data['to_name']))}: <b>{to_balance_txt}</b>\n"
-        f"\n<i>ID: {tx1}/{tx2}</i>"
-    )
+
+    if from_currency != to_currency:
+        rate = data.get("exchange_rate", 1.0)
+        converted_amount = data.get("converted_amount", int(data["amount"]))
+        
+        # Build multi-currency success message
+        rate_lbl = "Rate" if lang == "en" else ("Бағам" if lang == "kk" else "Курс")
+        credited_lbl = "Will be credited" if lang == "en" else ("Шотқа түседі" if lang == "kk" else "Зачислено")
+        
+        msg = (
+            f"{_i18n_t(lang, 'TX_TR_SUCCESS')}\n\n"
+            f"{_i18n_t(lang, 'TX_FROM')}: <b>{escape(str(data['from_name']))} ({from_currency})</b>\n"
+            f"{_i18n_t(lang, 'TX_TO')}: <b>{escape(str(data['to_name']))} ({to_currency})</b>\n"
+            f"📊 {_i18n_t(lang, 'TX_SUM')}: <b>{fmt_money(int(data['amount']), from_currency)}</b>\n"
+            f"📈 {rate_lbl}: <b>1 {from_currency} = {rate:.4f} {to_currency}</b>\n"
+            f"📥 {credited_lbl}: <b>{fmt_money(converted_amount, to_currency)}</b>\n\n"
+            f"📊 {escape(str(data['from_name']))}: <b>{from_balance_txt}</b>\n"
+            f"📊 {escape(str(data['to_name']))}: <b>{to_balance_txt}</b>\n"
+            f"\n<i>ID: {tx1}/{tx2}</i>"
+        )
+    else:
+        msg = (
+            f"{_i18n_t(lang, 'TX_TR_SUCCESS')}\n\n"
+            f"{_i18n_t(lang, 'TX_FROM')}: <b>{escape(str(data['from_name']))}</b>\n"
+            f"{_i18n_t(lang, 'TX_TO')}: <b>{escape(str(data['to_name']))}</b>\n"
+            f"{_i18n_t(lang, 'TX_SUM')}: <b>{fmt_money(int(data['amount']))}</b>\n\n"
+            f"📊 {escape(str(data['from_name']))}: <b>{from_balance_txt}</b>\n"
+            f"📊 {escape(str(data['to_name']))}: <b>{to_balance_txt}</b>\n"
+            f"\n<i>ID: {tx1}/{tx2}</i>"
+        )
 
     if data.get("note"):
         msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"

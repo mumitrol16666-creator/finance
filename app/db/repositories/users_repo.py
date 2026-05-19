@@ -139,3 +139,13 @@ async def increment_free_export(db: aiosqlite.Connection, user_id: int) -> None:
         "UPDATE users SET free_exports_used = COALESCE(free_exports_used, 0) + 1 WHERE user_id = ?",
         (user_id,),
     )
+
+
+async def get_all_active_users(db: aiosqlite.Connection) -> list[int]:
+    """
+    Возвращает список ID всех активных (прошедших онбординг) пользователей.
+    """
+    cur = await db.execute("SELECT user_id FROM users WHERE onboarded = 1")
+    rows = await cur.fetchall()
+    return [row[0] for row in rows]
+

@@ -13,6 +13,7 @@ class Settings(BaseModel):
     debug: bool = Field(default_factory=lambda: os.getenv("DEBUG","1").strip() in ("1","true","True","YES","yes"))
     full_access_stars_price: int = Field(default_factory=lambda: int(os.getenv("FULL_ACCESS_STARS_PRICE", "150")))
     full_access_days: int = Field(default_factory=lambda: int(os.getenv("FULL_ACCESS_DAYS", "90")))
+    main_channel_id: int = Field(default_factory=lambda: int(os.getenv("MAIN_CHANNEL_ID", "0")))
 
 settings = Settings()
 

@@ -16,15 +16,16 @@ async def apply_expense_income(db: aiosqlite.Connection, user_id: int, tx_id: in
     # update balance
     await apply_balance_delta(db, user_id, account_id, amount)
 
-async def create_transfer(db: aiosqlite.Connection, user_id: int, ts_iso: str, from_acc: int, to_acc: int, amount: int, note: str | None, created_at: str):
+async def create_transfer(db: aiosqlite.Connection, user_id: int, ts_iso: str, from_acc: int, to_acc: int, amount: int, note: str | None, created_at: str, to_amount: int | None = None):
     # Atomic: all 5 writes must succeed or none, otherwise balances vs ledger diverge.
+    actual_to_amount = to_amount if to_amount is not None else amount
     await db.execute("BEGIN IMMEDIATE")
     try:
         tx1 = await create_tx(db, user_id, ts_iso, "transfer", -amount, from_acc, None, note, created_at, None)
-        tx2 = await create_tx(db, user_id, ts_iso, "transfer", amount, to_acc, None, note, created_at, tx1)
+        tx2 = await create_tx(db, user_id, ts_iso, "transfer", actual_to_amount, to_acc, None, note, created_at, tx1)
         await db.execute("UPDATE transactions SET related_tx_id=? WHERE id=?", (tx2, tx1))
         await apply_balance_delta(db, user_id, from_acc, -amount)
-        await apply_balance_delta(db, user_id, to_acc, amount)
+        await apply_balance_delta(db, user_id, to_acc, actual_to_amount)
         await db.commit()
     except Exception:
         await db.rollback()
