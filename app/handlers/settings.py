@@ -6,7 +6,7 @@ from html import escape
 import aiosqlite
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from app.db.repositories.accounts_repo import (
     account_has_transactions,
@@ -21,6 +21,7 @@ from app.db.repositories.accounts_repo import (
     set_account_balance,
     update_account_currency,
     toggle_account_saving,
+    count_accounts,
 )
 from app.db.repositories.reset_repo import wipe_user_data
 from app.db.repositories.settings_repo import (
@@ -33,6 +34,7 @@ from app.db.repositories.settings_repo import (
 )
 from app.domain.validators import clean_name, parse_hhmm
 from app.fsm.states import SettingsFlow
+from app.domain.services.access_service import FEATURE_AI, can_use_feature
 from app.handlers.budgets import show_budget_categories
 from app.handlers.common import (
     cancel_to_main_menu,

@@ -129,9 +129,9 @@ async def add_income(db: aiosqlite.Connection, user_id: int, amount_positive: in
     await db.commit()
     return tx_id
 
-async def add_transfer(db: aiosqlite.Connection, user_id: int, amount_positive: int, from_acc: int, to_acc: int, note: str | None):
+async def add_transfer(db: aiosqlite.Connection, user_id: int, amount_positive: int, from_acc: int, to_acc: int, note: str | None, to_amount_positive: int | None = None):
     ts = utcnow_iso()
-    tx1, tx2 = await create_transfer(db, user_id, ts, from_acc, to_acc, amount_positive, note, ts)
+    tx1, tx2 = await create_transfer(db, user_id, ts, from_acc, to_acc, amount_positive, note, ts, to_amount_positive)
     local_date = await _local_date_for_user(db, user_id, ts)
     await update_streak_on_activity(db, user_id, local_date)
     await db.commit()
