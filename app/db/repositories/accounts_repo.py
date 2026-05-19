@@ -68,7 +68,28 @@ async def create_account(db: aiosqlite.Connection, user_id: int, name: str, bala
         "INSERT INTO accounts(user_id, name, balance, is_archived, created_at, updated_at, currency, is_saving) VALUES(?,?,?,0,?,?,?,?)",
         (user_id, name, balance, ts, ts, currency, is_saving),
     )
-    return cur.lastrowid, 'created'
+    acc_id = cur.lastrowid
+
+    if balance != 0:
+        tx_type = "income" if balance > 0 else "expense"
+        
+        cur_lang = await db.execute("SELECT lang FROM settings WHERE user_id=? LIMIT 1", (user_id,))
+        row = await cur_lang.fetchone()
+        lang = row[0] if row else 'ru'
+        
+        note = {
+            "ru": "Стартовый баланс",
+            "en": "Starting balance",
+            "kk": "Бастапқы баланс",
+        }.get(lang, "Стартовый баланс")
+        
+        await db.execute(
+            "INSERT INTO transactions(user_id, ts, type, amount, account_id, category_id, note, created_at) "
+            "VALUES(?,?,?,?,?,NULL,?,?)",
+            (user_id, ts, tx_type, balance, acc_id, note, ts),
+        )
+
+    return acc_id, 'created'
 
 
 async def rename_account(db: aiosqlite.Connection, user_id: int, account_id: int, new_name: str, ts: str):
