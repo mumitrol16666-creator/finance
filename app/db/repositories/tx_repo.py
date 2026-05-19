@@ -10,7 +10,10 @@ async def create_tx(db: aiosqlite.Connection, user_id: int, ts_iso: str, tx_type
         "VALUES(?,?,?,?,?,?,?,?,?)",
         (user_id, ts_iso, tx_type, amount, account_id, category_id, note, related_tx_id, created_at),
     )
-    return int(cur.lastrowid)
+    tx_id = int(cur.lastrowid)
+    from app.domain.services.ai_event_worker import trigger_background_ai_analysis
+    await trigger_background_ai_analysis(user_id)
+    return tx_id
 
 async def apply_expense_income(db: aiosqlite.Connection, user_id: int, tx_id: int, amount: int, account_id: int):
     # update balance
@@ -94,6 +97,8 @@ async def delete_tx(db: aiosqlite.Connection, user_id: int, tx_id: int):
     except Exception:
         await db.rollback()
         raise
+    from app.domain.services.ai_event_worker import trigger_background_ai_analysis
+    await trigger_background_ai_analysis(user_id)
     return True, "ok"
 
 

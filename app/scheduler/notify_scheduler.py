@@ -737,6 +737,18 @@ def setup_notify_scheduler(bot) -> AsyncIOScheduler:
         coalesce=True,
         misfire_grace_time=300,
     )
+    # Weekly AI recommendation evaluation on Sunday at 18:00 UTC
+    from app.domain.services.coaching_loop_service import evaluate_active_recommendations
+    sch.add_job(
+        evaluate_active_recommendations,
+        CronTrigger(day_of_week="sun", hour=18, minute=0),
+        args=(bot,),
+        id="ai:evaluate_recommendations",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
     return sch
 
 
