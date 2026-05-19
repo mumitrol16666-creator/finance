@@ -531,6 +531,31 @@ def _today_snapshot_prefix(
     return "\n".join(lines)
 
 
+def _build_promo_kb(lang: str, is_free: bool):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    lang = (lang or "ru").lower()
+    kb = InlineKeyboardBuilder()
+    if is_free:
+        if lang == "en":
+            kb.button(text="🚀 About Full Access", callback_data="upgrade:info")
+            kb.button(text="⭐ Upgrade Now", callback_data="upgrade:activate")
+        elif lang == "kk":
+            kb.button(text="🚀 Толық қолжетімділік", callback_data="upgrade:info")
+            kb.button(text="⭐ Қосылу", callback_data="upgrade:activate")
+        else:
+            kb.button(text="🚀 О Полном доступе", callback_data="upgrade:info")
+            kb.button(text="⭐ Подключить", callback_data="upgrade:activate")
+        
+        # Add Menu button as a second row
+        kb.button(text="🏠 Menu" if lang == "en" else ("🏠 Мәзір" if lang == "kk" else "🏠 Меню"), callback_data="hub:main")
+        kb.adjust(2, 1)
+    else:
+        # Just standard Menu button
+        kb.button(text="🏠 Menu" if lang == "en" else ("🏠 Мәзір" if lang == "kk" else "🏠 Меню"), callback_data="hub:main")
+        kb.adjust(1)
+    return kb.as_markup()
+
+
 async def tick_notify(bot):
     from app.db.connection import get_db
     now_utc = datetime.now(timezone.utc)
@@ -560,6 +585,10 @@ async def tick_notify(bot):
         ) in targets:
             try:
                 uid = int(user_id)
+                from app.domain.services.access_service import should_offer_upgrade
+                is_free = await should_offer_upgrade(db, uid)
+                promo_kb = _build_promo_kb(str(lang or "ru"), is_free)
+
                 tz, tz_norm = _safe_tz(str(tz_name or "UTC"))
 
                 local_now = now_utc.astimezone(tz)
@@ -636,9 +665,9 @@ async def tick_notify(bot):
                               currency=cur,
                           )
                           nudge_text = snap + nudge_body
-                          await _send_safe(bot, uid, nudge_text, parse_mode="HTML")
+                          await _send_safe(bot, uid, nudge_text, parse_mode="HTML", reply_markup=promo_kb)
                         else:
-                          await _send_safe(bot, uid, nudge_body)
+                          await _send_safe(bot, uid, nudge_body, parse_mode="HTML", reply_markup=promo_kb)
 
                         await mark_nudge_sent(db, uid, _iso(now_utc))
 
@@ -659,16 +688,13 @@ async def tick_notify(bot):
                         pre_body = _build_pre_text(uid, local_now, cnt_today)
                         pre_text = snap + pre_body
 
-                        await _send_safe(bot, uid, pre_text, parse_mode="HTML")
+                        await _send_safe(bot, uid, pre_text, parse_mode="HTML", reply_markup=promo_kb)
                         await mark_daily_pre_sent(db, uid, local_date, _iso(now_utc))
 
                     # REPORT
                     if (last_sent or "") != local_date and _in_window(local_now, report_local, window):
                         text = await _build_daily_text(db, uid, str(currency or "KZT"), tz_norm, now_utc, str(lang or "ru"))
-                        # Add Menu button to Daily Report?
-                        kb = InlineKeyboardBuilder()
-                        kb.button(text="🏠 Меню" if lang=="ru" else ("🏠 Menu" if lang=="en" else "🏠 Мәзір"), callback_data="hub:main")
-                        await bot.send_message(uid, text, reply_markup=kb.as_markup(), parse_mode="HTML")
+                        await bot.send_message(uid, text, reply_markup=promo_kb, parse_mode="HTML")
                         await mark_daily_sent(db, uid, local_date, _iso(now_utc))
 
             except Exception as e:
@@ -772,9 +798,11 @@ def _build_pre_text(user_id: int, local_now: datetime, cnt_today: int) -> str:
     return _pick_variant(PRE_HIGH, user_id, local_now, 'pre-high').format(cnt=cnt_today)
 
 
-async def _send_safe(bot, user_id: int, text: str, parse_mode: str | None = None):
+async def _send_safe(bot, user_id: int, text: str, parse_mode: str | None = None, reply_markup=None):
     try:
         kwargs = {"parse_mode": parse_mode} if parse_mode else {}
+        if reply_markup:
+            kwargs["reply_markup"] = reply_markup
         await bot.send_message(user_id, text, **kwargs)
     except Exception as e:
         err_msg = str(e).lower()
