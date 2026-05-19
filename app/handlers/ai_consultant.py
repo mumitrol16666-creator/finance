@@ -510,14 +510,17 @@ async def ai_question_entry(c: CallbackQuery, state: FSMContext, db: aiosqlite.C
 
 @router.message(AiConsultantFlow.waiting_question, F.text)
 async def ai_question_answer(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    from app.db.connection import get_db
     question = (m.text or "").strip()
-    lang = await get_lang(db, m.from_user.id)
-    if len(question) < 6:
-        await m.answer(_ai_t(lang, "question_too_short"), parse_mode=PARSE_MODE)
-        return
-    tz_name = await get_timezone(db, m.from_user.id)
-    goal = await get_financial_goal(db, m.from_user.id)
-    context = await build_ai_context(db, m.from_user.id, tz_name, "month", goal)
+    
+    async with get_db() as db_session:
+        lang = await get_lang(db_session, m.from_user.id)
+        if len(question) < 6:
+            await m.answer(_ai_t(lang, "question_too_short"), parse_mode=PARSE_MODE)
+            return
+        tz_name = await get_timezone(db_session, m.from_user.id)
+        goal = await get_financial_goal(db_session, m.from_user.id)
+        context = await build_ai_context(db_session, m.from_user.id, tz_name, "month", goal)
     
     # Извлекаем историю диалога из FSM
     state_data = await state.get_data()
@@ -537,18 +540,21 @@ async def ai_question_answer(m: Message, state: FSMContext, db: aiosqlite.Connec
 
 @router.callback_query(F.data.startswith("ai:period:"))
 async def ai_generate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    from app.db.connection import get_db
     kind = c.data.split(":")[-1]
-    goal = await get_financial_goal(db, c.from_user.id)
-    lang = await get_lang(db, c.from_user.id)
-    if not goal:
-        await ai_goal_edit(c, state, db)
-        return
+    
+    async with get_db() as db_session:
+        goal = await get_financial_goal(db_session, c.from_user.id)
+        lang = await get_lang(db_session, c.from_user.id)
+        if not goal:
+            await ai_goal_edit(c, state, db_session)
+            return
 
-    used, month = await _ensure_limit(db, c.from_user.id)
-    if used >= AI_MONTHLY_LIMIT:
-        await _open_menu(c, state, db)
-        await c.answer(_ai_t(lang, "limit_reached"), show_alert=True)
-        return
+        used, month = await _ensure_limit(db_session, c.from_user.id)
+        if used >= AI_MONTHLY_LIMIT:
+            await _open_menu(c, state, db_session)
+            await c.answer(_ai_t(lang, "limit_reached"), show_alert=True)
+            return
 
     await state.update_data(ui_scope="ai_consultant")
     await _animate_loading(c, state, [
@@ -557,13 +563,16 @@ async def ai_generate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
         _ai_t(lang, "loading_3"),
     ])
 
-    tz_name = await get_timezone(db, c.from_user.id)
-    context = await build_ai_context(db, c.from_user.id, tz_name, kind, goal)
+    async with get_db() as db_session:
+        tz_name = await get_timezone(db_session, c.from_user.id)
+        context = await build_ai_context(db_session, c.from_user.id, tz_name, kind, goal)
+    
     report_text, download_text = await render_final_ai_report(context)
 
     if (context.get("data_quality") or {}).get("sufficient_for_deep_report"):
-        await set_ai_usage(db, c.from_user.id, used + 1, month, _now_iso())
-        await db.commit()
+        async with get_db() as db_session:
+            await set_ai_usage(db_session, c.from_user.id, used + 1, month, _now_iso())
+            await db_session.commit()
 
     await state.update_data(last_ai_report_text=download_text, last_ai_kind=kind)
     can_download = bool((context.get("data_quality") or {}).get("sufficient_for_deep_report"))

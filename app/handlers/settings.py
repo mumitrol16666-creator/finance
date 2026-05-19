@@ -61,6 +61,7 @@ from app.ui.keyboards import (
     lang_kb,
     account_currency_kb,
     account_type_kb,
+    account_limit_reached_kb,
 )
 
 router = Router()
@@ -1034,6 +1035,39 @@ async def st_acc_balance_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite
 async def st_acc_add(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     await neutralize_keyboard(c)
     lang = await get_lang(db, c.from_user.id)
+    
+    from app.domain.services.access_service import get_user_context
+    ctx = await get_user_context(db, c.from_user.id)
+    if not ctx.full_access:
+        active_count = await count_accounts(db, c.from_user.id)
+        if active_count >= 2:
+            if lang == "en":
+                txt = (
+                    "⚠️ <b>Limit reached</b>\n\n"
+                    "In the free version, you can have a maximum of <b>2 active accounts</b>.\n\n"
+                    "To create more accounts and unlock all features, please upgrade to <b>Full Access</b>."
+                )
+            elif lang == "kk":
+                txt = (
+                    "⚠️ <b>Шектеуге жеттіңіз</b>\n\n"
+                    "Тегін нұсқада ең көп дегенде <b>2 белсенді шот</b> болуы мүмкін.\n\n"
+                    "Көбірек шоттар ашу және барлық функцияларды пайдалану үшін <b>Толық қолжетімділікті</b> іске қосыңыз."
+                )
+            else:
+                txt = (
+                    "⚠️ <b>Достигнут лимит счетов</b>\n\n"
+                    "В бесплатной версии доступно не более <b>2 активных счетов</b>.\n\n"
+                    "Чтобы создавать больше счетов и разблокировать все функции, пожалуйста, перейди на <b>Полный доступ</b>."
+                )
+            
+            from app.config.settings import settings
+            price = int(getattr(settings, "full_access_stars_price", 150))
+            
+            await state.update_data(settings_return_to="accounts_menu", ui_scope=SETTINGS_SCOPE)
+            await _render_screen(c, state, txt, reply_markup=account_limit_reached_kb(lang, price))
+            await c.answer()
+            return
+
     await _enter_input_mode(
         c,
         state,
@@ -1460,6 +1494,40 @@ async def st_acc_archived_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
 async def st_acc_restore(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     await neutralize_keyboard(c)
     acc_id = int(c.data.split(":")[-1])
+    lang = await get_lang(db, c.from_user.id)
+
+    from app.domain.services.access_service import get_user_context
+    ctx = await get_user_context(db, c.from_user.id)
+    if not ctx.full_access:
+        active_count = await count_accounts(db, c.from_user.id)
+        if active_count >= 2:
+            if lang == "en":
+                txt = (
+                    "⚠️ <b>Limit reached</b>\n\n"
+                    "In the free version, you can have a maximum of <b>2 active accounts</b>.\n\n"
+                    "To restore this account, please upgrade to <b>Full Access</b>."
+                )
+            elif lang == "kk":
+                txt = (
+                    "⚠️ <b>Шектеуге жеттіңіз</b>\n\n"
+                    "Тегін нұсқада ең көп дегенде <b>2 белсенді шот</b> болуы мүмкін.\n\n"
+                    "Бұл шотты қалпына келтіру үшін <b>Толық қолжетімділікті</b> іске қосыңыз."
+                )
+            else:
+                txt = (
+                    "⚠️ <b>Достигнут лимит счетов</b>\n\n"
+                    "В бесплатной версии доступно не более <b>2 активных счетов</b>.\n\n"
+                    "Чтобы восстановить этот счёт, пожалуйста, перейди на <b>Полный доступ</b>."
+                )
+            
+            from app.config.settings import settings
+            price = int(getattr(settings, "full_access_stars_price", 150))
+            
+            await state.update_data(settings_return_to="accounts_menu", ui_scope=SETTINGS_SCOPE)
+            await _render_screen(c, state, txt, reply_markup=account_limit_reached_kb(lang, price))
+            await c.answer()
+            return
+
     try:
         await restore_account(db, c.from_user.id, acc_id, now_iso())
         await db.commit()
@@ -1470,12 +1538,11 @@ async def st_acc_restore(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conn
                 "ru": "Нельзя восстановить: среди активных уже есть счёт с таким названием.",
                 "en": "Cannot restore: an active account with this name already exists.",
                 "kk": "Қалпына келтіру мүмкін емес: осындай атаумен белсенді шот бар.",
-            }.get(await get_lang(db, c.from_user.id))
+            }.get(lang)
             await c.answer(msg, show_alert=True)
             return
         raise
 
-    lang = await get_lang(db, c.from_user.id)
     msg = {
         "ru": "♻️ <b>Счёт восстановлен</b>",
         "en": "♻️ <b>Account restored</b>",

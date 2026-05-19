@@ -9,7 +9,7 @@ from app.db.connection import open_db
 from app.db.migrate import run_migrations
 from app.handlers import get_routers
 from app.logging.setup import setup_logging
-from app.middlewares import ThrottlingMiddleware
+from app.middlewares import ThrottlingMiddleware, DbSessionMiddleware
 from app.middlewares.access import AccessContextMiddleware
 from app.middlewares.fsm_escape import FsmEscapeMiddleware
 from app.middlewares_notification_quiet import NotificationQuietMiddleware
@@ -67,6 +67,9 @@ async def main():
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher(events_isolation=SimpleEventIsolation())
 
+    # Open db connection per update
+    dp.update.outer_middleware(DbSessionMiddleware())
+
     # Anti-double-tap on inline buttons (see audit 1.3) and noise suppression
     # for scheduled notifications while the user is actively chatting.
     throttling = ThrottlingMiddleware(rate=0.7)
@@ -87,13 +90,21 @@ async def main():
 
     await _set_bot_commands(bot)
 
-    db = await open_db(settings.db_path)
+    # Initialize WAL mode once at startup
+    import aiosqlite
+    from pathlib import Path
+    Path(settings.db_path).parent.mkdir(parents=True, exist_ok=True)
+    async with aiosqlite.connect(settings.db_path) as startup_db:
+        await startup_db.execute("PRAGMA journal_mode = WAL;")
+        await startup_db.execute("PRAGMA synchronous = NORMAL;")
 
-    # migrations
-    await run_migrations(db)
+    # Run migrations on startup
+    from app.db.connection import get_db
+    async with get_db() as db:
+        await run_migrations(db)
 
     # scheduler
-    scheduler = setup_notify_scheduler(bot, db)
+    scheduler = setup_notify_scheduler(bot)
     scheduler.start()
 
     for r in get_routers():
@@ -101,13 +112,12 @@ async def main():
 
     logger.info("Bot started")
     try:
-        await dp.start_polling(bot, db=db)
+        await dp.start_polling(bot)
     finally:
         try:
             scheduler.shutdown(wait=False)
         except Exception:
             pass
-        await db.close()
         await bot.session.close()
 
 

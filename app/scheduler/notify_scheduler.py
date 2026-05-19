@@ -531,6 +531,189 @@ def _today_snapshot_prefix(
     return "\n".join(lines)
 
 
+async def tick_notify(bot):
+    from app.db.connection import get_db
+    now_utc = datetime.now(timezone.utc)
+    window = timedelta(seconds=70)
+
+    async with get_db() as db:
+        targets = await list_notify_targets(db)
+        for (
+                user_id,
+                currency,
+                tz_name,
+                lang,
+                daily_enabled,
+                hhmm,
+                last_sent,
+                pre_last_sent,
+                nudge_enabled,
+                nudge_interval_min,
+                nudge_last_sent_at,
+                debts_enabled,
+                debts_days_before,
+                inc_enabled,
+                inc_days,
+                exp_enabled,
+                exp_days,
+
+        ) in targets:
+            try:
+                uid = int(user_id)
+                tz, tz_norm = _safe_tz(str(tz_name or "UTC"))
+
+                local_now = now_utc.astimezone(tz)
+                local_date = local_now.date().isoformat()
+
+                start_utc, end_utc, _, _ = _day_bounds_utc(now_utc, tz_norm)
+
+                rep_h, rep_m = _parse_hhmm(str(hhmm or "21:00"))
+                report_local = local_now.replace(hour=rep_h, minute=rep_m, second=0, microsecond=0)
+                pre_local = report_local - timedelta(hours=1)
+
+                await _send_recurring_reminders(
+                    bot, db, uid, str(currency or "KZT"), tz_norm, str(lang or "ru"), now_utc,
+                    int(inc_enabled or 1), int(inc_days or 0),
+                    int(exp_enabled or 1), int(exp_days or 1)
+                )
+
+                if int(debts_enabled or 0) == 1:
+                    try:
+                        await _send_debt_reminders(
+                            bot, db, uid,
+                            str(currency or "KZT"),
+                            tz_norm,
+                            str(lang or "ru"),
+                            int(debts_days_before or 3),
+                            now_utc,
+                        )
+                    except Exception as e:
+                        logger.warning(f"debt reminders failed uid={uid}: {e}")
+
+                # ---------------- NUDGES ----------------
+                if int(nudge_enabled or 0) == 1:
+                    interval = int(nudge_interval_min or 180)
+                    nudge_end = report_local - timedelta(hours=1)
+                    end_cap = local_now.replace(hour=22, minute=0, second=0, microsecond=0)
+                    if nudge_end > end_cap:
+                        nudge_end = end_cap
+                    nudge_start = local_now.replace(hour=NUDGE_START_HH, minute=0, second=0, microsecond=0)
+
+                    in_nudge_window = nudge_start <= local_now <= nudge_end
+
+                    should_send = False
+                    if in_nudge_window and not _is_suppressed(uid):
+                        if not nudge_last_sent_at:
+                            should_send = True
+                        else:
+                            try:
+                                last_dt = datetime.fromisoformat(str(nudge_last_sent_at))
+                                if last_dt.tzinfo is None:
+                                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                            except Exception:
+                                last_dt = None
+
+                            morning_anchor = local_now.replace(hour=9, minute=0, second=0, microsecond=0)
+                            morning_due = morning_anchor <= local_now < (morning_anchor + window)
+                            already_sent_today = last_dt is not None and last_dt.astimezone(tz).date() == local_now.date()
+
+                            if morning_due and not already_sent_today:
+                                should_send = True
+                            elif last_dt is None or (now_utc - last_dt >= timedelta(minutes=interval)):
+                                should_send = True
+
+                    if should_send:
+                        income, expense, cnt_today = await report_period(db, uid, start_utc, end_utc)
+                        nudge_body = _build_nudge_text(uid, local_now, cnt_today)
+                        cur = str(currency or "KZT")
+                        lng = str(lang or "ru")
+                        if int(local_now.hour) >= 11:
+                          snap = _today_snapshot_prefix(
+                              lng,
+                              cnt=cnt_today,
+                              income=income,
+                              expense_raw=expense,
+                              currency=cur,
+                          )
+                          nudge_text = snap + nudge_body
+                          await _send_safe(bot, uid, nudge_text, parse_mode="HTML")
+                        else:
+                          await _send_safe(bot, uid, nudge_body)
+
+                        await mark_nudge_sent(db, uid, _iso(now_utc))
+
+                # ---------------- PRE + DAILY REPORT ----------------
+                if int(daily_enabled or 0) == 1:
+                    # PRE
+                    if (pre_last_sent or "") != local_date and _in_window(local_now, pre_local, window):
+                        income, expense, cnt_today = await report_period(db, uid, start_utc, end_utc)
+                        cur = str(currency or "KZT")
+                        lng = str(lang or "ru")
+                        snap = _today_snapshot_prefix(
+                            lng,
+                            cnt=cnt_today,
+                            income=income,
+                            expense_raw=expense,
+                            currency=cur,
+                        )
+                        pre_body = _build_pre_text(uid, local_now, cnt_today)
+                        pre_text = snap + pre_body
+
+                        await _send_safe(bot, uid, pre_text, parse_mode="HTML")
+                        await mark_daily_pre_sent(db, uid, local_date, _iso(now_utc))
+
+                    # REPORT
+                    if (last_sent or "") != local_date and _in_window(local_now, report_local, window):
+                        text = await _build_daily_text(db, uid, str(currency or "KZT"), tz_norm, now_utc, str(lang or "ru"))
+                        # Add Menu button to Daily Report?
+                        kb = InlineKeyboardBuilder()
+                        kb.button(text="🏠 Меню" if lang=="ru" else ("🏠 Menu" if lang=="en" else "🏠 Мәзір"), callback_data="hub:main")
+                        await bot.send_message(uid, text, reply_markup=kb.as_markup(), parse_mode="HTML")
+                        await mark_daily_sent(db, uid, local_date, _iso(now_utc))
+
+            except Exception as e:
+                logger.exception(f"notify tick failed uid={user_id}: {e}")
+                continue
+
+        await db.commit()
+
+
+async def db_maintenance():
+    from app.db.connection import get_db
+    logger.info("Starting SQLite maintenance (WAL checkpoint)...")
+    try:
+        async with get_db() as db:
+            await db.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        logger.info("SQLite maintenance completed successfully.")
+    except Exception as e:
+        logger.warning(f"SQLite maintenance failed: {e}")
+
+
+def setup_notify_scheduler(bot) -> AsyncIOScheduler:
+    sch = AsyncIOScheduler(timezone="UTC")
+    sch.add_job(
+        tick_notify,
+        CronTrigger(second=0),
+        args=(bot,),
+        id="notify:tick",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
+    )
+    # Daily database maintenance at 03:00 AM UTC
+    sch.add_job(
+        db_maintenance,
+        CronTrigger(hour=3, minute=0),
+        id="db:maintenance",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+    return sch
+
+
 def _day_bounds_utc(now_utc: datetime, tz_name: str) -> tuple[datetime, datetime, str, str]:
     tz, tz_norm = _safe_tz(tz_name)
     local_now = now_utc.astimezone(tz)
@@ -896,161 +1079,4 @@ async def _build_daily_text(
 
     return "\n".join(lines)
 
-async def tick_notify(bot, db: aiosqlite.Connection):
-    now_utc = datetime.now(timezone.utc)
-    window = timedelta(seconds=70)
 
-    targets = await list_notify_targets(db)
-    for (
-            user_id,
-            currency,
-            tz_name,
-            lang,
-            daily_enabled,
-            hhmm,
-            last_sent,
-            pre_last_sent,
-            nudge_enabled,
-            nudge_interval_min,
-            nudge_last_sent_at,
-            debts_enabled,
-            debts_days_before,
-            inc_enabled,
-            inc_days,
-            exp_enabled,
-            exp_days,
-
-    ) in targets:
-        try:
-            uid = int(user_id)
-            tz, tz_norm = _safe_tz(str(tz_name or "UTC"))
-
-            local_now = now_utc.astimezone(tz)
-            local_date = local_now.date().isoformat()
-
-            start_utc, end_utc, _, _ = _day_bounds_utc(now_utc, tz_norm)
-
-            rep_h, rep_m = _parse_hhmm(str(hhmm or "21:00"))
-            report_local = local_now.replace(hour=rep_h, minute=rep_m, second=0, microsecond=0)
-            pre_local = report_local - timedelta(hours=1)
-
-            await _send_recurring_reminders(
-                bot, db, uid, str(currency or "KZT"), tz_norm, str(lang or "ru"), now_utc,
-                int(inc_enabled or 1), int(inc_days or 0),
-                int(exp_enabled or 1), int(exp_days or 1)
-            )
-
-            if int(debts_enabled or 0) == 1:
-                try:
-                    await _send_debt_reminders(
-                        bot, db, uid,
-                        str(currency or "KZT"),
-                        tz_norm,
-                        str(lang or "ru"),
-                        int(debts_days_before or 3),
-                        now_utc,
-                    )
-                except Exception as e:
-                    logger.warning(f"debt reminders failed uid={uid}: {e}")
-
-            # ---------------- NUDGES ----------------
-            if int(nudge_enabled or 0) == 1:
-                interval = int(nudge_interval_min or 180)
-                nudge_end = report_local - timedelta(hours=1)
-                end_cap = local_now.replace(hour=22, minute=0, second=0, microsecond=0)
-                if nudge_end > end_cap:
-                    nudge_end = end_cap
-                nudge_start = local_now.replace(hour=NUDGE_START_HH, minute=0, second=0, microsecond=0)
-
-                in_nudge_window = nudge_start <= local_now <= nudge_end
-
-                should_send = False
-                if in_nudge_window and not _is_suppressed(uid):
-                    if not nudge_last_sent_at:
-                        should_send = True
-                    else:
-                        try:
-                            last_dt = datetime.fromisoformat(str(nudge_last_sent_at))
-                            if last_dt.tzinfo is None:
-                                last_dt = last_dt.replace(tzinfo=timezone.utc)
-                        except Exception:
-                            last_dt = None
-
-                        morning_anchor = local_now.replace(hour=9, minute=0, second=0, microsecond=0)
-                        morning_due = morning_anchor <= local_now < (morning_anchor + window)
-                        already_sent_today = last_dt is not None and last_dt.astimezone(tz).date() == local_now.date()
-
-                        if morning_due and not already_sent_today:
-                            should_send = True
-                        elif last_dt is None or (now_utc - last_dt >= timedelta(minutes=interval)):
-                            should_send = True
-
-                if should_send:
-                    income, expense, cnt_today = await report_period(db, uid, start_utc, end_utc)
-                    nudge_body = _build_nudge_text(uid, local_now, cnt_today)
-                    cur = str(currency or "KZT")
-                    lng = str(lang or "ru")
-                    if int(local_now.hour) >= 11:
-                        snap = _today_snapshot_prefix(
-                            lng,
-                            cnt=cnt_today,
-                            income=income,
-                            expense_raw=expense,
-                            currency=cur,
-                        )
-                        nudge_text = snap + nudge_body
-                        await _send_safe(bot, uid, nudge_text, parse_mode="HTML")
-                    else:
-                        await _send_safe(bot, uid, nudge_body)
-
-                    await mark_nudge_sent(db, uid, _iso(now_utc))
-
-            # ---------------- PRE + DAILY REPORT ----------------
-            if int(daily_enabled or 0) == 1:
-                # PRE
-                if (pre_last_sent or "") != local_date and _in_window(local_now, pre_local, window):
-                    income, expense, cnt_today = await report_period(db, uid, start_utc, end_utc)
-                    cur = str(currency or "KZT")
-                    lng = str(lang or "ru")
-                    snap = _today_snapshot_prefix(
-                        lng,
-                        cnt=cnt_today,
-                        income=income,
-                        expense_raw=expense,
-                        currency=cur,
-                    )
-                    pre_body = _build_pre_text(uid, local_now, cnt_today)
-                    pre_text = snap + pre_body
-
-                    await _send_safe(bot, uid, pre_text, parse_mode="HTML")
-                    await mark_daily_pre_sent(db, uid, local_date, _iso(now_utc))
-
-                # REPORT
-                if (last_sent or "") != local_date and _in_window(local_now, report_local, window):
-                    text = await _build_daily_text(db, uid, str(currency or "KZT"), tz_norm, now_utc, str(lang or "ru"))
-                    # Add Menu button to Daily Report?
-                    kb = InlineKeyboardBuilder()
-                    kb.button(text="🏠 Меню" if lang=="ru" else ("🏠 Menu" if lang=="en" else "🏠 Мәзір"), callback_data="hub:main")
-                    await bot.send_message(uid, text, reply_markup=kb.as_markup(), parse_mode="HTML")
-                    await mark_daily_sent(db, uid, local_date, _iso(now_utc))
-
-        except Exception as e:
-            logger.exception(f"notify tick failed uid={user_id}: {e}")
-            continue
-
-    await db.commit()
-
-
-def setup_notify_scheduler(bot, db: aiosqlite.Connection) -> AsyncIOScheduler:
-    sch = AsyncIOScheduler(timezone="UTC")
-    sch.add_job(
-        tick_notify,
-        CronTrigger(second=0),
-        args=(bot, db),
-        id="notify:tick",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=30,
-    )
-    return sch
