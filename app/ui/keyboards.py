@@ -367,15 +367,15 @@ def lang_kb(back_cb: str | None = None, lang: str = "ru") -> InlineKeyboardMarku
 
 def reports_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    # Row 1: Period details
-    kb.button(text=t(lang, "BTN_MONTH"), callback_data="rp:view:month:0")
+    # Row 1: Period reports
     kb.button(text=t(lang, "BTN_TODAY"), callback_data="rp:view:day:0")
-    # Row 2: History and Streak
-    kb.button(text=t(lang, "BTN_HISTORY"), callback_data="more:history")
+    kb.button(text=t(lang, "BTN_WEEK"), callback_data="rp:view:week:0")
+    kb.button(text=t(lang, "BTN_MONTH"), callback_data="rp:view:month:0")
+    # Row 2: Streak
     kb.button(text=t(lang, "BTN_STREAK"), callback_data="rp:streak")
-    # Row 3: AI Report
+    # Row 3: AI Consultant
     kb.button(text=t(lang, "BTN_AI_REPORT"), callback_data="ai:open")
-    kb.adjust(2, 2, 1)
+    kb.adjust(3, 1, 1)
     return kb.as_markup()
 
 
@@ -619,13 +619,29 @@ def debt_reminders_settings_kb(enabled: int, days_before: int, lang: str = "ru")
 
 def ai_consultant_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    kb.button(text=t(lang, "AI_CHAT_START"), callback_data="ai:chat:start")
     kb.button(text=t(lang, "AI_REPORT_START"), callback_data="ai:report:start")
-    kb.button(text=t(lang, "AI_ASK"), callback_data="ai:question")
-    kb.button(text=t(lang, "AI_CLARIFY"), callback_data="ai:clarify")
     kb.button(text=t(lang, "AI_EDIT_GOAL"), callback_data="ai:goal:edit")
+    kb.button(text=t(lang, "AI_CLARIFY"), callback_data="ai:clarify")
     kb.button(text=t(lang, "AI_BACK"), callback_data="ai:back")
-    kb.button(text=t(lang, "BTN_RETURN_TO_MAIN_MENU"), callback_data="rp:to_menu")
-    kb.adjust(1, 1, 1, 1, 1, 1)
+    kb.adjust(1, 1, 1, 1, 1)
+    return kb.as_markup()
+
+
+def ai_chat_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text=t(lang, "AI_CHAT_NEW_TOPIC"), callback_data="ai:chat:reset")
+    kb.button(text=t(lang, "AI_CHAT_REPORT"), callback_data="ai:report:start")
+    kb.button(text=t(lang, "AI_CHAT_EXIT"), callback_data="ai:chat:exit")
+    kb.adjust(2, 1)
+    return kb.as_markup()
+
+
+def ai_chat_limit_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text=t(lang, "AI_CHAT_BUY_MORE"), callback_data="ai:chat:buy")
+    kb.button(text=t(lang, "AI_BACK_TO_AI"), callback_data="ai:menu")
+    kb.adjust(1, 1)
     return kb.as_markup()
 
 
@@ -643,21 +659,9 @@ def ai_report_actions_kb(lang: str = "ru", *, can_download: bool = True) -> Inli
     kb = InlineKeyboardBuilder()
     if can_download:
         kb.button(text=t(lang, "AI_DOWNLOAD"), callback_data="ai:download")
-    kb.button(text=t(lang, "AI_ASK_AFTER_REPORT"), callback_data="ai:question")
-    kb.button(text=t(lang, "AI_IMPROVE_AFTER_REPORT"), callback_data="ai:clarify")
+    kb.button(text=t(lang, "AI_CHAT_START"), callback_data="ai:chat:start")
     kb.button(text=t(lang, "AI_NEW_REPORT"), callback_data="ai:report:start")
     kb.button(text=t(lang, "AI_BACK_TO_AI"), callback_data="ai:menu")
-    kb.button(text=t(lang, "BTN_RETURN_TO_MAIN_MENU"), callback_data="rp:to_menu")
-    kb.adjust(1, 1, 1, 1, 1, 1)
-    return kb.as_markup()
-
-
-def ai_question_actions_kb(lang: str = "ru") -> InlineKeyboardMarkup:
-    kb = InlineKeyboardBuilder()
-    kb.button(text=t(lang, "AI_ASK_ANOTHER"), callback_data="ai:question")
-    kb.button(text=t(lang, "AI_REPORT_START"), callback_data="ai:report:start")
-    kb.button(text=t(lang, "AI_BACK_TO_AI"), callback_data="ai:menu")
-    kb.button(text=t(lang, "BTN_RETURN_TO_MAIN_MENU"), callback_data="rp:to_menu")
     kb.adjust(1, 1, 1, 1)
     return kb.as_markup()
 
