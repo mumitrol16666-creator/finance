@@ -83,10 +83,19 @@ async def create_account(db: aiosqlite.Connection, user_id: int, name: str, bala
             "kk": "Бастапқы баланс",
         }.get(lang, "Стартовый баланс")
         
+        category_id = None
+        try:
+            from app.db.repositories.categories_repo import find_category_by_name_ci
+            cat_row = await find_category_by_name_ci(db, user_id, tx_type, "Прочее")
+            if cat_row:
+                category_id = cat_row[0]
+        except Exception:
+            pass
+            
         await db.execute(
             "INSERT INTO transactions(user_id, ts, type, amount, account_id, category_id, note, created_at) "
-            "VALUES(?,?,?,?,?,NULL,?,?)",
-            (user_id, ts, tx_type, balance, acc_id, note, ts),
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (user_id, ts, tx_type, balance, acc_id, category_id, note, ts),
         )
 
     return acc_id, 'created'
