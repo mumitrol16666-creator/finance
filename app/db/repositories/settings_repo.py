@@ -175,3 +175,27 @@ async def update_recurring_exp_settings(db: aiosqlite.Connection, user_id: int, 
         "UPDATE settings SET recurring_exp_enabled=?, recurring_exp_days=?, updated_at=? WHERE user_id=?",
         (int(enabled), int(days), updated_at, user_id),
     )
+
+
+async def get_ai_chat_usage(db: aiosqlite.Connection, user_id: int) -> tuple[int, str | None, int]:
+    """Returns (used, month, extra_purchased)."""
+    cur = await db.execute("SELECT ai_chat_used, ai_chat_month, ai_chat_extra FROM settings WHERE user_id=?", (user_id,))
+    row = await cur.fetchone()
+    if not row:
+        return 0, None, 0
+    return int(row[0] or 0), (str(row[1]) if row[1] else None), int(row[2] or 0)
+
+
+async def set_ai_chat_usage(db: aiosqlite.Connection, user_id: int, used: int, month: str | None, updated_at: str):
+    await db.execute(
+        "UPDATE settings SET ai_chat_used=?, ai_chat_month=?, updated_at=? WHERE user_id=?",
+        (int(used), month, updated_at, user_id),
+    )
+
+
+async def add_ai_chat_extra(db: aiosqlite.Connection, user_id: int, extra: int, updated_at: str):
+    """Add purchased extra chat messages."""
+    await db.execute(
+        "UPDATE settings SET ai_chat_extra = ai_chat_extra + ?, updated_at=? WHERE user_id=?",
+        (int(extra), updated_at, user_id),
+    )

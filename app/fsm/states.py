@@ -71,6 +71,7 @@ class AiConsultantFlow(StatesGroup):
     waiting_goal = State()
     waiting_question = State()
     waiting_context_note = State()
+    ai_chatting = State()
 
 
 class RecurringExpenseFlow(StatesGroup):

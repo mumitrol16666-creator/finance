@@ -655,7 +655,7 @@ async def upgrade_activate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
 
 @router.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
-    if pre_checkout_query.invoice_payload == "full_access_upgrade":
+    if pre_checkout_query.invoice_payload in {"full_access_upgrade", "ai_chat_extra_messages"}:
         await pre_checkout_query.answer(ok=True)
     else:
         await pre_checkout_query.answer(ok=False, error_message="Unknown payment type")
@@ -665,6 +665,24 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
 async def process_successful_payment(m: Message, state: FSMContext, db: aiosqlite.Connection):
     lang = await get_lang(db, m.from_user.id)
     payload = m.successful_payment.invoice_payload
+
+    if payload == "ai_chat_extra_messages":
+        from app.db.repositories.settings_repo import add_ai_chat_extra
+        from datetime import datetime as _dt, timezone as _tz
+        try:
+            await add_ai_chat_extra(db, m.from_user.id, 50, _dt.now(_tz.utc).isoformat())
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            await m.answer("⚠️ Error adding messages." if lang == "en" else ("⚠️ Хабарлама қосу қатесі." if lang == "kk" else "⚠️ Ошибка при добавлении сообщений."))
+            return
+        success = {
+            "ru": "✅ <b>+50 сообщений добавлено!</b>\n\nМожешь продолжить общение с AI.",
+            "en": "✅ <b>+50 messages added!</b>\n\nYou can continue chatting with AI.",
+            "kk": "✅ <b>+50 хабарлама қосылды!</b>\n\nAI-мен сөйлесуді жалғастыра аласыз.",
+        }.get(lang, "✅ <b>+50 сообщений добавлено!</b>")
+        await m.answer(success, parse_mode="HTML")
+        return
 
     if payload != "full_access_upgrade":
         return
