@@ -95,14 +95,16 @@ SYSTEM_PROMPT_QUESTION = """
 Ты — финансовый AI-консультант в Telegram-боте. Пользователь общается с тобой в режиме чата.
 
 ГЛАВНОЕ ПРАВИЛО: Будь КРАТКИМ. Максимум 3-5 предложений на ответ. Никаких эссе.
+В контексте тебе передан список последних транзакций пользователя ("recent_transactions").
+Используй его, чтобы отвечать на конкретные вопросы о тратах (например, "на что я тратил", "сколько ушло на продукты", "какой средний чек"). 
 
 Формат ответа:
-- 1-2 предложения: факт из данных
+- 1-2 предложения: факт из данных (ссылайся на конкретные транзакции, заметки или категории, если пользователь спросил о них)
 - 1 предложение: вывод
 - 1 предложение: конкретный совет (если уместно)
 
 Правила:
-- отвечай только на базе переданного финансового контекста
+- отвечай только на базе переданного финансового контекста и транзакций
 - если данных недостаточно — скажи прямо в 1 предложении
 - не выдумывай цифры, сроки, мотивы
 - не повторяй вопрос пользователя
@@ -143,12 +145,25 @@ def _build_payload(context: dict[str, Any]) -> dict[str, Any]:
     current = context["current"]
     previous = context["previous"]
     month = context["month"]
+    
+    tx_list = []
+    if "current_rows" in context and context["current_rows"]:
+        for r in context["current_rows"][-60:]:
+            tx_list.append({
+                "date": r["ts"][:10] if r["ts"] else "",
+                "type": r["type"],
+                "amount": abs(int(r["amount"] or 0)),
+                "category": r["category_name"],
+                "note": r["note"]
+            })
+
     payload = {
         "goal_text": context.get("goal_text"),
         "goal_amount": context.get("goal_amount"),
         "currency": context.get("currency") or "KZT",
         "period": meta.kind,
         "period_title": meta.title,
+        "recent_transactions": tx_list,
         "data_quality": context.get("data_quality") or {},
         "clarification_note": (context.get("clarification_note") or {}).get("content"),
         "current": {

@@ -107,25 +107,41 @@ def build_period_meta(kind: str, tz_name: str, now_utc: datetime | None = None) 
         prev_start = start - timedelta(days=7)
         prev_end = start
     else:
-        start, end, _label, _ = month_bounds_utc(tz_name, now_utc)
-        local_start = start.astimezone(tz)
-        py, pm = (local_start.year - 1, 12) if local_start.month == 1 else (local_start.year, local_start.month - 1)
-        prev_local_start = datetime(py, pm, 1, 0, 0, 0, tzinfo=tz)
-        if pm == 12:
-            prev_local_end = datetime(py + 1, 1, 1, 0, 0, 0, tzinfo=tz)
+        local_now = now_utc.astimezone(tz)
+        if local_now.day < 15:
+            # First half of the month: use rolling 30 days to avoid empty reports
+            start = now_utc - timedelta(days=30)
+            end = now_utc
+            prev_start = now_utc - timedelta(days=60)
+            prev_end = now_utc - timedelta(days=30)
         else:
-            prev_local_end = datetime(py, pm + 1, 1, 0, 0, 0, tzinfo=tz)
-        prev_start = prev_local_start.astimezone(timezone.utc)
-        prev_end = prev_local_end.astimezone(timezone.utc)
+            # Second half of the month: use calendar month
+            start, end, _label, _ = month_bounds_utc(tz_name, now_utc)
+            local_start = start.astimezone(tz)
+            py, pm = (local_start.year - 1, 12) if local_start.month == 1 else (local_start.year, local_start.month - 1)
+            prev_local_start = datetime(py, pm, 1, 0, 0, 0, tzinfo=tz)
+            if pm == 12:
+                prev_local_end = datetime(py + 1, 1, 1, 0, 0, 0, tzinfo=tz)
+            else:
+                prev_local_end = datetime(py, pm + 1, 1, 0, 0, 0, tzinfo=tz)
+            prev_start = prev_local_start.astimezone(timezone.utc)
+            prev_end = prev_local_end.astimezone(timezone.utc)
 
     month_start, month_end, _month_label, _ = month_bounds_utc(tz_name, now_utc)
     local_now = now_utc.astimezone(tz)
-    month_days_elapsed = max(1, local_now.day)
-    month_days_total = calendar.monthrange(local_now.year, local_now.month)[1]
+    
+    if kind == "month" and local_now.day < 15:
+        month_days_elapsed = 30
+        month_days_total = 30
+        title = "за последние 30 дней"
+    else:
+        month_days_elapsed = max(1, local_now.day)
+        month_days_total = calendar.monthrange(local_now.year, local_now.month)[1]
+        title = _kind_title(kind)
 
     return PeriodMeta(
         kind=kind,
-        title=_kind_title(kind),
+        title=title,
         start=start,
         end=end,
         prev_start=prev_start,
@@ -853,21 +869,27 @@ def _build_data_quality(kind: str, current_metrics: dict, previous_metrics: dict
     expense_count = month_metrics["expense_count"] if kind == "month" else current_metrics["expense_count"]
     categories_count = month_metrics["expense_categories_count"] if kind == "month" else current_metrics["expense_categories_count"]
 
-    if active_days < 21:
+    # Dynamic criteria depending on period type
+    min_active_days = 5 if kind == "month" else (2 if kind == "week" else 1)
+    min_tx_count = 8 if kind == "month" else (3 if kind == "week" else 1)
+
+    if active_days < min_active_days:
         blockers.append(f"мало активных дней для глубокого анализа: {active_days}")
-        recommendations.append("Продолжай вести учет! AI-отчет станет доступен после 21 дня активного ведения, чтобы анализ был максимально точным и без догадок.")
-    if tx_count < 30:
+        recommendations.append(f"Вести учет активнее (хотя бы {min_active_days} дн. с транзакциями за период)")
+    if tx_count < min_tx_count:
         blockers.append(f"недостаточно операций для статистики: {tx_count}")
-        recommendations.append("для качественного разбора нужно хотя бы 30-40 записей, чтобы увидеть реальные паттерны трат")
-    if income_count == 0:
-        blockers.append("нет занесённых доходов за базовый период")
-        recommendations.append("заноси все реальные доходы, иначе свободный остаток и прогноз искажаются")
+        recommendations.append(f"Занести хотя бы {min_tx_count} операций за выбранный период")
     if expense_count == 0:
-        blockers.append("нет занесённых расходов за базовый период")
-        recommendations.append("без расходов AI не видит структуру трат и не может искать утечки")
-    if categories_count < 3 and expense_count > 0:
-        blockers.append(f"слишком узкая картина по категориям: {categories_count}")
-        recommendations.append("раскидай расходы хотя бы по нескольким категориям, иначе анализ будет плоским")
+        blockers.append("нет занесённых расходов за период")
+        recommendations.append("Занести расходы, чтобы AI увидел структуру ваших трат")
+
+    # Warnings instead of blockers for incomes and categories count
+    if income_count == 0:
+        warnings.append("нет занесённых доходов за базовый период")
+        recommendations.append("Заноси все реальные доходы, иначе свободный остаток и прогноз искажаются")
+    if categories_count < 2 and expense_count > 0:
+        warnings.append("всего одна категория расходов — анализ структуры трат будет плоским")
+        recommendations.append("Распределяйте траты по разным категориям (например: Еда, Транспорт, Развлечения)")
 
     sufficient_for_compare = previous_metrics["active_days"] >= 8 and previous_metrics["tx_count"] >= 12 and previous_metrics["expense_count"] > 0
     if not sufficient_for_compare:
@@ -1113,6 +1135,7 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
         "goal_text": goal_text,
         "goal_amount": goal_amount,
         "current": current,
+        "current_rows": current_rows,
         "previous": previous,
         "month": month,
         "month_history": month_history,
