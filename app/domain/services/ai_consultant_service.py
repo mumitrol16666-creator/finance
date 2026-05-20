@@ -25,6 +25,9 @@ from app.domain.services.reports_service import day_bounds_utc, month_bounds_utc
 from app.ui.formatters import fmt_money
 from app.ui.i18n import t
 
+USE_ADVANCED_AI_REPORTS = True
+
+
 ESSENTIAL_HINTS = {
     "арен", "ипот", "кредит", "коммун", "жкх", "садик", "школ", "налог",
     "подписк", "gym", "фитнес", "internet", "интернет", "связь", "mobile", "телефон",
@@ -165,28 +168,279 @@ async def _fetch_expense_category_sums(db: aiosqlite.Connection, user_id: int, s
     return {str(r[0]): int(r[1] or 0) for r in rows}
 
 
-async def _fetch_month_history_expenses(db: aiosqlite.Connection, user_id: int, tz_name: str, months: int = 4) -> list[int]:
+async def _fetch_month_history_rich(db: aiosqlite.Connection, user_id: int, tz_name: str, months: int = 6) -> list[dict]:
     tz = _safe_tz(tz_name)
     now = datetime.now(timezone.utc).astimezone(tz)
-    vals: list[int] = []
+    vals: list[dict] = []
     y, m = now.year, now.month
     for _ in range(months):
         start_local = datetime(y, m, 1, tzinfo=tz)
         if m == 12:
             end_local = datetime(y + 1, 1, 1, tzinfo=tz)
         else:
-            end_local = datetime(y, m + 1, 1, 1, tzinfo=tz)
+            end_local = datetime(y, m + 1, 1, tzinfo=tz)
         cur = await db.execute(
-            "SELECT SUM(-amount) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<? AND deleted_at IS NULL",
+            """
+            SELECT 
+                SUM(CASE WHEN type='income' THEN amount ELSE 0 END) as income,
+                SUM(CASE WHEN type='expense' THEN -amount ELSE 0 END) as expense
+            FROM transactions 
+            WHERE user_id=? AND ts>=? AND ts<? AND deleted_at IS NULL
+            """,
             (user_id, _iso(start_local.astimezone(timezone.utc)), _iso(end_local.astimezone(timezone.utc))),
         )
         row = await cur.fetchone()
-        vals.append(int(row[0] or 0))
+        inc = int(row[0] or 0)
+        exp = int(row[1] or 0)
+        vals.append({
+            "month": f"{y:04d}-{m:02d}",
+            "income": inc,
+            "expense": exp,
+            "net": inc - exp
+        })
         if m == 1:
             y, m = y - 1, 12
         else:
             m -= 1
     return list(reversed(vals))
+
+
+def _fetch_weekly_trends(current_rows: list[aiosqlite.Row], tz_name: str) -> list[dict]:
+    tz = _safe_tz(tz_name)
+    weekly_expenses = defaultdict(int)
+    for r in current_rows:
+        if r["type"] == "expense":
+            dt_raw = str(r["ts"])
+            try:
+                dt_utc = datetime.fromisoformat(dt_raw.replace("Z", "+00:00"))
+            except Exception:
+                dt_utc = datetime.now(timezone.utc)
+            if dt_utc.tzinfo is None:
+                dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+            dt = dt_utc.astimezone(tz)
+            iso_year, iso_week, _ = dt.isocalendar()
+            weekly_expenses[(iso_year, iso_week)] += -int(r["amount"] or 0)
+    
+    sorted_weeks = sorted(weekly_expenses.items())
+    res = []
+    for (year, week), amount in sorted_weeks:
+        res.append({
+            "week": f"{year}-W{week:02d}",
+            "expense": amount
+        })
+    return res
+
+
+def _fetch_unusual_spikes(current_rows: list[aiosqlite.Row], avg_expense: float, currency: str) -> list[dict]:
+    cat_expenses = defaultdict(list)
+    for r in current_rows:
+        if r["type"] == "expense":
+            amt = -int(r["amount"] or 0)
+            if amt > 0:
+                cat_name = r["category_name"] or "Без категории"
+                cat_expenses[cat_name].append(amt)
+                
+    cat_avgs = {}
+    for cat_name, amts in cat_expenses.items():
+        if amts:
+            cat_avgs[cat_name] = sum(amts) / len(amts)
+            
+    c_lower = (currency or "KZT").lower()
+    if c_lower in ("usd", "eur", "gbp"):
+        threshold = 30
+    elif c_lower in ("rub", "rur"):
+        threshold = 2000
+    else:
+        threshold = 10000
+        
+    spikes = []
+    for r in current_rows:
+        if r["type"] == "expense":
+            amt = -int(r["amount"] or 0)
+            cat_name = r["category_name"] or "Без категории"
+            cat_avg = cat_avgs.get(cat_name, 0)
+            if cat_avg > 0 and amt >= 3 * cat_avg and amt >= threshold:
+                spikes.append({
+                    "date": str(r["ts"])[:10],
+                    "category": cat_name,
+                    "amount": amt,
+                    "note": r["note"] or "",
+                    "ratio": round(amt / cat_avg, 1)
+                })
+    return spikes
+
+
+def _compute_trend_direction(current: dict, previous: dict, month_history: list[dict]) -> dict:
+    cur_inc = current.get("income", 0)
+    cur_exp = current.get("expense", 0)
+    prev_inc = previous.get("income", 0)
+    prev_exp = previous.get("expense", 0)
+    
+    inc_change_pct = ((cur_inc - prev_inc) / prev_inc * 100) if prev_inc else (100.0 if cur_inc else 0.0)
+    exp_change_pct = ((cur_exp - prev_exp) / prev_exp * 100) if prev_exp else (100.0 if cur_exp else 0.0)
+    
+    exp_trend = "stable"
+    inc_trend = "stable"
+    if len(month_history) >= 2:
+        half = len(month_history) // 2
+        first_half_exp = sum(m["expense"] for m in month_history[:half]) / half
+        second_half_exp = sum(m["expense"] for m in month_history[half:]) / (len(month_history) - half)
+        first_half_inc = sum(m["income"] for m in month_history[:half]) / half
+        second_half_inc = sum(m["income"] for m in month_history[half:]) / (len(month_history) - half)
+        
+        if second_half_exp > first_half_exp * 1.05:
+            exp_trend = "growing"
+        elif second_half_exp < first_half_exp * 0.95:
+            exp_trend = "declining"
+            
+        if second_half_inc > first_half_inc * 1.05:
+            inc_trend = "growing"
+        elif second_half_inc < first_half_inc * 0.95:
+            inc_trend = "declining"
+            
+    return {
+        "income_vs_prev_pct": round(inc_change_pct, 1),
+        "expense_vs_prev_pct": round(exp_change_pct, 1),
+        "income_trend_direction": inc_trend,
+        "expense_trend_direction": exp_trend,
+    }
+
+
+def _generate_compressed_summary(current: dict, previous: dict, trend_direction: dict, category_deltas: list) -> dict:
+    growing_categories = []
+    declining_categories = []
+    for d in category_deltas:
+        if len(d) == 3:
+            cat_name, amt, diff = d
+            prev_amt = amt - diff
+            delta = diff / prev_amt if prev_amt else (1.0 if amt else 0.0)
+            if delta > 0.15:
+                growing_categories.append(cat_name)
+            elif delta < -0.15:
+                declining_categories.append(cat_name)
+            
+    cur_inc = current.get("income", 0)
+    cur_exp = current.get("expense", 0)
+    cur_net = cur_inc - cur_exp
+    
+    savings_direction = "declining"
+    if cur_net > 0:
+        prev_net = previous.get("income", 0) - previous.get("expense", 0)
+        if cur_net > prev_net:
+            savings_direction = "growing"
+        elif abs(cur_net - prev_net) / max(1, prev_net) < 0.05:
+            savings_direction = "stable"
+            
+    return {
+        "expense_trend": trend_direction.get("expense_trend_direction", "stable"),
+        "income_trend": trend_direction.get("income_trend_direction", "stable"),
+        "savings_direction": savings_direction,
+        "largest_growing_categories": growing_categories[:3],
+        "largest_declining_categories": declining_categories[:3]
+    }
+
+
+def _rank_importance_signals(context: dict, unusual_spikes: list[dict], trend_direction: dict, compressed_summary: dict) -> list[str]:
+    signals = []
+    budget_snapshot = context.get("budget_snapshot") or {}
+    over_budgets = budget_snapshot.get("over", [])
+    if over_budgets:
+        signals.append("critical:budget_overrun")
+        
+    debt_ratio = context.get("debt_pressure_ratio") or 0
+    if debt_ratio > 0.4:
+        signals.append("high:debt_pressure")
+        
+    exp_vs_prev = trend_direction.get("expense_vs_prev_pct", 0)
+    if exp_vs_prev > 15:
+        signals.append("high:expenses_surging")
+        
+    if unusual_spikes:
+        signals.append("medium:unusual_spikes_detected")
+        
+    savings_dir = compressed_summary.get("savings_direction")
+    inc_trend = compressed_summary.get("income_trend")
+    if savings_dir == "declining" and inc_trend in ("growing", "stable"):
+        signals.append("high:lifestyle_inflation_risk")
+        
+    if not signals:
+        signals.append("low:normal_activity")
+        
+    return signals
+
+
+def _detect_spending_behavior_patterns(current_rows: list[aiosqlite.Row], current: dict, tz_name: str) -> str:
+    patterns = []
+    total_exp = current.get("expense", 0)
+    if total_exp > 0:
+        weekend = current.get("weekend_expense", 0)
+        if weekend / total_exp > 0.5:
+            patterns.append("weekend_spender")
+            
+        evening = current.get("evening_expense", 0)
+        if evening / total_exp > 0.4:
+            patterns.append("evening_shopper")
+            
+        morning = current.get("morning_expense", 0)
+        if morning / total_exp > 0.3:
+            patterns.append("morning_rush_shopper")
+            
+        small_cnt = current.get("small_expense_count", 0)
+        exp_cnt = current.get("expense_tx_count", 0)
+        if exp_cnt > 0 and small_cnt / exp_cnt > 0.6:
+            patterns.append("micro_transaction_accumulator")
+            
+    if not patterns:
+        patterns.append("balanced_spender")
+        
+    return ", ".join(patterns)
+
+
+def _detect_contradictions(current: dict, previous: dict, goal_text: str | None) -> str:
+    contradictions = []
+    cur_inc = current.get("income", 0)
+    cur_exp = current.get("expense", 0)
+    cur_net = cur_inc - cur_exp
+    
+    prev_inc = previous.get("income", 0)
+    prev_exp = previous.get("expense", 0)
+    prev_net = prev_inc - prev_exp
+    
+    if cur_inc > prev_inc and cur_net < prev_net and prev_inc > 0:
+        contradictions.append("income_increased_but_net_decreased")
+        
+    if goal_text and cur_net < 0:
+        contradictions.append("has_saving_goal_but_negative_net_savings")
+        
+    if cur_exp > prev_exp * 1.1 and cur_net < 0:
+        contradictions.append("expenses_growing_while_net_is_negative")
+        
+    if not contradictions:
+        return "none"
+    return ", ".join(contradictions)
+
+
+def _detect_seasonality(tz_name: str, clarification_note: dict | None) -> str:
+    tz = _safe_tz(tz_name)
+    now_local = datetime.now(tz)
+    month_num = now_local.month
+    
+    seasonal_notes = []
+    if month_num == 12:
+        seasonal_notes.append("december_holiday_spending")
+    elif month_num == 1:
+        seasonal_notes.append("january_post_holiday_recovery")
+    elif month_num in (6, 7, 8):
+        seasonal_notes.append("summer_vacation_season")
+    elif month_num == 9:
+        seasonal_notes.append("september_back_to_school")
+        
+    if clarification_note and clarification_note.get("is_atypical"):
+        seasonal_notes.append("atypical_month_flagged")
+        
+    if not seasonal_notes:
+        return "normal_season"
+    return ", ".join(seasonal_notes)
 
 
 async def _fetch_active_accounts(db: aiosqlite.Connection, user_id: int):
@@ -682,7 +936,7 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
     current_metrics = _collect_activity_metrics(current_rows, tz_name)
     previous_metrics = _collect_activity_metrics(previous_rows, tz_name)
     month_metrics = _collect_activity_metrics(month_rows, tz_name)
-    month_history = await _fetch_month_history_expenses(db, user_id, tz_name, months=4)
+    month_history = await _fetch_month_history_rich(db, user_id, tz_name, months=6)
     prev_cat = await _fetch_expense_category_sums(db, user_id, meta.prev_start, meta.prev_end)
     goal_amount = _parse_goal_amount(goal_text)
     active_accounts = await _fetch_active_accounts(db, user_id)
@@ -817,6 +1071,42 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
     rows_rec = await cur_rec.fetchall()
     ai_recommendations = [{"type": r[0], "text": r[1], "status": r[2], "created_at": r[3]} for r in rows_rec]
 
+    if USE_ADVANCED_AI_REPORTS:
+        weekly_trends = _fetch_weekly_trends(current_rows, tz_name)
+        avg_exp = current.get("avg_expense", 0)
+        unusual_spikes = _fetch_unusual_spikes(current_rows, avg_exp, currency)
+        trend_direction = _compute_trend_direction(current, previous, month_history)
+        compressed_summary = _generate_compressed_summary(current, previous, trend_direction, category_deltas)
+        
+        temp_ctx = {
+            "current": current,
+            "budget_snapshot": budget_snapshot,
+            "debt_pressure_ratio": debt_pressure_ratio
+        }
+        importance_signals = _rank_importance_signals(temp_ctx, unusual_spikes, trend_direction, compressed_summary)
+        spending_patterns = _detect_spending_behavior_patterns(current_rows, current, tz_name)
+        potential_contradictions = _detect_contradictions(current, previous, goal_text)
+        seasonality = _detect_seasonality(tz_name, clarification_note)
+    else:
+        weekly_trends = []
+        unusual_spikes = []
+        trend_direction = {}
+        compressed_summary = {}
+        importance_signals = []
+        spending_patterns = "balanced_spender"
+        potential_contradictions = "none"
+        seasonality = "normal_season"
+    
+    active_days = current.get("active_days", 1)
+    cat_count = len(current.get("category_count", {}))
+    quality_blockers = data_quality.get("blockers") or []
+    if quality_blockers:
+        analysis_confidence = "low"
+    elif active_days >= 20 and len(current_rows) >= 30 and cat_count >= 3:
+        analysis_confidence = "high"
+    else:
+        analysis_confidence = "medium"
+
     return {
         "meta": meta,
         "currency": currency,
@@ -856,6 +1146,15 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
         "ai_priority_insights": ai_priority_insights,
         "ai_recommendations": ai_recommendations,
         "user_id": user_id,
+        "weekly_trends": weekly_trends,
+        "unusual_spikes": unusual_spikes,
+        "trend_direction": trend_direction,
+        "compressed_summary": compressed_summary,
+        "importance_signals": importance_signals,
+        "spending_patterns": spending_patterns,
+        "potential_contradictions": potential_contradictions,
+        "seasonality": seasonality,
+        "analysis_confidence": analysis_confidence,
     }
 
 def _line(label: str, value: str) -> str:
@@ -1432,18 +1731,18 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
                 
                 if progress_level < 2:
                     if lang == "en":
-                        progression_hint = f"💡 **Path to Mastery:** Log transactions for <b>{streak_val}/3</b> days in a row to unlock <b>\"Reports & Budgets\"</b>! 🚀"
+                        progression_hint = f"💡 Log transactions <b>{streak_val}/3</b> days in a row to unlock <b>Reports & budgets</b>."
                     elif lang == "kk":
-                        progression_hint = f"💡 **Жетістікке жол:** <b>«Есептер мен бюджеттер»</b> бөлімін ашу үшін қатарынан <b>{streak_val}/3</b> күн бюджетті жүргізіңіз! 🚀"
+                        progression_hint = f"💡 <b>Есептер мен бюджеттер</b> бөлімін ашу үшін қатарынан <b>{streak_val}/3</b> күн жүргізіңіз."
                     else:
-                        progression_hint = f"💡 **Путь к мастерству:** Веди бюджет <b>{streak_val}/3</b> дн. подряд, чтобы открыть <b>«Отчёты и Бюджеты»</b>! 🚀"
+                        progression_hint = f"💡 Веди учёт <b>{streak_val}/3</b> дн. подряд — откроются <b>отчёты и бюджеты</b>."
                 elif mode == "newbie":
                     if lang == "en":
-                        progression_hint = f"⭐ **Goal Unlocked!** You can now see Reports. Get <b>Full Access</b> in settings ⚙️ to unlock Debts, Smart Planning & AI Financial Coach! 💎"
+                        progression_hint = "⭐ Reports are open. Enable <b>Full access</b> in settings ⚙️ for debts, planning, and AI."
                     elif lang == "kk":
-                        progression_hint = f"⭐ **Мақсат орындалды!** Есептер бөлімі ашылды. Қарыздарды, Жоспарлауды және AI кеңесшісін ашу үшін баптауларда ⚙️ <b>Толық қолжетімділік</b> алыңыз! 💎"
+                        progression_hint = "⭐ Есептер ашық. Қарыздар, жоспарлау және AI үшін баптауларда ⚙️ <b>Толық қолжетімділік</b> қосыңыз."
                     else:
-                        progression_hint = f"⭐ **Цель достигнута!** Отчёты открыты. Оформи <b>Полный доступ</b> в настройках ⚙️, чтобы открыть Долги, Умное планирование и AI-Консультанта! 💎"
+                        progression_hint = "⭐ Отчёты открыты. В настройках ⚙️ можно оформить <b>полный доступ</b> — долги, планирование и AI."
                 else:
                     # Full access user with no active moves
                     recurring_snapshot = context.get("recurring_snapshot") or {}
@@ -1451,11 +1750,11 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
                     debt_snapshot = context.get("debt_snapshot") or {}
                     if not (recurring_snapshot.get("count") or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
                         if lang == "en":
-                            progression_hint = f"💡 **Pro Tip:** You have Full Access active! Tap <b>Accounts & Transfers</b> 🔄 to set up your subscription, rent, or salary to unlock automatic month forecast! 📈"
+                            progression_hint = "💡 Add rent, subscriptions, or salary in <b>Accounts & transfers</b> 🔄 for a month forecast."
                         elif lang == "kk":
-                            progression_hint = f"💡 **Кеңес:** Толық қолжетімділік белсенді! Автоматты айлық болжамды ашу үшін <b>Шоттар мен аударымдар</b> 🔄 бөлімінде жазылымдарды, жалдау ақысын немесе жалақыны баптаңыз! 📈"
+                            progression_hint = "💡 Айлық болжам үшін <b>Шоттар мен аударымдар</b> 🔄 бөлімінде жалдау, жазылым немесе жалақыны қосыңыз."
                         else:
-                            progression_hint = f"💡 **Лайфхак:** У тебя активен Полный доступ! Зайди в <b>Счета и переводы</b> 🔄 и добавь аренду, подписки или зарплату, чтобы включить автоматический прогноз баланса на месяц! 📈"
+                            progression_hint = "💡 Добавь аренду, подписки или зарплату в <b>Счета и переводы</b> 🔄 — появится прогноз на месяц."
                 
                 if progression_hint:
                     title = {"ru": "💡 <b>Подсказка</b>", "en": "💡 <b>Hint</b>", "kk": "💡 <b>Нұсқау</b>"}.get(lang, "💡 <b>Подсказка</b>")

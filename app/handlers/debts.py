@@ -550,9 +550,10 @@ async def _open_detail(
     debt_id: int,
     direction: str | None = None,
 ):
+    lang = await get_lang(db, c.from_user.id)
     debt_raw = await get_debt(db, c.from_user.id, debt_id)
     if not debt_raw:
-        await c.answer("Запись не найдена.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_NOT_FOUND"), show_alert=True)
         return
 
     debt = _normalize_row(debt_raw)
@@ -1068,6 +1069,7 @@ async def debt_close_yes(c: CallbackQuery, db: aiosqlite.Connection, state: FSMC
 
 @router.callback_query(F.data.startswith("debt:close:"))
 async def debt_close_ask(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext):
+    lang = await get_lang(db, c.from_user.id)
     parts = c.data.split(":")
     if len(parts) == 4 and parts[2] == "yes":
         await c.answer()
@@ -1076,7 +1078,7 @@ async def debt_close_ask(c: CallbackQuery, db: aiosqlite.Connection, state: FSMC
     debt_id = int(parts[-1])
     debt_raw = await get_debt(db, c.from_user.id, debt_id)
     if not debt_raw:
-        await c.answer("Запись не найдена.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_NOT_FOUND"), show_alert=True)
         return
 
     debt = _normalize_row(debt_raw)
@@ -1097,16 +1099,17 @@ async def debt_close_ask(c: CallbackQuery, db: aiosqlite.Connection, state: FSMC
 
 @router.callback_query(F.data.startswith("debt:pay:"))
 async def debt_pay_start(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext):
+    lang = await get_lang(db, c.from_user.id)
     debt_id = int(c.data.split(":")[-1])
     debt_raw = await get_debt(db, c.from_user.id, debt_id)
 
     if not debt_raw:
-        await c.answer("Запись не найдена.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_NOT_FOUND"), show_alert=True)
         return
 
     debt = _normalize_row(debt_raw)
     if not int(debt.get("is_active", 1)):
-        await c.answer("Запись уже закрыта.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_ALREADY_CLOSED"), show_alert=True)
         return
 
     await state.update_data(
@@ -1125,6 +1128,7 @@ async def debt_pay_start(c: CallbackQuery, db: aiosqlite.Connection, state: FSMC
 
 @router.callback_query(F.data.startswith("debt:paysum:"), DebtPay.amount)
 async def debt_pay_amount_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
     amount_raw = c.data.split(":")[-1]
     if amount_raw != "custom":
         await neutralize_keyboard(c)
@@ -1134,7 +1138,7 @@ async def debt_pay_amount_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
     debt_raw = await get_debt(db, c.from_user.id, debt_id)
     if not debt_raw:
         await state.clear()
-        await c.answer("Запись не найдена.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_NOT_FOUND"), show_alert=True)
         return
 
     debt = _normalize_row(debt_raw)
@@ -1156,7 +1160,7 @@ async def debt_pay_amount_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
     accounts = await list_accounts(db, c.from_user.id)
     if not accounts:
         await state.clear()
-        await _edit_debt_screen(c, state, "Сначала добавь счёт.", debts_menu_kb())
+        await _edit_debt_screen(c, state, _i18n_t(lang, "DEBT_NEED_ACCOUNT"), debts_menu_kb())
         await c.answer()
         return
 
@@ -1194,7 +1198,7 @@ async def debt_pay_amount_custom(m: Message, state: FSMContext, db: aiosqlite.Co
     if not debt_raw:
         await _clear_last_debt_screen(m.bot, m.chat.id, state, forget=True)
         await state.clear()
-        await m.answer("Запись не найдена.", reply_markup=debts_menu_kb())
+        await m.answer(_i18n_t(lang, "DEBT_NOT_FOUND"), reply_markup=debts_menu_kb())
         return
 
     debt = _normalize_row(debt_raw)
@@ -1203,7 +1207,7 @@ async def debt_pay_amount_custom(m: Message, state: FSMContext, db: aiosqlite.Co
     if not accounts:
         await _clear_last_debt_screen(m.bot, m.chat.id, state, forget=True)
         await state.clear()
-        await m.answer("Сначала добавь счёт.", reply_markup=debts_menu_kb())
+        await m.answer(_i18n_t(lang, "DEBT_NEED_ACCOUNT"), reply_markup=debts_menu_kb())
         return
 
     text = (
@@ -1221,10 +1225,11 @@ async def debt_pay_amount_custom(m: Message, state: FSMContext, db: aiosqlite.Co
 
 @router.callback_query(F.data.startswith("debt:acc:"))
 async def debt_pick_account(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext):
+    lang = await get_lang(db, c.from_user.id)
     await neutralize_keyboard(c)
     parts = c.data.split(":")
     if len(parts) != 5:
-        await c.answer("Неверные данные.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_BAD_DATA"), show_alert=True)
         return
 
     debt_id = int(parts[2])
@@ -1233,7 +1238,7 @@ async def debt_pick_account(c: CallbackQuery, db: aiosqlite.Connection, state: F
 
     debt_raw = await get_debt(db, c.from_user.id, debt_id)
     if not debt_raw:
-        await c.answer("Запись не найдена.", show_alert=True)
+        await c.answer(_i18n_t(lang, "DEBT_NOT_FOUND"), show_alert=True)
         return
 
     debt = _normalize_row(debt_raw)

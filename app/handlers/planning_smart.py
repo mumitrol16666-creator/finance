@@ -81,7 +81,7 @@ async def smart_add_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.C
     candidates = data.get("smart_candidates")
     
     if not candidates:
-        await c.answer("Error: session expired", show_alert=True)
+        await c.answer(t(lang, "SMART_SESSION_EXPIRED"), show_alert=True)
         return
 
     try:
@@ -91,7 +91,7 @@ async def smart_add_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.C
         # Prevent double-click duplicates using unique ID
         processed_cids = data.get("processed_cids", [])
         if cand["cid"] in processed_cids:
-            await c.answer("Already processed", show_alert=True)
+            await c.answer(t(lang, "SMART_ALREADY_ADDED"), show_alert=True)
             return
         
         # Add to processed list and update state
@@ -99,7 +99,7 @@ async def smart_add_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.C
         await state.update_data(processed_cids=processed_cids)
         
     except (ValueError, IndexError, KeyError):
-        await c.answer("Not found", show_alert=True)
+        await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
         return
 
     # Create the item

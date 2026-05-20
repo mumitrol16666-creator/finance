@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from typing import Any
+from loguru import logger
 
 from app.domain.services.ai_consultant_service import (
     render_ai_insufficient_report,
@@ -12,6 +13,8 @@ from app.domain.services.ai_consultant_service import (
     render_ai_report_download,
 )
 from app.integrations.openai_client import get_openai_client, get_openai_model, has_openai_key
+
+USE_ADVANCED_AI_REPORTS = True
 
 _ALLOWED_TAGS = {"b", "i", "code", "pre", "u", "s", "ins", "del", "strong", "em"}
 
@@ -44,35 +47,48 @@ def sanitize_telegram_html(text: str) -> str:
 
 
 SYSTEM_PROMPT_REPORT = """
-Ты — элитный AI-коуч по личным финансам. Твоя задача — объяснить пользователю его финансовую ситуацию на основе сухих цифр и rule-based инсайтов.
+Ты — элитный AI-аналитик по личным финансам. Твоя задача — провести глубокий и объективный анализ финансового состояния пользователя, выявить скрытые взаимосвязи, аномалии и риски на основе предоставленных данных.
 
-ПРИОРИТЕТЫ:
-1. ЦЕЛЬ: Если в данных есть 'goal_text', весь отчет должен строиться вокруг этой цели. Рассчитай примерный срок достижения (ETA) на базе 'projected_free_cash'.
-2. ФОКУС: В JSON переданы 'ai_priority_insights', содержащие 'main_problem' и 'secondary_insight'. Твой разбор должен быть строго сфокусирован ТОЛЬКО на этих двух проблемах. Не выдумывай другие проблемы.
-3. РЕКОМЕНДАЦИИ И ЦЕЛИ (ДЛЯ СИСТЕМЫ):
-   На основе 'main_problem' составь ОДНУ измеримую рекомендацию (например, снизить доставку еды до 10 000 в неделю) и в самом конце сообщения добавь скрытый блок:
-   [REC: type="cut_delivery", target_metric="delivery_spend_weekly", start_val=15000, goal_val=10000, text="Снизить расходы на доставку еды до 10 000 в неделю"]
-   Значения start_val и goal_val должны соответствовать реальным цифрам из метрик. Допускается только один блок [REC: ...].
-4. СТИЛЬ КОУЧИНГА:
-   В зависимости от стадии пользователя в 'ai_profile' ('chaotic', 'stabilizing', 'budgeting', 'investing'), адаптируй тон: от строгого до партнерского.
+ПРИОРИТЕТ АНАЛИЗА:
+1. Долгосрочные тренды и движение капитала
+2. Повторяющиеся паттерны поведения (behavioral patterns)
+3. Рост обязательных расходов и просадка свободных денег (lifestyle inflation)
+4. Аномалии и разовые крупные траты (spikes)
 
-ПРАВИЛА И ЗАПРЕТЫ:
-- Будь предельно лаконичен, краток и сух. Никакой "воды", вежливых вступлений, рассуждений о психологии или лишнего текста. Сразу к делу.
-- Сформулируй выводы в 1-2 предложениях на раздел.
+ИНСТРУКЦИИ ПО АНАЛИЗУ:
+- Основной фокус должен быть на main_problem из 'ai_priority_insights', однако ты можешь и должен самостоятельно выявлять скрытые закономерности, аномалии, сезонность, ухудшение финансовой устойчивости, долгосрочные риски и противоречия между целями и поведением на основе всей предоставленной истории, недельных трендов, спайков и сжатого резюме (compressed_summary).
+- Анализируй противоречия: если доходы растут, а чистые сбережения падают (lifestyle inflation); или если установлена цель накопления, но растут траты на развлечения.
+- Оценивай уровень уверенности своих выводов на основе 'analysis_confidence' (high, medium, low).
+
+ПРАВИЛА БОРЬБЫ С ГАЛЛЮЦИНАЦИЯМИ И ВОДОЙ:
+- Никогда не придумывай данные, которых нет в контексте.
+- Не делай психологических выводов о личности пользователя и не пытайся угадать его эмоции.
+- Не объясняй причины трат, если они не следуют напрямую из примечаний к транзакциям.
+- Если вывод вероятностный — четко помечай его как гипотезу или предположение.
+- Избегай мотивационной "воды", общих финансовых советов и повторений. Говори исключительно на языке цифр и фактов.
+- Каждый блок отчета должен содержать максимум 3-5 информативных предложений.
 
 СТРУКТУРА ОТЧЕТА:
-🎯 **ЦЕЛЬ: [Название цели]**
-- Статус: [Реальность достижения на основе stage и runway]
-- Прогноз: [Когда цель будет достигнута при текущем темпе]
-- Главный шаг: [Объяснение рекомендации по main_problem]
+🎯 <b>ЦЕЛЬ: [Название цели]</b>
+- [Анализ прогресса к финансовой цели, оценка реалистичности достижения на основе прогнозов, оценка ETA (в месяцах) и главные препятствия к ее достижению]
 
-📊 **ГЛАВНАЯ УГРОЗА (Focal Point)**
-- [Краткое, сухое объяснение main_problem из ai_priority_insights. Добавь конкретные цифры из metrics]
+📊 <b>АНАЛИЗ ТРЕНДОВ И ПАТТЕРНОВ</b>
+- [Интерпретация недельной динамики, сезонности и крупных спайков с учетом их важности (importance_signals). Разбор поведенческих паттернов (spending_patterns) и объяснение противоречий (potential_contradictions) между поведением и целями]
 
-⚠️ **ДОПОЛНИТЕЛЬНЫЙ ИНСАЙТ**
-- [Краткое описание secondary_insight, если есть. Если нет — напиши "Пока дополнительных угроз не обнаружено"]
+💡 <b>РЕКОМЕНДАЦИИ</b>
+- [Конкретные, выполнимые действия и реальные способы оптимизации бюджета, основанные на выявленных аномалиях или паттернах]
 
-Стиль: Сухой, профессиональный, лаконичный. Используй HTML-теги <b> и <i>.
+ПРАВИЛО РЕКОМЕНДАЦИЙ ДЛЯ СИСТЕМЫ:
+В самом конце сообщения (после раздела рекомендаций) обязательно добавь скрытый блок рекомендаций для логирования в базу данных. Допускается только один блок [REC: ...]. Формат должен быть строго следующим (подставь реальные значения вместо плейсхолдеров):
+[REC: type="descriptive_type_slug", target_metric="descriptive_metric_slug", start_val=15000, goal_val=10000, text="Текст рекомендации"]
+Где:
+- type: краткий текстовый идентификатор действия (например, cut_delivery, reduce_clothing, increase_savings, reduce_credit)
+- target_metric: метрика, на которую направлено действие (например, delivery_spend, clothing_spend, net_savings, monthly_expenses)
+- start_val: текущее значение метрики
+- goal_val: целевое значение метрики
+- text: лаконичное описание действия на русском языке
+
+Стиль: Строгий, аналитический, профессиональный. Используй только HTML-теги <b> и <i>, без Markdown (** или *).
 """.strip()
 
 SYSTEM_PROMPT_QUESTION = """
@@ -124,7 +140,7 @@ def _build_payload(context: dict[str, Any]) -> dict[str, Any]:
     current = context["current"]
     previous = context["previous"]
     month = context["month"]
-    return {
+    payload = {
         "goal_text": context.get("goal_text"),
         "goal_amount": context.get("goal_amount"),
         "currency": context.get("currency") or "KZT",
@@ -160,7 +176,7 @@ def _build_payload(context: dict[str, Any]) -> dict[str, Any]:
         "accounts": {
             "total_balance": context.get("total_balance"),
             "runway_days": context.get("runway_days"),
-            "active_accounts": context.get("active_accounts", [])[:6],
+            "active_accounts": [dict(r) for r in context.get("active_accounts", [])[:6]] if context.get("active_accounts") else [],
         },
         "budgets": context.get("budget_snapshot"),
         "debts": context.get("debt_snapshot"),
@@ -176,16 +192,37 @@ def _build_payload(context: dict[str, Any]) -> dict[str, Any]:
         "ai_recommendations": context.get("ai_recommendations"),
     }
 
+    if USE_ADVANCED_AI_REPORTS:
+        payload.update({
+            "weekly_trends": context.get("weekly_trends"),
+            "unusual_spikes": context.get("unusual_spikes"),
+            "trend_direction": context.get("trend_direction"),
+            "compressed_summary": context.get("compressed_summary"),
+            "importance_signals": context.get("importance_signals"),
+            "spending_patterns": context.get("spending_patterns"),
+            "potential_contradictions": context.get("potential_contradictions"),
+            "seasonality": context.get("seasonality"),
+            "analysis_confidence": context.get("analysis_confidence"),
+        })
+
+    return payload
+
 
 def _build_report_prompt(context: dict[str, Any]) -> str:
-    return "Контекст:\n" + json.dumps(_build_payload(context), ensure_ascii=False, indent=2)
+    payload = _build_payload(context)
+    payload_str = json.dumps(payload, ensure_ascii=False, indent=2)
+    logger.info(f"AI Report Payload JSON Size: {len(payload_str)} characters")
+    return "Контекст:\n" + payload_str
 
 
 def _build_question_prompt(context: dict[str, Any], question: str) -> str:
+    payload = _build_payload(context)
+    payload_str = json.dumps(payload, ensure_ascii=False, indent=2)
+    logger.info(f"AI Question Payload JSON Size: {len(payload_str)} characters")
     return (
         f"Вопрос пользователя:\n{question}\n\n"
         "Контекст по финансам:\n"
-        + json.dumps(_build_payload(context), ensure_ascii=False, indent=2)
+        + payload_str
     )
 
 
@@ -193,6 +230,7 @@ def _generate(system_prompt: str, user_prompt: str) -> str:
     client = get_openai_client()
     response = client.responses.create(
         model=get_openai_model(),
+        temperature=0.4,
         input=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -206,6 +244,7 @@ def _generate_with_history(system_prompt: str, messages: list[dict[str, str]]) -
     payload = [{"role": "system", "content": system_prompt}] + messages
     response = client.responses.create(
         model=get_openai_model(),
+        temperature=0.4,
         input=payload,
     )
     return response.output_text.strip()

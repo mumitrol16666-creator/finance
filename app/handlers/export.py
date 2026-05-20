@@ -1151,7 +1151,8 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     try:
         start_iso, end_iso, label = await _resolve_period(db, user_id, period)
     except Exception:
-        await c.answer("Period error", show_alert=True)
+        from app.ui.i18n import t as _t
+        await c.answer(_t(lang, "EXPORT_PERIOD_ERROR"), show_alert=True)
         return
 
     rows = await _fetch_rows(db, user_id, start_iso, end_iso)
@@ -1265,23 +1266,23 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
                 # Send celebratory 1-time free trial congratulation
                 trial_msg = {
                     "ru": (
-                        "🎁 **Поздравляем! Вам начислен 1 тест-драйв премиум-отчёта!**\n\n"
-                        "Мы подготовили для вас роскошный Excel-файл с интерактивными графиками и аналитическим дашбордом совершенно бесплатно. Оцените удобство и красоту профессиональной аналитики!\n\n"
-                        "*(Следующие экспорты в Excel будут доступны при активации Полного доступа в настройках)*"
+                        "🎁 <b>Бесплатный Excel-отчёт с графиками</b>\n\n"
+                        "Файл уже отправлен — внутри диаграммы и сводка за период.\n\n"
+                        "<i>Следующие Excel-экспорты — с полным доступом в настройках.</i>"
                     ),
                     "en": (
-                        "🎁 **Congratulations! You have received 1 free premium report trial!**\n\n"
-                        "We have prepared a gorgeous Excel file with interactive charts and an analytical dashboard for you completely free. Experience the power and beauty of professional analytics!\n\n"
-                        "*(Subsequent Excel exports will be unlocked with Full Access)*"
+                        "🎁 <b>Free Excel report with charts</b>\n\n"
+                        "The file is already sent — it includes charts and a period summary.\n\n"
+                        "<i>More Excel exports unlock with Full Access in settings.</i>"
                     ),
                     "kk": (
-                        "🎁 **Құттықтаймыз! Сізге 1 тегін премиум есеп тест-драйвы берілді!**\n\n"
-                        "Біз сіз үшін интерактивті графиктер мен талдау дашборды бар керемет Excel файлын мүлдем тегін дайындадық. Кәсіби талдаудың ыңғайлылығы мен сұлулығын бағалаңыз!\n\n"
-                        "*(Келесі Excel экспорттары параметрлерде Толық қолжетімділікті белсендіргенде ашылады)*"
-                    )
-                }.get(lang, "🎁 **Поздравляем! Вам начислен 1 тест-драйв премиум-отчёта!**")
+                        "🎁 <b>Графиктері бар тегін Excel есеп</b>\n\n"
+                        "Файл жіберілді — ішінде диаграммалар мен кезең қорытындысы бар.\n\n"
+                        "<i>Келесі Excel экспорттары — баптаулардағы толық қолжетімділікпен.</i>"
+                    ),
+                }.get(lang, "🎁 <b>Бесплатный Excel-отчёт</b>")
                 
-                await c.message.answer(trial_msg, parse_mode="Markdown")
+                await c.message.answer(trial_msg, parse_mode="HTML")
             return
 
     # Fallback to CSV for free users (who already used their trial) or if openpyxl failed
@@ -1311,26 +1312,23 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
 
     caption_text = {
         "ru": (
-            "⚠️ **Вы уже использовали свой 1 бесплатный пробный премиум-экспорт.**\n\n"
-            "😔 **Посмотрите, какую красоту вы теряете без Полного доступа!**\n\n"
-            "На графике выше показана динамика ваших реальных расходов и доходов за выбранный период, "
-            "которую премиум-пользователи видят прямо внутри интерактивного Excel-отчета с авто-формулами и печатным дашбордом.\n\n"
-            "🔥 **Верните графики в свои отчёты прямо сейчас всего за 150 ⭐️!**"
+            "⚠️ <b>Бесплатный Excel-отчёт уже использован</b>\n\n"
+            "На графике — ваши доходы и расходы за период. В полном доступе такие диаграммы "
+            "есть в каждом Excel-экспорте.\n\n"
+            "🔥 Вернуть графики в отчёты — <b>150 ⭐️</b> в настройках."
         ),
         "en": (
-            "⚠️ **You have already used your 1 free premium export trial.**\n\n"
-            "😔 **Look at the beauty you are missing without Full Access!**\n\n"
-            "The chart above showcases the dynamic flow of your actual income and expenses during this period, "
-            "which premium users interact with inside their customized Excel workbook with active dashboards.\n\n"
-            "🔥 **Restore visual charts in your reports right now for just 150 ⭐️!**"
+            "⚠️ <b>Your free Excel trial was already used</b>\n\n"
+            "The chart shows your income and expenses for the period. With Full Access, "
+            "charts are included in every Excel export.\n\n"
+            "🔥 Restore charts — <b>150 ⭐️</b> in settings."
         ),
         "kk": (
-            "⚠️ **Сіз 1 тегін премиум экспорт тест-драйвын пайдаланып қойдыңыз.**\n\n"
-            "😔 **Толық қолжетімділіксіз қандай сұлулықты жоғалтып жатқаныңызды қараңыз!**\n\n"
-            "Жоғарыдағы график таңдалған кезеңдегі нақты кірістеріңіз бен шығыстарыңыздың динамикасын көрсетеді, "
-            "оны премиум қолданушылар формулалары мен дашборды бар интерактивті Excel есебінен көре алады.\n\n"
-            "🔥 **Қазірдің өзінде есептеріңізге графиктерді небәрі 150 ⭐️ қайтарыңыз!**"
-        )
+            "⚠️ <b>Тегін Excel есеп қолданылған</b>\n\n"
+            "Графикте кезеңдегі кіріс пен шығыстарыңыз көрсетілген. Толық қолжетімділікте "
+            "әр Excel экспортында диаграммалар болады.\n\n"
+            "🔥 Графиктерді қайтару — баптауларда <b>150 ⭐️</b>."
+        ),
     }.get(lang, "")
 
     if png_bytes:
@@ -1338,12 +1336,12 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
         await c.message.answer_photo(
             photo=photo,
             caption=caption_text,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=paywall_kb
         )
     else:
         await c.message.answer(
             caption_text,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=paywall_kb
         )

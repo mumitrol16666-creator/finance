@@ -25,7 +25,7 @@ from app.domain.services.onboarding_service import (
 from app.db.repositories.settings_repo import get_lang, set_lang
 
 router = Router()
-PARSE_MODE = "Markdown"
+PARSE_MODE = "HTML"
 
 def dbg(txt: str) -> str:
     return f"\n\n#DBG {txt}" if settings.debug else ""
@@ -54,9 +54,9 @@ async def start(m: Message, state: FSMContext, db):
     await init_user(db, m.from_user.id, settings.timezone)
     
     prompt = (
-        "🇷🇺 **Выберите язык для продолжения:**\n\n"
-        "🇬🇧 **Choose language to continue:**\n\n"
-        "🇰🇿 **Жалғастыру үшін тілді таңдаңыз:**"
+        "🇷🇺 <b>Выберите язык</b>\n\n"
+        "🇬🇧 <b>Choose language</b>\n\n"
+        "🇰🇿 <b>Тілді таңдаңыз</b>"
     )
     sent = await answer_md(m, prompt, reply_markup=lang_selection_kb())
     await state.update_data(flow_message_id=sent.message_id, ui_scope='onboarding')
