@@ -878,7 +878,7 @@ async def exp_account(c: CallbackQuery, state: FSMContext, db):
     acc = await _validate_account(db, c.from_user.id, acc_id)
 
     if not acc:
-        await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
+        await c.answer(t(await get_lang(db, c.from_user.id), "ACCOUNT_NOT_FOUND"), show_alert=True)
         return
 
     await state.update_data(
@@ -905,7 +905,7 @@ async def exp_category(c: CallbackQuery, state: FSMContext, db):
     cat = await _validate_category(db, c.from_user.id, cat_id)
 
     if not cat:
-        await c.answer("Category not found" if (await get_lang(db, c.from_user.id))=="en" else ("Санат табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Категория не найдена"), show_alert=True)
+        await c.answer(t(await get_lang(db, c.from_user.id), "CATEGORY_NOT_FOUND"), show_alert=True)
         return
 
     _, cat_name, cat_emoji, _, _ = cat
@@ -958,12 +958,12 @@ async def exp_category_add_handle(m: Message, state: FSMContext, db):
 
     lang = (await state.get_data()).get("lang", "ru")
     if len(raw) < 2 or len(raw) > 20:
-        await m.answer("❌ Название должно быть от 2 до 20 символов." if lang=="ru" else "❌ Name must be 2-20 chars.")
+        await m.answer(t(lang, "CAT_NAME_LEN"))
         return
 
     # Check for duplicates
     if await name_exists_any_kind(db, m.from_user.id, raw):
-        await m.answer("❌ Категория с таким названием уже есть." if lang=="ru" else "❌ Category already exists.")
+        await m.answer(t(lang, "CAT_NAME_EXISTS"))
         return
 
     from datetime import datetime, timezone
@@ -1008,11 +1008,11 @@ async def inc_category_add_handle(m: Message, state: FSMContext, db):
 
     lang = (await state.get_data()).get("lang", "ru")
     if len(raw) < 2 or len(raw) > 20:
-        await m.answer("❌ Название должно быть от 2 до 20 символов." if lang=="ru" else "❌ Name must be 2-20 chars.")
+        await m.answer(t(lang, "CAT_NAME_LEN"))
         return
 
     if await name_exists_any_kind(db, m.from_user.id, raw):
-        await m.answer("❌ Категория с таким названием уже есть." if lang=="ru" else "❌ Category already exists.")
+        await m.answer(t(lang, "CAT_NAME_EXISTS"))
         return
 
     from datetime import datetime, timezone
@@ -1389,7 +1389,7 @@ async def inc_account(c: CallbackQuery, state: FSMContext, db):
     acc = await _validate_account(db, c.from_user.id, acc_id)
 
     if not acc:
-        await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
+        await c.answer(t(await get_lang(db, c.from_user.id), "ACCOUNT_NOT_FOUND"), show_alert=True)
         return
 
     await state.update_data(
@@ -1423,7 +1423,7 @@ async def inc_category(c: CallbackQuery, state: FSMContext, db):
     cat = await _validate_category(db, c.from_user.id, cat_id)
 
     if not cat:
-        await c.answer("Category not found" if (await get_lang(db, c.from_user.id))=="en" else ("Санат табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Категория не найдена"), show_alert=True)
+        await c.answer(t(await get_lang(db, c.from_user.id), "CATEGORY_NOT_FOUND"), show_alert=True)
         return
 
     _, cat_name, cat_emoji, _, _ = cat
@@ -1695,39 +1695,39 @@ async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext)
         # Build multivariant lines
         if lang == "en":
             lines = [
-                "🔄 **CROSS-CURRENCY TRANSFER**",
+                "🔄 <b>Transfer between currencies</b>",
                 "",
-                f"📤 **From**: {escape(str(data['from_name']))} ({from_currency})",
-                f"📥 **To**: {escape(str(data['to_name']))} ({to_currency})",
+                f"📤 From: <b>{escape(str(data['from_name']))}</b> ({from_currency})",
+                f"📥 To: <b>{escape(str(data['to_name']))}</b> ({to_currency})",
                 "",
-                f"💰 **Sum to deduct**: **{fmt_money(int(data['amount']), from_currency)}**",
-                f"📊 **Exchange Rate**: 1 {from_currency} = {rate:.4f} {to_currency}",
-                f"📥 **Will be credited**: **{fmt_money(converted_amount, to_currency)}**",
-                f"📊 **Source balance**: {fmt_money(int(from_before), from_currency)} ➡️ {fmt_money(int(from_after), from_currency)}"
+                f"💰 Debit: <b>{fmt_money(int(data['amount']), from_currency)}</b>",
+                f"📊 Rate: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📥 Credit: <b>{fmt_money(converted_amount, to_currency)}</b>",
+                f"📊 Balance: {fmt_money(int(from_before), from_currency)} → {fmt_money(int(from_after), from_currency)}",
             ]
         elif lang == "kk":
             lines = [
-                "🔄 **МУЛЬТИВАЛЮТАЛЫҚ АУДАРЫМ**",
+                "🔄 <b>Валюталар арасындағы аударым</b>",
                 "",
-                f"📤 **Қайдан**: {escape(str(data['from_name']))} ({from_currency})",
-                f"📥 **Қайда**: {escape(str(data['to_name']))} ({to_currency})",
+                f"📤 Қайдан: <b>{escape(str(data['from_name']))}</b> ({from_currency})",
+                f"📥 Қайда: <b>{escape(str(data['to_name']))}</b> ({to_currency})",
                 "",
-                f"💰 **Шығындалатын сома**: **{fmt_money(int(data['amount']), from_currency)}**",
-                f"📊 **Ағымдағы бағам**: 1 {from_currency} = {rate:.4f} {to_currency}",
-                f"📥 **Шотқа түседі**: **{fmt_money(converted_amount, to_currency)}**",
-                f"📊 **Бастапқы баланс**: {fmt_money(int(from_before), from_currency)} ➡️ {fmt_money(int(from_after), from_currency)}"
+                f"💰 Шығын: <b>{fmt_money(int(data['amount']), from_currency)}</b>",
+                f"📊 Бағам: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📥 Түседі: <b>{fmt_money(converted_amount, to_currency)}</b>",
+                f"📊 Баланс: {fmt_money(int(from_before), from_currency)} → {fmt_money(int(from_after), from_currency)}",
             ]
-        else: # ru
+        else:  # ru
             lines = [
-                "🔄 **МУЛЬТИВАЛЮТНЫЙ ПЕРЕВОД**",
+                "🔄 <b>Перевод между валютами</b>",
                 "",
-                f"📤 **Откуда**: {escape(str(data['from_name']))} ({from_currency})",
-                f"📥 **Куда**: {escape(str(data['to_name']))} ({to_currency})",
+                f"📤 Откуда: <b>{escape(str(data['from_name']))}</b> ({from_currency})",
+                f"📥 Куда: <b>{escape(str(data['to_name']))}</b> ({to_currency})",
                 "",
-                f"💰 **Сумма списания**: **{fmt_money(int(data['amount']), from_currency)}**",
-                f"📊 **Текущий курс**: 1 {from_currency} = {rate:.4f} {to_currency}",
-                f"📥 **Будет зачислено**: **{fmt_money(converted_amount, to_currency)}**",
-                f"📊 **Баланс источника**: {fmt_money(int(from_before), from_currency)} ➡️ {fmt_money(int(from_after), from_currency)}"
+                f"💰 Списание: <b>{fmt_money(int(data['amount']), from_currency)}</b>",
+                f"📊 Курс: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📥 Зачисление: <b>{fmt_money(converted_amount, to_currency)}</b>",
+                f"📊 Баланс: {fmt_money(int(from_before), from_currency)} → {fmt_money(int(from_after), from_currency)}",
             ]
     else:
         lines = [
@@ -1790,7 +1790,7 @@ async def tr_from(c: CallbackQuery, state: FSMContext, db):
     acc = await _validate_account(db, c.from_user.id, from_id)
 
     if not acc:
-        await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
+        await c.answer(t(await get_lang(db, c.from_user.id), "ACCOUNT_NOT_FOUND"), show_alert=True)
         return
 
     await state.update_data(
@@ -1811,12 +1811,13 @@ async def tr_to(c: CallbackQuery, state: FSMContext, db):
     data = await state.get_data()
 
     if to_id == int(data["from_account"]):
-        await c.answer("Нужны разные счета", show_alert=True)
+        lang = await get_lang(db, c.from_user.id)
+        await c.answer(t(lang, "TRANSFER_DIFF_ACCOUNTS"), show_alert=True)
         return
 
     acc = await _validate_account(db, c.from_user.id, to_id)
     if not acc:
-        await c.answer("Account not found" if (await get_lang(db, c.from_user.id))=="en" else ("Шот табылмады" if (await get_lang(db, c.from_user.id))=="kk" else "Счёт не найден"), show_alert=True)
+        await c.answer(t(await get_lang(db, c.from_user.id), "ACCOUNT_NOT_FOUND"), show_alert=True)
         return
 
     from_currency = data.get("from_currency", "KZT")
@@ -1877,7 +1878,8 @@ async def tr_note(m: Message, state: FSMContext, db):
     max_len = await _note_max(db, m.from_user.id)
     note = clean_note(m.text, max_len)
     if not note:
-        return await m.answer(f"Комментарий 1–{max_len} символов.")
+        lang = await get_lang(db, m.from_user.id)
+        return await m.answer(t(lang, "NOTE_INVALID_LEN", max=max_len))
 
     await state.update_data(note=note)
     await state.set_state(TransferFlow.confirm)

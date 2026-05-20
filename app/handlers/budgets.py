@@ -565,7 +565,8 @@ async def budget_start_set(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
 
     if not month or not category_name:
         await state.clear()
-        await c.message.edit_text("Сессия устарела. Запусти заново: /budget", reply_markup=None)
+        lang = await get_lang(db, c.from_user.id)
+        await c.message.edit_text(t(lang, "BUDGET_SESSION_EXPIRED"), reply_markup=None, parse_mode="HTML")
         await c.message.answer("Меню:", reply_markup=main_menu())
         return
 
@@ -611,8 +612,9 @@ async def budget_enter_amount(m: Message, state: FSMContext, db: aiosqlite.Conne
 
     if not month or not cid or not category_name:
         await state.clear()
+        lang = await get_lang(db, m.from_user.id)
         await m.answer(
-            "Сессия устарела. Начни заново: <b>/budget</b>",
+            t(lang, "BUDGET_SESSION_EXPIRED"),
             reply_markup=ReplyKeyboardRemove(),
             parse_mode="HTML",
         )
@@ -657,7 +659,8 @@ async def budget_remove(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conne
 
     if not month or not category_name:
         await state.clear()
-        await c.message.edit_text("Сессия устарела. Запусти заново: /budget", reply_markup=None)
+        lang = await get_lang(db, c.from_user.id)
+        await c.message.edit_text(t(lang, "BUDGET_SESSION_EXPIRED"), reply_markup=None, parse_mode="HTML")
         await c.message.answer("Меню:", reply_markup=main_menu())
         return
 
@@ -681,7 +684,8 @@ async def budget_remove_back(c: CallbackQuery, state: FSMContext, db: aiosqlite.
 
     if not month or not cid:
         await state.clear()
-        await c.message.edit_text("Сессия устарела. Запусти заново: /budget", reply_markup=None)
+        lang = await get_lang(db, c.from_user.id)
+        await c.message.edit_text(t(lang, "BUDGET_SESSION_EXPIRED"), reply_markup=None, parse_mode="HTML")
         await c.message.answer("Меню:", reply_markup=main_menu())
         return
 
@@ -701,7 +705,8 @@ async def budget_remove_confirm(c: CallbackQuery, state: FSMContext, db: aiosqli
 
     if not month or not cid or not category_name:
         await state.clear()
-        await c.message.edit_text("Сессия устарела. Запусти заново: /budget", reply_markup=None)
+        lang = await get_lang(db, c.from_user.id)
+        await c.message.edit_text(t(lang, "BUDGET_SESSION_EXPIRED"), reply_markup=None, parse_mode="HTML")
         await c.message.answer("Меню:", reply_markup=main_menu())
         return
 
@@ -739,7 +744,8 @@ async def budget_save(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
 
     if not month or not cid or amount is None or not category_name:
         await state.clear()
-        await c.message.edit_text("Сессия устарела. Запусти заново: /budget", reply_markup=None)
+        lang = await get_lang(db, c.from_user.id)
+        await c.message.edit_text(t(lang, "BUDGET_SESSION_EXPIRED"), reply_markup=None, parse_mode="HTML")
         await c.message.answer("Меню:", reply_markup=main_menu())
         return
 
@@ -776,7 +782,8 @@ async def budget_back(c: CallbackQuery, state: FSMContext):
 
     if not month or not category_name:
         await state.clear()
-        await c.message.edit_text("Сессия устарела. Запусти заново: /budget", reply_markup=None)
+        lang = await get_lang(db, c.from_user.id)
+        await c.message.edit_text(t(lang, "BUDGET_SESSION_EXPIRED"), reply_markup=None, parse_mode="HTML")
         await c.message.answer("Меню:", reply_markup=main_menu())
         return
 

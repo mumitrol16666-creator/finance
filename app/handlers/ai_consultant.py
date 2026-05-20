@@ -379,24 +379,24 @@ async def _show_ai_teaser(target: Message | CallbackQuery, state: FSMContext, db
         # Formulate teaser text
         if lang == "en":
             text = "🧠 <i>I've briefly analyzed your expenses for this month.</i>\n" \
-                   f"I see that the main part of your budget goes to category <b>[{top_category}]</b> ({top_amount}).\n\n" \
+                   f"I see that the main part of your budget goes to category <b>{top_category}</b> ({top_amount}).\n\n" \
                    "I have 3 specific tips on how to optimize these expenses and save up to 15% next month...\n" \
                    "░░░░░░░░░░░░░░░░░░░░\n" \
-                   "[FULL ACCESS REQUIRED TO VIEW DEEP ANALYSIS]"
+                   "Полный разбор доступен после подключения Full Access."
             btn_text = "Unlock AI for 150 ⭐️"
         elif lang == "kk":
             text = "🧠 <i>Осы айдағы шығындарыңызды жылдам талдап шықтым.</i>\n" \
-                   f"Бюджеттің негізгі бөлігі <b>[{top_category}]</b> санатына кетіп жатқанын көріп тұрмын ({top_amount}).\n\n" \
+                   f"Бюджеттің негізгі бөлігі <b>{top_category}</b> санатына кетіп жатқанын көріп тұрмын ({top_amount}).\n\n" \
                    "Шығындарды оңтайландыру және келесі айда 15%-ға дейін үнемдеу туралы 3 нақты кеңесім бар...\n" \
                    "░░░░░░░░░░░░░░░░░░░░\n" \
-                   "[ТОЛЫҚ ТАЛДАУДЫ КӨРУ ҮШІН ТОЛЫҚ ҚОЛЖЕТІМДІЛІК ҚАЖЕТ]"
+                   "Толық талдау Full Access қосылғаннан кейін қолжетімді."
             btn_text = "ИИ-ді 150 ⭐️-ға ашу"
         else:
             text = "🧠 <i>Я бегло проанализировал твои расходы за этот месяц.</i>\n" \
-                   f"Я вижу, что основная часть бюджета уходит на категорию <b>[{top_category}]</b> ({top_amount}).\n\n" \
+                   f"Я вижу, что основная часть бюджета уходит на категорию <b>{top_category}</b> ({top_amount}).\n\n" \
                    "У меня есть 3 конкретных совета, как оптимизировать эти траты и сэкономить до 15% в следующем месяце...\n" \
                    "░░░░░░░░░░░░░░░░░░░░\n" \
-                   "[ДЛЯ ПРОСМОТРА ПОЛНОГО АНАЛИЗА НУЖЕН FULL ACCESS]"
+                   "Полный разбор — после подключения Full Access."
             btn_text = "Разблокировать ИИ за 150 ⭐️"
 
     markup = InlineKeyboardMarkup(
