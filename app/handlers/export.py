@@ -28,7 +28,7 @@ from app.db.repositories.settings_repo import get_lang, get_settings
 from app.db.repositories.users_repo import get_free_exports_used, increment_free_export
 from app.domain.services.reports_service import day_bounds_utc, month_bounds_utc, iso
 from app.domain.time_utils import now_in_user_tz
-from app.ui.i18n import t
+from app.ui.i18n import t, t_category
 
 router = Router()
 
@@ -113,8 +113,10 @@ def _build_downgrade_preview_png(rows: list, lang: str, currency: str) -> bytes 
             total_income += amt
         else:
             total_expense += amt
-            cat_name = str(category or "").strip()
-            if not cat_name:
+            cat_raw = str(category or "").strip()
+            if cat_raw:
+                cat_name = t_category(cat_raw, lang)
+            else:
                 cat_name = {
                     "ru": "Другое",
                     "en": "Other",
@@ -289,10 +291,10 @@ def _build_xlsx(
     # Localized labels
     all_labels = {
         "ru": {
-            "title_summary": "FINANCIAL PULSE • EXECUTIVE SUMMARY",
+            "title_summary": "ФИНАНСОВЫЙ ПУЛЬС • ГЛАВНЫЙ ДАШБОРД",
             "health_title": "ФИНАНСОВЫЙ ИНДЕКС",
             "runway_title": "ЗАПАС ПРОЧНОСТИ",
-            "burn_title": "DAILY BURN RATE",
+            "burn_title": "СУТОЧНЫЙ РАСХОД",
             "main_risk": "КЛЮЧЕВОЙ ФИНАНСОВЫЙ РИСК",
             "ai_rec": "AI РЕКОМЕНДАЦИЯ КОУЧА",
             "behavioral": "ПОВЕДЕНЧЕСКИЙ ПРОФИЛЬ",
@@ -315,7 +317,7 @@ def _build_xlsx(
             "projected_spending": "Ожидаемые расходы к концу месяца",
             "anomalies_title": "Аномалии и предупреждения",
             "no_anomalies": "Аномалий или повышенных рисков не обнаружено.",
-            "sheet_dashboard": "Executive Summary",
+            "sheet_dashboard": "Главная сводка",
             "sheet_analytics": "Аналитика",
             "sheet_transactions": "История операций",
             "raw_headers": ["ID", "Дата и время", "Тип", "Сумма", "Валюта", "Счёт", "Категория", "Комментарий"]
@@ -353,10 +355,10 @@ def _build_xlsx(
             "raw_headers": ["ID", "Date & Time", "Type", "Amount", "Currency", "Account", "Category", "Note"]
         },
         "kk": {
-            "title_summary": "FINANCIAL PULSE • EXECUTIVE SUMMARY",
+            "title_summary": "ҚАРЖЫЛЫҚ ТАМЫР ЛҮПІЛІ • НЕГІЗГІ ДАШБОРД",
             "health_title": "ҚАРЖЫЛЫҚ ИНДЕКС",
             "runway_title": "ҚАУІПСІЗДІК ҚОРЫ",
-            "burn_title": "DAILY BURN RATE",
+            "burn_title": "КҮНДЕЛІКТІ ШЫҒЫН",
             "main_risk": "НЕГІЗГІ ҚАРЖЫЛЫҚ ҚАУІП",
             "ai_rec": "AI КОУЧ ҰСЫНЫСЫ",
             "behavioral": "МІНЕЗ-ҚҰЛЫҚ ПРОФИЛІ",
@@ -379,7 +381,7 @@ def _build_xlsx(
             "projected_spending": "Айдың соңына күтілетін шығыстар",
             "anomalies_title": "Аномалиялар мен ескертулер",
             "no_anomalies": "Аномалиялар немесе жоғары қауіптер табылған жоқ.",
-            "sheet_dashboard": "Executive Summary",
+            "sheet_dashboard": "Негізгі жиынтық",
             "sheet_analytics": "Талдау",
             "sheet_transactions": "Операциялар тарихы",
             "raw_headers": ["ID", "Күні мен уақыты", "Түрі", "Сома", "Валюта", "Шот", "Санат", "Түсініктеме"]
@@ -414,7 +416,9 @@ def _build_xlsx(
         elif ttype == "expense":
             total_expense += val
             monthly_data[month_str]["expense"] += val
-            cat_display = f"{emoji} {category}".strip() if emoji or category else "Other"
+            translated_cat = t_category(category, lang)
+            other_lbl = {"ru": "Прочее", "en": "Other", "kk": "Басқа"}.get(lang, "Other")
+            cat_display = f"{emoji} {translated_cat}".strip() if emoji or translated_cat else other_lbl
             category_data[cat_display] += val
 
     wb = Workbook()
@@ -1001,7 +1005,8 @@ def _build_xlsx(
 
     for idx, r in enumerate(rows_list, start=2):
         tx_id, ts, ttype, amount, account, category, emoji, note = r
-        cat_display = f"{emoji} {category}".strip() if emoji or category else ""
+        translated_cat = t_category(category, lang)
+        cat_display = f"{emoji} {translated_cat}".strip() if emoji or translated_cat else ""
         
         # Localize type (Income/Expense/Transfer)
         ttype_display = type_local_map.get(str(ttype or "").strip().lower(), str(ttype or ""))
@@ -1072,7 +1077,8 @@ def _build_csv(rows: Iterable[tuple], lang: str, currency: str) -> bytes:
     writer.writerow(headers)
     for r in rows:
         tx_id, ts, ttype, amount, account, category, emoji, note = r
-        cat_display = f"{emoji} {category}".strip() if emoji or category else ""
+        translated_cat = t_category(category, lang)
+        cat_display = f"{emoji} {translated_cat}".strip() if emoji or translated_cat else ""
         writer.writerow([tx_id, ts, ttype, int(amount or 0), currency, account, cat_display, note])
     return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
@@ -1225,7 +1231,7 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
                 "ru": (
                     "📊 <b>Ваш премиум-отчет готов!</b>\n\n"
                     "Файл содержит 3 аналитические вкладки (переключайтесь между ними внизу документа):\n"
-                    "1️⃣ <b>Executive Summary</b> — Главный AI-дашборд и оценка финансового здоровья\n"
+                    "1️⃣ <b>Главная сводка</b> — Главный AI-дашборд и оценка финансового здоровья\n"
                     "2️⃣ <b>Аналитика</b> — Категории, сравнение трендов и прогноз\n"
                     "3️⃣ <b>История операций</b> — Полный реестр ваших транзакций"
                 ),
@@ -1239,7 +1245,7 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
                 "kk": (
                     "📊 <b>Сіздің премиум есебіңіз дайын!</b>\n\n"
                     "Файл 3 талдау парағынан тұрады (құжаттың төменгі жағында ауысыңыз):\n"
-                    "1️⃣ <b>Executive Summary</b> — Басты AI-дашборд және қаржылық денсаулық индексі\n"
+                    "1️⃣ <b>Негізгі жиынтық</b> — Басты AI-дашборд және қаржылық денсаулық индексі\n"
                     "2️⃣ <b>Талдау</b> — Санаттар құрылымы, трендтер және болжам\n"
                     "3️⃣ <b>Операциялар тарихы</b> — Барлық транзакциялар тізімі"
                 )
