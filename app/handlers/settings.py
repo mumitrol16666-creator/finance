@@ -1369,8 +1369,17 @@ async def st_acc_balance_new(m: Message, state: FSMContext, db: aiosqlite.Connec
                 "kk": "🔧 Балансты түзету (қолмен енгізу)",
             }.get(lang, "🔧 Корректировка баланса (ручной ввод)")
             
+            category_id = None
+            try:
+                from app.db.repositories.categories_repo import find_category_by_name_ci
+                cat_row = await find_category_by_name_ci(db, m.from_user.id, tx_type, "Прочее")
+                if cat_row:
+                    category_id = cat_row[0]
+            except Exception:
+                pass
+
             # Log the system transaction to maintain perfect transaction-to-balance reconciliation
-            await create_tx(db, m.from_user.id, now_iso(), tx_type, delta, int(acc_id), None, note, now_iso())
+            await create_tx(db, m.from_user.id, now_iso(), tx_type, delta, int(acc_id), category_id, note, now_iso())
             
         await db.commit()
     except Exception:
