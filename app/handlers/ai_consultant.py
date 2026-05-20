@@ -27,7 +27,7 @@ from app.domain.services.ai_llm_service import render_final_ai_question, render_
 from app.domain.services.reports_service import month_bounds_utc
 from app.ui.formatters import fmt_money
 from app.fsm.states import AiConsultantFlow
-from app.handlers.common import cancel_to_main_menu, deny_feature_message, neutralize_keyboard
+from app.handlers.common import cancel_to_main_menu, deny_feature_message, neutralize_keyboard, is_cancel_text
 from app.ui.i18n import text_matches_key, t
 from app.ui.keyboards import (
     ai_consultant_kb,
@@ -38,8 +38,14 @@ from app.ui.keyboards import (
     cancel_kb,
     reports_kb,
 )
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 router = Router()
+
+def ai_cancel_inline_kb(lang: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t(lang, "BTN_CANCEL"), callback_data="ai:menu")
+    return builder.as_markup()
 PARSE_MODE = "HTML"
 AI_MONTHLY_LIMIT = 5
 AI_CHAT_MONTHLY_LIMIT = 50
@@ -237,12 +243,24 @@ async def _collapse_ui(target: Message | CallbackQuery, state: FSMContext) -> No
     await state.update_data(prompt_message_id=None, flow_message_id=None)
 
 
-async def _render_screen(target: Message | CallbackQuery, state: FSMContext, text: str, *, reply_markup=None) -> None:
+async def _render_screen(target: Message | CallbackQuery, state: FSMContext, text: str, *, reply_markup=None, force_new: bool = False) -> None:
     data = await state.get_data()
     flow_message_id = data.get("flow_message_id")
     bot = target.bot
     chat_id = target.chat.id if isinstance(target, Message) else target.message.chat.id
-    current_message = None if isinstance(target, Message) else target.message
+
+    if force_new:
+        if flow_message_id:
+            await _safe_remove_markup(bot, chat_id, flow_message_id)
+            current_state = await state.get_state()
+            if current_state != AiConsultantFlow.ai_chatting:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=int(flow_message_id))
+                except Exception:
+                    pass
+        sent = await (target.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE) if isinstance(target, Message) else target.message.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE))
+        await state.update_data(flow_message_id=sent.message_id)
+        return
 
     if flow_message_id:
         try:
@@ -251,6 +269,7 @@ async def _render_screen(target: Message | CallbackQuery, state: FSMContext, tex
         except Exception:
             pass
 
+    current_message = None if isinstance(target, Message) else target.message
     if current_message is not None:
         try:
             await current_message.edit_text(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
@@ -274,7 +293,7 @@ async def _show_prompt(target: Message | CallbackQuery, state: FSMContext, db: a
     if isinstance(target, CallbackQuery):
         await _safe_remove_markup(bot, chat_id, target.message.message_id)
     lang = await get_lang(db, target.from_user.id)
-    sent = await (target.answer(text, reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE) if isinstance(target, Message) else target.message.answer(text, reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE))
+    sent = await (target.answer(text, reply_markup=ai_cancel_inline_kb(lang), parse_mode=PARSE_MODE) if isinstance(target, Message) else target.message.answer(text, reply_markup=ai_cancel_inline_kb(lang), parse_mode=PARSE_MODE))
     await state.update_data(prompt_message_id=sent.message_id)
 
 
@@ -317,7 +336,7 @@ async def _open_menu(target: Message | CallbackQuery, state: FSMContext, db: aio
     await state.update_data(ui_scope="ai_consultant")
     await state.set_state(None)
     await _clear_prompt(target, state)
-    await _render_screen(target, state, _menu_text(lang, goal, used, chat_left), reply_markup=ai_consultant_kb(lang))
+    await _render_screen(target, state, _menu_text(lang, goal, used, chat_left), reply_markup=ai_consultant_kb(lang), force_new=isinstance(target, Message))
 
 
 async def _animate_loading(c: CallbackQuery, state: FSMContext, steps: list[str]) -> None:
@@ -334,7 +353,7 @@ async def _animate_loading(c: CallbackQuery, state: FSMContext, steps: list[str]
 async def _open_report_picker(target: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection) -> None:
     lang = await get_lang(db, target.from_user.id)
     text = _ai_t(lang, "report_picker")
-    await _render_screen(target, state, text, reply_markup=ai_report_period_kb(lang))
+    await _render_screen(target, state, text, reply_markup=ai_report_period_kb(lang), force_new=isinstance(target, Message))
 
 
 async def _enter_ai(target: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection) -> None:
@@ -442,7 +461,7 @@ async def _show_ai_teaser(target: Message | CallbackQuery, state: FSMContext, db
     )
     
     await state.update_data(ui_scope="ai_consultant_teaser")
-    await _render_screen(target, state, text, reply_markup=markup)
+    await _render_screen(target, state, text, reply_markup=markup, force_new=isinstance(target, Message))
 
 
 @router.callback_query(F.data == "ai:open")
@@ -491,10 +510,17 @@ async def ai_goal_edit(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connec
 
 @router.message(AiConsultantFlow.waiting_goal, F.text)
 async def ai_goal_save(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    try:
+        await m.delete()
+    except Exception:
+        pass
     goal = (m.text or "").strip()
     lang = await get_lang(db, m.from_user.id)
+    if is_cancel_text(goal):
+        await _open_menu(m, state, db)
+        return
     if len(goal) < 4:
-        await m.answer(_ai_t(lang, "goal_too_short"), parse_mode=PARSE_MODE)
+        await _show_prompt(m, state, db, _ai_t(lang, "goal_too_short"))
         return
     await set_financial_goal(db, m.from_user.id, goal, _now_iso())
     await db.commit()
@@ -517,10 +543,17 @@ async def ai_clarify(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connecti
 
 @router.message(AiConsultantFlow.waiting_context_note, F.text)
 async def ai_clarify_save(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    try:
+        await m.delete()
+    except Exception:
+        pass
     content = (m.text or "").strip()
     lang = await get_lang(db, m.from_user.id)
+    if is_cancel_text(content):
+        await _open_menu(m, state, db)
+        return
     if len(content) < 8:
-        await m.answer(_ai_t(lang, "clarify_too_short"), parse_mode=PARSE_MODE)
+        await _show_prompt(m, state, db, _ai_t(lang, "clarify_too_short"))
         return
     await save_ai_context_note(db, m.from_user.id, note_type="report_clarification", period_kind="month", content=content[:2000], created_at=_now_iso())
     await db.commit()
@@ -531,6 +564,7 @@ async def ai_clarify_save(m: Message, state: FSMContext, db: aiosqlite.Connectio
         state,
         _ai_t(lang, "clarify_saved"),
         reply_markup=ai_consultant_kb(lang),
+        force_new=True,
     )
 
 
@@ -590,7 +624,7 @@ async def ai_chat_message(m: Message, state: FSMContext, db: aiosqlite.Connectio
         context = await build_ai_context(db_session, m.from_user.id, tz_name, "month", goal)
 
     # Показываем «думаю...»
-    await _render_screen(m, state, _ai_t(lang, "chat_thinking"))
+    await _render_screen(m, state, _ai_t(lang, "chat_thinking"), force_new=True)
 
     state_data = await state.get_data()
     chat_history = state_data.get("ai_chat_history", [])
@@ -616,7 +650,7 @@ async def ai_chat_message(m: Message, state: FSMContext, db: aiosqlite.Connectio
     if chat_left <= 5 and chat_left > 0:
         warning = _ai_t(lang, "chat_limit_warning", left=chat_left)
 
-    await _render_screen(m, state, text + warning, reply_markup=ai_chat_kb(lang))
+    await _render_screen(m, state, text + warning, reply_markup=ai_chat_kb(lang), force_new=False)
 
 
 @router.callback_query(F.data == "ai:chat:exit")
