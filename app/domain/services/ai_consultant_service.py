@@ -1018,18 +1018,29 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
         diff = amount - int(prev_cat.get(cat, 0))
         category_deltas.append((cat, amount, diff))
 
+    # Calculate how much is left to save for the goal, considering all accounts (including savings)
+    total_funds = sum(int(r[1] or 0) for r in active_accounts) if active_accounts else 0
+    remaining_to_save = max(0, goal_amount - total_funds) if goal_amount else 0
+
     eta_current_months = None
     eta_with_cut_months = None
-    if goal_amount and projected_free_cash > 0:
-        eta_current_months = max(1, round(goal_amount / projected_free_cash))
+    
     scenario_savings_20 = []
     total_scenario_20 = 0
     for cat, amount in adjustable[:2]:
         save = int(round(amount * 0.2))
         total_scenario_20 += save
         scenario_savings_20.append((cat, save))
-    if goal_amount and projected_free_cash + total_scenario_20 > 0:
-        eta_with_cut_months = max(1, round(goal_amount / (projected_free_cash + total_scenario_20)))
+
+    if goal_amount:
+        if remaining_to_save == 0:
+            eta_current_months = 0
+            eta_with_cut_months = 0
+        else:
+            if projected_free_cash > 0:
+                eta_current_months = max(1, round(remaining_to_save / projected_free_cash))
+            if projected_free_cash + total_scenario_20 > 0:
+                eta_with_cut_months = max(1, round(remaining_to_save / (projected_free_cash + total_scenario_20)))
 
     debt_pressure_ratio = 0.0
     if debt_snapshot["monthly_out"] > 0 and month["income"] > 0:
@@ -1431,11 +1442,14 @@ def render_ai_report(context: dict) -> str:
         advice.append(f"При текущем темпе у тебя может остаться около <b>{fmt_money(projected_free_cash)}</b> свободных денег к концу месяца.")
     if debt_snapshot.get("monthly_out") and projected_free_cash > 0 and debt_snapshot["monthly_out"] > projected_free_cash:
         advice.append("Регулярные платежи по долгам выше прогнозного свободного остатка — лучше не брать на себя новые обязательства и синхронизировать график выплат.")
-    if eta_current:
-        eta_text = f"При текущем свободном остатке цель может занять около <b>{eta_current} мес.</b>"
-        if eta_cut and eta_cut < eta_current:
-            eta_text += f" Если урезать 2 главные категории, срок может сократиться примерно до <b>{eta_cut} мес.</b>"
-        advice.append(eta_text)
+    if eta_current is not None:
+        if eta_current == 0:
+            advice.append("Накоплений на ваших счетах уже достаточно для полной оплаты этой цели!")
+        else:
+            eta_text = f"При текущем свободном остатке цель может занять около <b>{eta_current} мес.</b>"
+            if eta_cut and eta_cut < eta_current:
+                eta_text += f" Если урезать 2 главные категории, срок может сократиться примерно до <b>{eta_cut} мес.</b>"
+            advice.append(eta_text)
 
     lines.extend(["", "<b>Что делать дальше</b>"])
     lines.extend(f"• {x}" for x in advice[:5])
