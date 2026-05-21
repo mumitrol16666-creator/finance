@@ -592,6 +592,11 @@ async def tick_notify(bot):
                 tz, tz_norm = _safe_tz(str(tz_name or "UTC"))
 
                 local_now = now_utc.astimezone(tz)
+                
+                # Suppress all notifications during quiet hours (22:00 - 08:00 user local time)
+                if local_now.hour >= 22 or local_now.hour < 8:
+                    continue
+
                 local_date = local_now.date().isoformat()
 
                 start_utc, end_utc, _, _ = _day_bounds_utc(now_utc, tz_norm)
@@ -698,10 +703,52 @@ async def tick_notify(bot):
                         await mark_daily_sent(db, uid, local_date, _iso(now_utc))
 
             except Exception as e:
-                logger.exception(f"notify tick failed uid={user_id}: {e}")
+                err_msg = str(e).lower()
+                if "chat not found" in err_msg or "forbidden" in err_msg or "user is deactivated" in err_msg or "blocked" in err_msg:
+                    logger.info(f"notify tick skipped: inactive/blocked user uid={user_id} ({e})")
+                else:
+                    logger.exception(f"notify tick failed uid={user_id}: {e}")
                 continue
 
         await db.commit()
+
+
+async def prune_expired_keyboards(bot):
+    """Prunes inline keyboards from messages older than 30 minutes.
+    Removes the reply markup on Telegram and deletes tracking rows from DB.
+    """
+    logger.info("Starting pruning of expired inline keyboards...")
+    from app.db.connection import get_db, transaction
+    
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    
+    try:
+        async with get_db() as db:
+            cur = await db.execute(
+                "SELECT chat_id, message_id FROM sent_keyboards WHERE sent_at < ?",
+                (cutoff,)
+            )
+            rows = await cur.fetchall()
+            
+        for chat_id, message_id in rows:
+            try:
+                await bot.edit_message_reply_markup(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    reply_markup=None
+                )
+            except Exception as e:
+                logger.debug(f"Failed to clear keyboard for message {message_id} in chat {chat_id}: {e}")
+                
+            async with transaction() as db:
+                await db.execute(
+                    "DELETE FROM sent_keyboards WHERE chat_id=? AND message_id=?",
+                    (chat_id, message_id)
+                )
+        if rows:
+            logger.info(f"Successfully pruned {len(rows)} expired inline keyboards.")
+    except Exception as e:
+        logger.error(f"Error in prune_expired_keyboards: {e}")
 
 
 async def db_maintenance():
@@ -727,6 +774,17 @@ def setup_notify_scheduler(bot) -> AsyncIOScheduler:
         coalesce=True,
         misfire_grace_time=30,
     )
+    # Prune expired inline keyboards every minute at second 15
+    sch.add_job(
+        prune_expired_keyboards,
+        CronTrigger(second=15),
+        args=(bot,),
+        id="keyboards:prune",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
+    )
     # Daily database maintenance at 03:00 AM UTC
     sch.add_job(
         db_maintenance,
@@ -737,11 +795,11 @@ def setup_notify_scheduler(bot) -> AsyncIOScheduler:
         coalesce=True,
         misfire_grace_time=300,
     )
-    # Weekly AI recommendation evaluation on Sunday at 18:00 UTC
+    # Hourly AI recommendation evaluation
     from app.domain.services.coaching_loop_service import evaluate_active_recommendations
     sch.add_job(
         evaluate_active_recommendations,
-        CronTrigger(day_of_week="sun", hour=18, minute=0),
+        CronTrigger(minute=0),
         args=(bot,),
         id="ai:evaluate_recommendations",
         replace_existing=True,

@@ -1243,6 +1243,46 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     await _flow_finish(ctx, state, msg, db)
     await _check_and_send_streak_reward(ctx, db, streak_before)
 
+    # Anomaly Detection
+    try:
+        from app.domain.services.financial_analysis_engine import get_robust_category_anomalies
+        from loguru import logger
+        anomalies = await get_robust_category_anomalies(db, ctx.from_user.id, int(data["category_id"]), 20)
+        is_anomalous = any(anom["id"] == tx_id for anom in anomalies)
+        if is_anomalous:
+            # 1. Update tier to 'anomaly' in DB
+            await db.execute("UPDATE transactions SET tier='anomaly' WHERE id=?", (tx_id,))
+            await db.commit()
+            
+            # 2. Prompt user via inline keyboard
+            bot = ctx.bot
+            chat_id = ctx.chat.id if isinstance(ctx, Message) else ctx.message.chat.id
+            
+            markup = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text=_i18n_t(lang, "ANOMALY_BTN_ONEOFF"), callback_data=f"anom:oneoff:{tx_id}"),
+                        InlineKeyboardButton(text=_i18n_t(lang, "ANOMALY_BTN_REGULAR"), callback_data=f"anom:regular:{tx_id}")
+                    ]
+                ]
+            )
+            
+            category_text = escape(cat_label)
+            amount_text = fmt_money(int(data['amount']))
+            prompt_text = _i18n_t(lang, "ANOMALY_DETECTED").format(amount=amount_text, category=category_text)
+            
+            logger.info(f"Anomaly detected for user={ctx.from_user.id}, tx_id={tx_id}, amount={data['amount']}, category={cat_label}")
+            
+            await bot.send_message(
+                chat_id=chat_id,
+                text=prompt_text,
+                reply_markup=markup,
+                parse_mode=PARSE_MODE
+            )
+    except Exception as e:
+        from loguru import logger
+        logger.exception(f"Error in anomaly detection for tx_id={tx_id}: {e}")
+
     if is_over_limit and not has_premium:
         bot = ctx.bot
         chat_id = ctx.chat.id if isinstance(ctx, Message) else ctx.message.chat.id
@@ -2034,6 +2074,102 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
 async def _amount_non_text_fallback(m: Message, state: FSMContext, db):
     lang = await get_lang(db, m.from_user.id)
     await m.answer(_i18n_t(lang, "ENTER_AMOUNT_HINT"))
+
+
+
+# ---------------------------------------------------------------------------
+# Anomaly Confirmation Callbacks
+# ---------------------------------------------------------------------------
+@router.callback_query(F.data.startswith("anom:"))
+async def _anomaly_callback(c: CallbackQuery, db):
+    parts = c.data.split(":")
+    if len(parts) < 3:
+        await c.answer()
+        return
+
+    kind = parts[1]  # oneoff or regular
+    try:
+        tx_id = int(parts[2])
+    except ValueError:
+        await c.answer()
+        return
+
+    user_id = c.from_user.id
+    lang = await get_lang(db, user_id)
+
+    # 1. Fetch transaction details to populate the AI context notes
+    cur = await db.execute(
+        "SELECT t.amount, t.note, t.ts, c.name, c.emoji "
+        "FROM transactions t "
+        "LEFT JOIN categories c ON t.category_id = c.id "
+        "WHERE t.id=? AND t.user_id=?",
+        (tx_id, user_id),
+    )
+    row = await cur.fetchone()
+    if not row:
+        await c.answer("Transaction not found", show_alert=True)
+        return
+
+    amount_raw, tx_note, ts, cat_name, cat_emoji = row
+    amount_val = abs(amount_raw)
+    amount_str = fmt_money(amount_val)
+    cat_label = f"{cat_emoji or ''} {cat_name or ''}".strip() or "Без категории"
+    tx_date = ts.split("T")[0]
+    note_str = tx_note or ""
+
+    from app.db.repositories.ai_context_repo import save_ai_context_note, get_latest_ai_context_note
+    from app.domain.services.accounting_service import utcnow_iso
+
+    # 2. Handle kind (oneoff vs regular)
+    if kind == "oneoff":
+        await db.execute("UPDATE transactions SET tier='anomaly' WHERE id=? AND user_id=?", (tx_id, user_id))
+        await db.commit()
+
+        if lang == "en":
+            note_content = f"Expense of {amount_str} in category {cat_label} on {tx_date} ({note_str}) is confirmed as one-off."
+        elif lang == "kk":
+            note_content = f"{tx_date} күні {cat_label} санатындағы {amount_str} шығыс ({note_str}) бір реттік болып расталды."
+        else:
+            note_content = f"Расход {amount_str} в категории {cat_label} от {tx_date} ({note_str}) подтвержден как разовый."
+
+        confirmation_text = _i18n_t(lang, "ANOMALY_CONFIRMED_ONEOFF")
+    else:  # regular
+        await db.execute("UPDATE transactions SET tier='routine' WHERE id=? AND user_id=?", (tx_id, user_id))
+        await db.commit()
+
+        if lang == "en":
+            note_content = f"Expense of {amount_str} in category {cat_label} on {tx_date} ({note_str}) is confirmed as regular."
+        elif lang == "kk":
+            note_content = f"{tx_date} күні {cat_label} санатындағы {amount_str} шығыс ({note_str}) тұрақты болып расталды."
+        else:
+            note_content = f"Расход {amount_str} в категории {cat_label} от {tx_date} ({note_str}) подтвержден как регулярный."
+
+        confirmation_text = _i18n_t(lang, "ANOMALY_CONFIRMED_REGULAR")
+
+    # 3. Append to existing or create new report_clarification
+    existing = await get_latest_ai_context_note(db, user_id, note_type="report_clarification", period_kind="month")
+    if existing and existing.get("content"):
+        combined = existing["content"] + "\n" + note_content
+    else:
+        combined = note_content
+
+    await save_ai_context_note(
+        db,
+        user_id,
+        note_type="report_clarification",
+        period_kind="month",
+        content=combined,
+        created_at=utcnow_iso(),
+    )
+    await db.commit()
+
+    # 4. Remove inline buttons and edit message text
+    try:
+        await c.message.edit_text(text=confirmation_text, reply_markup=None)
+    except Exception:
+        await c.message.answer(confirmation_text)
+    
+    await c.answer()
 
 
 # ---------------------------------------------------------------------------

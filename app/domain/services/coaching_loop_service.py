@@ -63,6 +63,16 @@ async def evaluate_active_recommendations(bot: Bot) -> None:
                     
                 # Calculate current metrics
                 tz_name = await get_timezone(db, user_id) or "Asia/Aqtobe"
+                
+                from zoneinfo import ZoneInfo
+                try:
+                    tz = ZoneInfo(tz_name)
+                except Exception:
+                    tz = ZoneInfo("Asia/Aqtobe")
+                local_now = now_utc.astimezone(tz)
+                if local_now.hour >= 22 or local_now.hour < 8:
+                    continue
+
                 metrics = await calculate_financial_metrics(db, user_id, tz_name)
                 
                 curr_val = get_metric_value(metrics, metric_name)

@@ -9,7 +9,7 @@ from app.db.connection import open_db
 from app.db.migrate import run_migrations
 from app.handlers import get_routers
 from app.logging.setup import setup_logging
-from app.middlewares import ThrottlingMiddleware, DbSessionMiddleware
+from app.middlewares import ThrottlingMiddleware, DbSessionMiddleware, KeyboardTrackerMiddleware
 from app.middlewares.access import AccessContextMiddleware
 from app.middlewares.fsm_escape import FsmEscapeMiddleware
 from app.middlewares_notification_quiet import NotificationQuietMiddleware
@@ -65,6 +65,7 @@ async def main():
     setup_logging(settings.debug)
 
     bot = Bot(token=settings.bot_token)
+    bot.session.middleware(KeyboardTrackerMiddleware())
     dp = Dispatcher(events_isolation=SimpleEventIsolation())
 
     # Open db connection per update
