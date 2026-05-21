@@ -791,7 +791,8 @@ async def planned_done(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connec
     note = str(row["comment"] or row["title"] or "") or None
 
     sign_amount = amount if kind == "income" else -amount
-    tx_id = await create_tx(db, c.from_user.id, now_iso(), kind, sign_amount, acc, cat, note, now_iso())
+    tier = 'obligation' if int(row.get("is_required") or 0) == 1 else 'routine'
+    tx_id = await create_tx(db, c.from_user.id, now_iso(), kind, sign_amount, acc, cat, note, now_iso(), tier=tier)
     await apply_expense_income(db, c.from_user.id, tx_id, sign_amount, acc)
     await db.commit()
 

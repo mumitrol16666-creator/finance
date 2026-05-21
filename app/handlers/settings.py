@@ -1370,7 +1370,7 @@ async def st_acc_balance_new(m: Message, state: FSMContext, db: aiosqlite.Connec
             }.get(lang, "🔧 Корректировка баланса (ручной ввод)")
             
             # Log the system transaction to maintain perfect transaction-to-balance reconciliation
-            await create_tx(db, m.from_user.id, now_iso(), tx_type, delta, int(acc_id), None, note, now_iso())
+            await create_tx(db, m.from_user.id, now_iso(), tx_type, delta, int(acc_id), None, note, now_iso(), tier='anomaly')
             
         await db.commit()
     except Exception:

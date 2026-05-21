@@ -666,7 +666,7 @@ async def _mark_income_received(c: CallbackQuery, state: FSMContext, db: aiosqli
 
     note = str(row['comment'] or row['title'] or '')
     try:
-        tx_id = await create_tx(db, c.from_user.id, ts, 'income', int(row['amount']), int(row['account_id']), int(row['category_id']), note, ts)
+        tx_id = await create_tx(db, c.from_user.id, ts, 'income', int(row['amount']), int(row['account_id']), int(row['category_id']), note, ts, tier='obligation')
         await apply_expense_income(db, c.from_user.id, tx_id, int(row['amount']), int(row['account_id']))
         await mark_recurring_received(db, c.from_user.id, recurring_id, ts)
         await db.commit()

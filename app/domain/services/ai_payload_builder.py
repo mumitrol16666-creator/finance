@@ -73,6 +73,36 @@ def _build_core_metrics(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_tiered_metrics(context: dict[str, Any]) -> dict[str, Any]:
+    """Extract transaction tiering metrics: CDBR, dual runway, multicurrency."""
+    metrics = context.get("financial_metrics") or {}
+    cdbr_data = metrics.get("cdbr") or {}
+    balances = metrics.get("balances") or {}
+    runway_op = metrics.get("runway_operational") or {}
+    runway_full = metrics.get("runway_full") or {}
+
+    return {
+        "tiered_burn_rate": {
+            "clean_daily_burn_rate": cdbr_data.get("cdbr"),
+            "routine_total_30d": cdbr_data.get("routine_total"),
+            "obligation_total_30d": cdbr_data.get("obligation_total"),
+            "anomaly_total_30d": cdbr_data.get("anomaly_total"),
+            "legacy_daily_burn": cdbr_data.get("legacy_daily_burn"),
+        },
+        "runway": {
+            "operational_days": runway_op.get("runway_operational_days"),
+            "full_days": runway_full.get("runway_full_days"),
+            "base_currency": balances.get("base_currency"),
+            "has_multi_currency": balances.get("has_multi_currency", False),
+        },
+        "balances_converted": {
+            "liquid_base": balances.get("liquid_balance_base"),
+            "saving_base": balances.get("saving_balance_base"),
+            "total_base": balances.get("total_balance_base"),
+        },
+    }
+
+
 def _build_trend_signals(context: dict[str, Any]) -> dict[str, Any]:
     """Weekly trends, trend direction, compressed summary, month history."""
     return {
@@ -266,6 +296,7 @@ def build_llm_payload(context: dict[str, Any]) -> dict[str, Any]:
         "ai_priority_insights": context.get("ai_priority_insights"),
         "ai_recommendations": context.get("ai_recommendations"),
         "financial_scores": _build_financial_scores(context),
+        **_build_tiered_metrics(context),
     }
 
     # Trend / behavioral / risk signals

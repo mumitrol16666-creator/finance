@@ -636,7 +636,7 @@ async def _mark_expense_paid(c: CallbackQuery, state: FSMContext, db: aiosqlite.
         return
     ts = now_iso()
     try:
-        tx_id = await create_tx(db, c.from_user.id, ts, 'expense', -int(row['amount']), int(row['account_id']), int(row['category_id']), row['comment'] or row['title'], ts, None)
+        tx_id = await create_tx(db, c.from_user.id, ts, 'expense', -int(row['amount']), int(row['account_id']), int(row['category_id']), row['comment'] or row['title'], ts, None, tier='obligation')
         await apply_expense_income(db, c.from_user.id, tx_id, -int(row['amount']), int(row['account_id']))
         await mark_recurring_paid(db, c.from_user.id, recurring_id, ts)
         await db.commit()

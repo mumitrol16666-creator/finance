@@ -374,7 +374,11 @@ TEXT = {
         "TX_INC_MONTH_DECLINE": "↘️ К {month}: <b>-{delta}</b>",
         "TX_INC_MONTH_EQUAL": "➡️ К {month}: <b>без изменений</b>",
         "TX_INC_MONTH_NO_DATA": "📁 За {month}: <b>нет данных</b>",
-
+        "ANOMALY_DETECTED": "🚨 <b>Замечена крупная трата!</b>\n\nВы добавили расход на сумму <b>{amount}</b> в категории <b>{category}</b>.\nЭто разовая покупка или регулярное изменение ваших расходов?",
+        "ANOMALY_BTN_ONEOFF": "📦 Разовая трата",
+        "ANOMALY_BTN_REGULAR": "🔄 Регулярный расход",
+        "ANOMALY_CONFIRMED_ONEOFF": "📥 Записано: это разовая трата. Она исключена из расчета ежедневной нормы сгорания (CDBR).",
+        "ANOMALY_CONFIRMED_REGULAR": "🔄 Записано: это регулярный расход. Он будет учитываться в расчете ежедневной нормы сгорания (CDBR).",
     },
     "en": {
         "BTN_EXPENSE": "❌ Expense",
@@ -711,7 +715,11 @@ TEXT = {
         "TX_INC_MONTH_DECLINE": "↘️ vs {month}: <b>-{delta}</b>",
         "TX_INC_MONTH_EQUAL": "➡️ vs {month}: <b>no changes</b>",
         "TX_INC_MONTH_NO_DATA": "📁 For {month}: <b>no data</b>",
-
+        "ANOMALY_DETECTED": "🚨 <b>Large spend detected!</b>\n\nYou added an expense of <b>{amount}</b> in the <b>{category}</b> category.\nIs this a one-off purchase or a regular change in your spending?",
+        "ANOMALY_BTN_ONEOFF": "📦 One-off spend",
+        "ANOMALY_BTN_REGULAR": "🔄 Regular expense",
+        "ANOMALY_CONFIRMED_ONEOFF": "📥 Saved: this is a one-off spend. It will be excluded from your Clean Daily Burn Rate (CDBR) calculation.",
+        "ANOMALY_CONFIRMED_REGULAR": "🔄 Saved: this is a regular expense. It will be included in your Clean Daily Burn Rate (CDBR) calculation.",
     },
     "kk": {
         "BTN_EXPENSE": "❌ Шығыс",
@@ -1049,7 +1057,11 @@ TEXT = {
         "TX_INC_MONTH_DECLINE": "↘️ {month} айымен салыстырғанда: <b>-{delta}</b>",
         "TX_INC_MONTH_EQUAL": "➡️ {month} айымен салыстырғанда: <b>өзгеріссіз</b>",
         "TX_INC_MONTH_NO_DATA": "📁 {month} үшін: <b>деректер жоқ</b>",
-
+        "ANOMALY_DETECTED": "🚨 <b>Ірі шығыс байқалды!</b>\n\nСіз {category} санатында <b>{amount}</b> сомасына шығыс қостыңыз.\nБұл бір реттік сатып алу ма әлде шығындарыңыздың тұрақты өзгеруі ме?",
+        "ANOMALY_BTN_ONEOFF": "📦 Бір реттік шығыс",
+        "ANOMALY_BTN_REGULAR": "🔄 Тұрақты шығыс",
+        "ANOMALY_CONFIRMED_ONEOFF": "📥 Жазылды: бұл бір реттік шығыс. Ол күнделікті шығын нормасын (CDBR) есептеуден алынып тасталады.",
+        "ANOMALY_CONFIRMED_REGULAR": "🔄 Жазылды: бұл тұрақты шығыс. Ол күнделікті шығын нормасын (CDBR) есептеуге қосылады.",
     },
 }
 ALL_LANGS = ("ru", "en", "kk")

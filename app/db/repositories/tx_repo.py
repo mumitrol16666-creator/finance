@@ -4,11 +4,11 @@ from app.db.repositories.accounts_repo import apply_balance_delta
 
 async def create_tx(db: aiosqlite.Connection, user_id: int, ts_iso: str, tx_type: str, amount: int,
                     account_id: int, category_id: int | None, note: str | None, created_at: str,
-                    related_tx_id: int | None = None) -> int:
+                    related_tx_id: int | None = None, tier: str = 'routine') -> int:
     cur = await db.execute(
-        "INSERT INTO transactions(user_id, ts, type, amount, account_id, category_id, note, related_tx_id, created_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
-        (user_id, ts_iso, tx_type, amount, account_id, category_id, note, related_tx_id, created_at),
+        "INSERT INTO transactions(user_id, ts, type, amount, account_id, category_id, note, related_tx_id, created_at, tier) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (user_id, ts_iso, tx_type, amount, account_id, category_id, note, related_tx_id, created_at, tier),
     )
     tx_id = int(cur.lastrowid)
     from app.domain.services.ai_event_worker import trigger_background_ai_analysis
