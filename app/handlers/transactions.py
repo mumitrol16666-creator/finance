@@ -969,6 +969,7 @@ async def exp_category_add_handle(m: Message, state: FSMContext, db):
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).isoformat()
     cat_id = await create_category(db, m.from_user.id, raw, "🔹", "expense", ts)
+    await db.commit()
     
     await state.update_data(
         category_id=cat_id,
@@ -1018,6 +1019,7 @@ async def inc_category_add_handle(m: Message, state: FSMContext, db):
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).isoformat()
     cat_id = await create_category(db, m.from_user.id, raw, "🔹", "income", ts)
+    await db.commit()
     
     await state.update_data(
         category_id=cat_id,
