@@ -295,7 +295,42 @@ async def _ensure_settings_reply_keyboard(target: Message | CallbackQuery, state
             await state.update_data(extra_prompt_message_ids=extra_ids)
 
     sender = target.message.answer if isinstance(target, CallbackQuery) else target.answer
-    txt = "\u200b"
+    
+    last_callback = target.data if isinstance(target, CallbackQuery) else None
+    return_to = data.get("settings_return_to")
+
+    if current_state == SettingsFlow.daily_report_time:
+        txt = "\u200b"
+    elif last_callback == "st:lang":
+        txt = {
+            "ru": "Выберите язык.",
+            "en": "Select language.",
+            "kk": "Тілді таңдаңыз.",
+        }.get(lang, "Выберите язык.")
+    elif last_callback in ("st:reset", "st:acc:reset"):
+        txt = {
+            "ru": "Походу Удаляемся.",
+            "en": "Looks like we are resetting.",
+            "kk": "Өшіріліп жатқан сияқтымыз.",
+        }.get(lang, "Походу Удаляемся.")
+    elif return_to == "notifs_menu":
+        txt = {
+            "ru": "Открыл уведомления.",
+            "en": "Opened notifications.",
+            "kk": "Хабарламалар ашылды.",
+        }.get(lang, "Открыл уведомления.")
+    elif return_to == "accounts_menu":
+        txt = {
+            "ru": "Открыл настройки счетов.",
+            "en": "Opened account settings.",
+            "kk": "Шоттар баптаулары ашылды.",
+        }.get(lang, "Открыл настройки счетов.")
+    else:
+        txt = {
+            "ru": "Режим настроек открыт.",
+            "en": "Settings mode is open.",
+            "kk": "Баптау режимі ашық.",
+        }.get(lang, "Режим настроек открыт.")
     
     markup = back_and_menu_kb(lang) if expected_type == "back_and_menu" else minimized_menu_kb(lang)
     sent = await sender(txt, reply_markup=markup, disable_notification=True)
