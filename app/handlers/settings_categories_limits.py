@@ -56,11 +56,7 @@ async def _ensure_settings_reply_keyboard(target: Message | CallbackQuery, state
     if data.get("settings_reply_message_id"):
         return
     sender = target.message.answer if isinstance(target, CallbackQuery) else target.answer
-    txt = {
-        "ru": "Режим настроек открыт.",
-        "en": "Settings mode is open.",
-        "kk": "Баптау режимі ашық.",
-    }.get(lang, "Режим настроек открыт.")
+    txt = "\u200b"
     sent = await sender(txt, reply_markup=minimized_menu_kb(lang), disable_notification=True)
     extra_ids = data.get("extra_prompt_message_ids") or []
     if not isinstance(extra_ids, list):
