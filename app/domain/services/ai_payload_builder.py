@@ -232,10 +232,13 @@ def build_llm_payload(context: dict[str, Any]) -> dict[str, Any]:
     tx_list = []
     if context.get("current_rows"):
         for r in context["current_rows"][-60:]:
+            tx_type = r["type"]
+            raw_amount = int(r["amount"] or 0)
+            amount = abs(raw_amount) if tx_type in ("income", "expense") else raw_amount
             tx_list.append({
                 "date": r["ts"][:10] if r["ts"] else "",
-                "type": r["type"],
-                "amount": abs(int(r["amount"] or 0)),
+                "type": tx_type,
+                "amount": amount,
                 "category": r["category_name"],
                 "note": r["note"],
             })

@@ -502,7 +502,7 @@ def _detect_seasonality(tz_name: str, clarification_note: dict | None) -> str:
 
 async def _fetch_active_accounts(db: aiosqlite.Connection, user_id: int):
     cur = await db.execute(
-        "SELECT name, balance, currency, is_saving FROM accounts WHERE user_id=? AND is_archived=0 ORDER BY is_saving ASC, balance DESC",
+        "SELECT name, balance, currency, is_saving, starting_balance FROM accounts WHERE user_id=? AND is_archived=0 ORDER BY is_saving ASC, balance DESC",
         (user_id,),
     )
     return await cur.fetchall()
