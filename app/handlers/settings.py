@@ -52,6 +52,8 @@ from app.ui.keyboards import (
     archived_account_actions_kb,
     archived_accounts_kb,
     cancel_kb,
+    minimized_menu_kb,
+    back_and_menu_kb,
     main_menu,
     notifications_kb,
     nudge_interval_kb,
@@ -275,21 +277,44 @@ async def _start_settings_session(state: FSMContext) -> None:
 
 async def _ensure_settings_reply_keyboard(target: Message | CallbackQuery, state: FSMContext, lang: str) -> None:
     data = await state.get_data()
-    if data.get("settings_reply_message_id"):
+    current_state = await state.get_state()
+    
+    expected_type = "back_and_menu" if current_state == SettingsFlow.daily_report_time else "minimized_menu"
+    current_type = data.get("settings_reply_markup_type")
+    
+    if data.get("settings_reply_message_id") and current_type == expected_type:
         return
+
+    bot, chat_id = _chat_and_bot(target)
+    old_id = data.get("settings_reply_message_id")
+    if old_id:
+        await _safe_delete_message(bot, chat_id, old_id)
+        extra_ids = data.get("extra_prompt_message_ids") or []
+        if old_id in extra_ids:
+            extra_ids.remove(old_id)
+            await state.update_data(extra_prompt_message_ids=extra_ids)
+
     sender = target.message.answer if isinstance(target, CallbackQuery) else target.answer
     txt = {
         "ru": "Режим настроек открыт.",
         "en": "Settings mode is open.",
         "kk": "Баптау режимі ашық.",
     }.get(lang, "Режим настроек открыт.")
-    sent = await sender(txt, reply_markup=cancel_kb(lang), disable_notification=True)
+    
+    markup = back_and_menu_kb(lang) if expected_type == "back_and_menu" else minimized_menu_kb(lang)
+    sent = await sender(txt, reply_markup=markup, disable_notification=True)
+    
+    data = await state.get_data()
     extra_ids = data.get("extra_prompt_message_ids") or []
     if not isinstance(extra_ids, list):
         extra_ids = [extra_ids]
     extra_ids = [x for x in extra_ids if x]
     extra_ids.append(sent.message_id)
-    await state.update_data(settings_reply_message_id=sent.message_id, extra_prompt_message_ids=extra_ids)
+    await state.update_data(
+        settings_reply_message_id=sent.message_id, 
+        extra_prompt_message_ids=extra_ids,
+        settings_reply_markup_type=expected_type
+    )
 
 
 async def _cancel_settings_flow(m: Message, state: FSMContext, db: aiosqlite.Connection) -> None:
@@ -601,6 +626,7 @@ async def _go_notifs_menu(
         await state.update_data(settings_return_to="settings_root")
         lang = await get_lang(db, target.from_user.id)
         await _render_screen(target, state, _empty_notifs_text(lang), reply_markup=settings_kb(lang))
+        await _ensure_settings_reply_keyboard(target, state, lang)
         return
 
     daily_enabled, daily_time, nudge_enabled, nudge_interval = row
@@ -625,6 +651,7 @@ async def _go_notifs_menu(
             lang,
         ),
     )
+    await _ensure_settings_reply_keyboard(target, state, lang)
 
 
 # =========================================================
@@ -640,7 +667,12 @@ async def _show_input_prompt(
     await _clear_prompt(target, state)
 
     data = await state.get_data()
-    reply_markup = None if data.get("settings_reply_message_id") else cancel_kb((data.get("lang") or "ru"))
+    current_state = await state.get_state()
+    if current_state == SettingsFlow.daily_report_time:
+        default_kb = back_and_menu_kb((data.get("lang") or "ru"))
+    else:
+        default_kb = minimized_menu_kb((data.get("lang") or "ru"))
+    reply_markup = None if data.get("settings_reply_message_id") else default_kb
     sent = await (
         target.message.answer(text, reply_markup=reply_markup, parse_mode=PARSE_MODE)
         if isinstance(target, CallbackQuery)
@@ -1760,6 +1792,10 @@ async def st_notifs_daily_time_set(m: Message, state: FSMContext, db: aiosqlite.
     await consume_user_input(m, state)
     if _is_cancel(m.text):
         await _cancel_settings_flow(m, state, db)
+        return
+
+    if m.text and text_matches_key(m.text.strip(), "BTN_BACK"):
+        await _go_notifs_menu(m, state, db)
         return
 
     hhmm = parse_hhmm(m.text or "")

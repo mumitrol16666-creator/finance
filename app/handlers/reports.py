@@ -29,7 +29,7 @@ from app.domain.services.reports_service import (
     week_bounds_utc,
     build_smart_suggestion,
 )
-from app.handlers.common import deny_feature_message, cancel_to_main_menu, build_main_menu_markup, _cleanup_ui, _ensure_minimized_menu
+from app.handlers.common import deny_feature_message, cancel_to_main_menu, build_main_menu_markup, _cleanup_ui, _ensure_minimized_menu, neutralize_keyboard
 from app.ui.formatters import fmt_money
 from app.ui.i18n import t, text_matches_key, t_category
 from app.ui.keyboards import cancel_kb, reports_kb, minimized_menu_kb
@@ -188,7 +188,7 @@ def _labels(lang: str) -> dict[str, str]:
             "today": "Day",
             "week": "Week",
             "month": "Month",
-            "show_categories": "Categories",
+            "show_categories": "Show categories",
             "hide_categories": "Hide categories",
             "to_menu": "🏠 Menu",
             "income": "Income",
@@ -233,7 +233,7 @@ def _labels(lang: str) -> dict[str, str]:
             "today": "Күн",
             "week": "Апта",
             "month": "Ай",
-            "show_categories": "Санаттар",
+            "show_categories": "Санаттарды көрсету",
             "hide_categories": "Санаттарды жасыру",
             "to_menu": "🏠 Мәзір",
             "income": "Кіріс",
@@ -277,7 +277,7 @@ def _labels(lang: str) -> dict[str, str]:
         "today": "День",
         "week": "Неделя",
         "month": "Месяц",
-        "show_categories": "Категории",
+        "show_categories": "Показать категории",
         "hide_categories": "Скрыть категории",
         "to_menu": "🏠 Меню",
         "income": "Доход",
@@ -320,11 +320,40 @@ def _labels(lang: str) -> dict[str, str]:
 def _report_kb(lang: str, period: str, show_categories: bool) -> InlineKeyboardMarkup:
     labels = _labels(lang)
     kb = InlineKeyboardBuilder()
-    kb.button(text=labels["today"], callback_data=f"rp:view:day:{1 if period == 'day' and show_categories else 0}")
-    kb.button(text=labels["week"], callback_data=f"rp:view:week:{1 if period == 'week' and show_categories else 0}")
-    kb.button(text=labels["month"], callback_data=f"rp:view:month:{1 if period == 'month' and show_categories else 0}")
-    kb.button(text=labels["hide_categories"] if show_categories else labels["show_categories"], callback_data=f"rp:view:{period}:{0 if show_categories else 1}")
-    kb.adjust(3, 1)
+
+    day_emoji = "☀️"
+    week_emoji = "🗓"
+    month_emoji = "📅"
+
+    day_text = f"{day_emoji} {labels['today']}"
+    week_text = f"{week_emoji} {labels['week']}"
+    month_text = f"{month_emoji} {labels['month']}"
+
+    if period == "day":
+        day_text = f"🟢 {day_text}"
+    elif period == "week":
+        week_text = f"🟢 {week_text}"
+    elif period == "month":
+        month_text = f"🟢 {month_text}"
+
+    kb.button(text=day_text, callback_data=f"rp:view:day:{1 if period == 'day' and show_categories else 0}")
+    kb.button(text=week_text, callback_data=f"rp:view:week:{1 if period == 'week' and show_categories else 0}")
+    kb.button(text=month_text, callback_data=f"rp:view:month:{1 if period == 'month' and show_categories else 0}")
+
+    if show_categories:
+        cat_text = f"🟢 📂 {labels['hide_categories']}"
+    else:
+        cat_text = f"🗂 {labels['show_categories']}"
+
+    kb.button(text=cat_text, callback_data=f"rp:view:{period}:{0 if show_categories else 1}")
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="rp:hub")
+    kb.adjust(3, 1, 1)
+    return kb.as_markup()
+
+
+def _streak_kb(lang: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="rp:hub")
     return kb.as_markup()
 
 
@@ -689,7 +718,7 @@ async def _render_streak(m: Message, db: aiosqlite.Connection, user_id: int, *, 
     if hint:
         lines += ["", hint]
 
-    rendered = await _edit_or_answer(m, db, "\n".join(lines), reply_markup=reports_kb(lang), prefer_edit=prefer_edit)
+    rendered = await _edit_or_answer(m, db, "\n".join(lines), reply_markup=_streak_kb(lang), prefer_edit=prefer_edit)
     if state is not None and rendered is not None:
         await state.update_data(flow_message_id=rendered.message_id, ui_scope="reports")
 

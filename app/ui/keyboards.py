@@ -118,6 +118,14 @@ def minimized_menu_kb(lang: str = "ru") -> ReplyKeyboardMarkup:
     return kb.as_markup(resize_keyboard=True)
 
 
+def back_and_menu_kb(lang: str = "ru") -> ReplyKeyboardMarkup:
+    kb = ReplyKeyboardBuilder()
+    kb.add(KeyboardButton(text=t(lang, "BTN_BACK")))
+    kb.add(KeyboardButton(text=t(lang, "BTN_RETURN_TO_MAIN_MENU")))
+    kb.adjust(1, 1)
+    return kb.as_markup(resize_keyboard=True)
+
+
 def recurring_hub_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=t(lang, "BTN_RECURRING_EXPENSES"), callback_data="re:menu")
