@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import Any
 from loguru import logger
 
@@ -12,9 +13,11 @@ from app.domain.services.ai_consultant_service import (
     render_ai_report,
     render_ai_report_download,
 )
+from app.domain.services.ai_payload_builder import build_llm_payload
 from app.integrations.openai_client import get_openai_client, get_openai_model, has_openai_key
 
 USE_ADVANCED_AI_REPORTS = True
+MAX_REPORT_CHARS = 4500
 
 _ALLOWED_TAGS = {"b", "i", "code", "pre", "u", "s", "ins", "del", "strong", "em"}
 
@@ -61,13 +64,13 @@ SYSTEM_PROMPT_REPORT = """
 - Оценивай уровень уверенности своих выводов на основе 'analysis_confidence' (high, medium, low).
 - РАЗГРАНИЧИВАЙ ПОНЯТИЯ: Четко разделяй "Чистый результат за период" (доходы текущего периода минус расходы этого периода) и "Общий баланс на счетах" (total_balance). Если чистый результат за период отрицательный, но общий баланс положителен (благодаря накоплениям прошлых периодов), обязательно укажи на это пользователю: объясни, что дефицит этого периода покрывается накоплениями прошлых месяцев, общий баланс остается положительным, и паниковать не нужно.
 
-ПРАВИЛА БОРЬБЫ С ГАЛЛЮЦИНАЦИЯМИ И ВОДОЙ:
-- Никогда не придумывай данные, которых нет в контексте.
-- Не делай психологических выводов о личности пользователя и не пытайся угадать его эмоции.
-- Не объясняй причины трат, если они не следуют напрямую из примечаний к транзакциям.
-- Если вывод вероятностный — четко помечай его как гипотезу или предположение.
-- Избегай мотивационной "воды", общих финансовых советов и повторений. Говори исключительно на языке цифр и фактов.
-- Каждый блок отчета должен содержать максимум 3-5 информативных предложений.
+ПРАВИЛА КАЧЕСТВА АНАЛИЗА:
+- Опирайся исключительно на предоставленные данные. Если факта нет в контексте — не додумывай.
+- Избегай психологических интерпретаций; фокусируйся на числах и фактах.
+- Причины трат комментируй только если они явно следуют из примечаний к транзакциям.
+- Вероятностные выводы помечай как предположения, указывая уровень уверенности из поля confidence.
+- Обрати внимание: каждый блок лучше ограничить 3-5 ёмкими предложениями без мотивационной воды.
+- Если в данных есть поле is_probably_recurring у спайка — это скорее регулярный платёж, а не аномалия.
 
 СТРУКТУРА ОТЧЕТА:
 🎯 <b>ЦЕЛЬ: [Название цели]</b>
@@ -142,103 +145,20 @@ SYSTEM_PROMPT_QUICK_ADD = """
 """.strip()
 
 
-def _build_payload(context: dict[str, Any]) -> dict[str, Any]:
-    meta = context["meta"]
-    current = context["current"]
-    previous = context["previous"]
-    month = context["month"]
-    
-    tx_list = []
-    if "current_rows" in context and context["current_rows"]:
-        for r in context["current_rows"][-60:]:
-            tx_list.append({
-                "date": r["ts"][:10] if r["ts"] else "",
-                "type": r["type"],
-                "amount": abs(int(r["amount"] or 0)),
-                "category": r["category_name"],
-                "note": r["note"]
-            })
-
-    payload = {
-        "goal_text": context.get("goal_text"),
-        "goal_amount": context.get("goal_amount"),
-        "currency": context.get("currency") or "KZT",
-        "period": meta.kind,
-        "period_title": meta.title,
-        "recent_transactions": tx_list,
-        "data_quality": context.get("data_quality") or {},
-        "clarification_note": (context.get("clarification_note") or {}).get("content"),
-        "current": {
-            "income": current["income"],
-            "expense": current["expense"],
-            "net": current["net"],
-            "tx_count": current["tx_count"],
-            "expense_tx_count": current["expense_tx_count"],
-            "top_categories": current["top_categories"][:6],
-        },
-        "previous": {
-            "income": previous["income"],
-            "expense": previous["expense"],
-            "net": previous["net"],
-            "top_categories": previous["top_categories"][:6],
-        },
-        "month": {
-            "income": month["income"],
-            "expense": month["expense"],
-            "net": month["net"],
-        },
-        "projection": {
-            "projected_month_income": context.get("projected_month_income"),
-            "projected_month_expense": context.get("projected_month_expense"),
-            "projected_free_cash": context.get("projected_free_cash"),
-            "projected_required_free_cash": context.get("projected_required_free_cash"),
-        },
-        "accounts": {
-            "total_balance": context.get("total_balance"),
-            "runway_days": context.get("runway_days"),
-            "active_accounts": [dict(r) for r in context.get("active_accounts", [])[:6]] if context.get("active_accounts") else [],
-        },
-        "budgets": context.get("budget_snapshot"),
-        "debts": context.get("debt_snapshot"),
-        "recurring_expenses": context.get("recurring_snapshot"),
-        "recurring_incomes": context.get("recurring_income_snapshot"),
-        "planned_operations": context.get("planned_snapshot"),
-        "category_deltas": context.get("category_deltas", [])[:8],
-        "month_history": context.get("month_history"),
-        "financial_metrics": context.get("financial_metrics"),
-        "ai_profile": context.get("ai_profile"),
-        "ai_insights": context.get("ai_insights"),
-        "ai_priority_insights": context.get("ai_priority_insights"),
-        "ai_recommendations": context.get("ai_recommendations"),
-    }
-
-    if USE_ADVANCED_AI_REPORTS:
-        payload.update({
-            "weekly_trends": context.get("weekly_trends"),
-            "unusual_spikes": context.get("unusual_spikes"),
-            "trend_direction": context.get("trend_direction"),
-            "compressed_summary": context.get("compressed_summary"),
-            "importance_signals": context.get("importance_signals"),
-            "spending_patterns": context.get("spending_patterns"),
-            "potential_contradictions": context.get("potential_contradictions"),
-            "seasonality": context.get("seasonality"),
-            "analysis_confidence": context.get("analysis_confidence"),
-        })
-
-    return payload
+# _build_payload logic moved to app.domain.services.ai_payload_builder
 
 
 def _build_report_prompt(context: dict[str, Any]) -> str:
-    payload = _build_payload(context)
+    payload = build_llm_payload(context)
     payload_str = json.dumps(payload, ensure_ascii=False, indent=2)
-    logger.info(f"AI Report Payload JSON Size: {len(payload_str)} characters")
+    logger.info("AI Report Payload: {} chars (~{} tokens)", len(payload_str), len(payload_str) // 4)
     return "Контекст:\n" + payload_str
 
 
 def _build_question_prompt(context: dict[str, Any], question: str) -> str:
-    payload = _build_payload(context)
+    payload = build_llm_payload(context)
     payload_str = json.dumps(payload, ensure_ascii=False, indent=2)
-    logger.info(f"AI Question Payload JSON Size: {len(payload_str)} characters")
+    logger.info("AI Question Payload: {} chars (~{} tokens)", len(payload_str), len(payload_str) // 4)
     return (
         f"Вопрос пользователя:\n{question}\n\n"
         "Контекст по финансам:\n"
@@ -281,9 +201,18 @@ async def render_final_ai_report(context: dict[str, Any]) -> tuple[str, str]:
     if not has_openai_key():
         return local_short, local_download
 
+    prompt_text = _build_report_prompt(context)
+    t0 = time.monotonic()
     try:
-        llm_text = await asyncio.to_thread(_generate, SYSTEM_PROMPT_REPORT, _build_report_prompt(context))
+        llm_text = await asyncio.to_thread(_generate, SYSTEM_PROMPT_REPORT, prompt_text)
+        gen_time = time.monotonic() - t0
+        logger.info(
+            "ai_report_quality | payload_chars={} tokens_est={} response_chars={} gen_time={:.2f}s confidence={}",
+            len(prompt_text), len(prompt_text) // 4, len(llm_text), gen_time, context.get("analysis_confidence"),
+        )
     except Exception:
+        gen_time = time.monotonic() - t0
+        logger.warning("ai_report_fallback | gen_time={:.2f}s used_fallback=True", gen_time)
         return local_short, local_download
 
     # Parse and write recommendation to the database log
@@ -310,7 +239,6 @@ async def render_final_ai_report(context: dict[str, Any]) -> tuple[str, str]:
                     )
                     await db.commit()
             except Exception as e:
-                from loguru import logger
                 logger.exception(f"Failed to log AI recommendation: {e}")
             
             # Clean recommendation tag from the LLM output
@@ -319,6 +247,13 @@ async def render_final_ai_report(context: dict[str, Any]) -> tuple[str, str]:
                 '',
                 llm_text
             ).strip()
+
+    # Hard report size limiter
+    if len(llm_text) > MAX_REPORT_CHARS:
+        truncated = llm_text[:MAX_REPORT_CHARS]
+        parts = truncated.rsplit('\n\n', 1)
+        llm_text = parts[0] if len(parts) > 1 else truncated
+        llm_text += "\n\n<i>...полный отчёт доступен в скачиваемой версии</i>"
 
     llm_text = sanitize_telegram_html(llm_text)
     if not llm_text:
