@@ -15,7 +15,7 @@ from app.db.repositories.settings_repo import get_lang
 from app.db.repositories.tx_repo import delete_tx, list_last
 from app.ui.formatters import fmt_money
 from app.ui.i18n import text_matches_key
-from app.ui.keyboards import cancel_kb
+from app.ui.keyboards import cancel_kb, minimized_menu_kb
 from app.handlers.common import build_main_menu_markup, neutralize_keyboard
 
 router = Router()
@@ -261,14 +261,14 @@ async def _render_history(
 @router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_HISTORY"))
 async def hist_entry(m: Message, db: aiosqlite.Connection, state: FSMContext):
     lang = await get_lang(db, m.from_user.id)
-    await m.answer("🧾", reply_markup=cancel_kb(lang))
+    await m.answer("🧾", reply_markup=minimized_menu_kb(lang))
     await _render_history(m, db, m.from_user.id, offset=0, prefer_edit=False, state=state)
 
 
 @router.message(Command("last10"))
 async def last10_cmd(m: Message, db: aiosqlite.Connection, state: FSMContext):
     lang = await get_lang(db, m.from_user.id)
-    await m.answer("🧾", reply_markup=cancel_kb(lang))
+    await m.answer("🧾", reply_markup=minimized_menu_kb(lang))
     await _render_history(m, db, m.from_user.id, offset=0, prefer_edit=False, state=state)
 
 

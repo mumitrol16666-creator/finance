@@ -38,7 +38,7 @@ from app.handlers.common import (
 from app.domain.services.access_service import FEATURE_BUDGETS, can_use_feature
 from app.domain.money import parse_money_for_user
 from app.ui.formatters import make_progress_bar
-from app.ui.keyboards import cancel_kb
+from app.ui.keyboards import cancel_kb, minimized_menu_kb
 from aiogram.filters import BaseFilter
 
 class CatLimFlowFilter(BaseFilter):
@@ -61,7 +61,7 @@ async def _ensure_settings_reply_keyboard(target: Message | CallbackQuery, state
         "en": "Settings mode is open.",
         "kk": "Баптау режимі ашық.",
     }.get(lang, "Режим настроек открыт.")
-    sent = await sender(txt, reply_markup=cancel_kb(lang), disable_notification=True)
+    sent = await sender(txt, reply_markup=minimized_menu_kb(lang), disable_notification=True)
     extra_ids = data.get("extra_prompt_message_ids") or []
     if not isinstance(extra_ids, list):
         extra_ids = [extra_ids]
@@ -608,10 +608,10 @@ async def catlim_add_name(m: Message, state: FSMContext, db: aiosqlite.Connectio
     name = (m.text or "").strip()
     name = " ".join(name.split())
     if len(name) < 2 or len(name) > 24:
-        await m.answer(_T(lang, "bad_name"), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        await m.answer(_T(lang, "bad_name"), reply_markup=minimized_menu_kb(lang), parse_mode=PARSE_MODE)
         return
     if await name_exists_any_kind(db, m.from_user.id, name):
-        await m.answer(_T(lang, "name_exists"), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        await m.answer(_T(lang, "name_exists"), reply_markup=minimized_menu_kb(lang), parse_mode=PARSE_MODE)
         return
     kind = (await state.get_data()).get("catlim_kind") or "expense"
     await create_category(db, m.from_user.id, name, None, kind, _now())
@@ -660,10 +660,10 @@ async def catlim_rename_text(m: Message, state: FSMContext, db: aiosqlite.Connec
         return
     new_name = " ".join((m.text or "").strip().split())
     if len(new_name) < 2 or len(new_name) > 24:
-        await m.answer(_T(lang, "bad_name"), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        await m.answer(_T(lang, "bad_name"), reply_markup=minimized_menu_kb(lang), parse_mode=PARSE_MODE)
         return
     if new_name.lower() != str(row[1]).lower() and await name_exists_any_kind(db, m.from_user.id, new_name):
-        await m.answer(_T(lang, "name_exists"), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        await m.answer(_T(lang, "name_exists"), reply_markup=minimized_menu_kb(lang), parse_mode=PARSE_MODE)
         return
     await rename_category(db, m.from_user.id, category_id, new_name, _now())
     await db.commit()
@@ -720,7 +720,7 @@ async def catlim_limit_text(m: Message, state: FSMContext, db: aiosqlite.Connect
     lang = await _lang(db, m.from_user.id)
     amount = await parse_money_for_user(db, m.from_user.id, m.text, max_minor=10_000_000_000)
     if amount is None or amount <= 0:
-        await m.answer(_T(lang, "bad_amount"), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        await m.answer(_T(lang, "bad_amount"), reply_markup=minimized_menu_kb(lang), parse_mode=PARSE_MODE)
         return
     category_id = int((await state.get_data()).get("cat_id") or 0)
     await upsert_budget(db, m.from_user.id, month_key(), category_id, int(amount))
@@ -845,7 +845,7 @@ async def catlim_emoji_text(m: Message, state: FSMContext, db: aiosqlite.Connect
     if em == "-":
         em = None
     if em and len(em) > 4:
-        await m.answer(_T(lang, "emoji_error"), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
+        await m.answer(_T(lang, "emoji_error"), reply_markup=minimized_menu_kb(lang), parse_mode=PARSE_MODE)
         return
     await set_category_emoji(db, m.from_user.id, category_id, em, _now())
     await db.commit()
