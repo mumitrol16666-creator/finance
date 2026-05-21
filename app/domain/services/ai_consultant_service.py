@@ -247,7 +247,13 @@ def _fetch_weekly_trends(current_rows: list[aiosqlite.Row], tz_name: str) -> lis
     return res
 
 
-def _fetch_unusual_spikes(current_rows: list[aiosqlite.Row], avg_expense: float, currency: str) -> list[dict]:
+def _fetch_unusual_spikes(
+    current_rows: list[aiosqlite.Row],
+    avg_expense: float,
+    currency: str,
+    previous_rows: list | None = None,
+    month_history: list[dict] | None = None,
+) -> list[dict]:
     cat_expenses = defaultdict(list)
     for r in current_rows:
         if r["type"] == "expense":
@@ -283,6 +289,41 @@ def _fetch_unusual_spikes(current_rows: list[aiosqlite.Row], avg_expense: float,
                     "note": r["note"] or "",
                     "ratio": round(amt / cat_avg, 1)
                 })
+
+    # --- Recurring spike detection (point 4) ---
+    if previous_rows or month_history:
+        prev_cat_amounts: dict[str, list[int]] = defaultdict(list)
+        if previous_rows:
+            for r in previous_rows:
+                if r["type"] == "expense":
+                    pamt = -int(r["amount"] or 0)
+                    if pamt > 0:
+                        pcat = r["category_name"] or "Без категории"
+                        prev_cat_amounts[pcat].append(pamt)
+
+        hist_cat_count: dict[str, int] = defaultdict(int)
+        if month_history:
+            for mh in month_history:
+                for cat, _amt in (mh.get("top_categories") or []):
+                    hist_cat_count[cat] += 1
+
+        for spike in spikes:
+            cat = spike["category"]
+            amt = spike["amount"]
+            recurrence_count = 0
+
+            # Check previous period for similar amounts (±20%)
+            for prev_amt in prev_cat_amounts.get(cat, []):
+                if abs(prev_amt - amt) / max(amt, 1) <= 0.20:
+                    recurrence_count += 1
+
+            # Check month history for category presence
+            recurrence_count += hist_cat_count.get(cat, 0)
+
+            spike["recurrence_count"] = recurrence_count
+            spike["is_probably_recurring"] = recurrence_count >= 2
+            spike["confidence"] = round(max(0.1, 1.0 - recurrence_count * 0.15), 2)
+
     return spikes
 
 
@@ -1107,7 +1148,7 @@ async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str,
     if USE_ADVANCED_AI_REPORTS:
         weekly_trends = _fetch_weekly_trends(current_rows, tz_name)
         avg_exp = current.get("avg_expense", 0)
-        unusual_spikes = _fetch_unusual_spikes(current_rows, avg_exp, currency)
+        unusual_spikes = _fetch_unusual_spikes(current_rows, avg_exp, currency, previous_rows, month_history)
         trend_direction = _compute_trend_direction(current, previous, month_history)
         compressed_summary = _generate_compressed_summary(current, previous, trend_direction, category_deltas)
         
