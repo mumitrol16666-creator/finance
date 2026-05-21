@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   user_id          INTEGER NOT NULL,
   name             TEXT    NOT NULL,
   balance          INTEGER NOT NULL DEFAULT 0,
+  starting_balance INTEGER NOT NULL DEFAULT 0,
   currency         TEXT    NOT NULL DEFAULT 'KZT',
   is_saving        INTEGER NOT NULL DEFAULT 0,
   is_archived      INTEGER NOT NULL DEFAULT 0,

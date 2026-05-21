@@ -58,21 +58,34 @@ async def create_account(db: aiosqlite.Connection, user_id: int, name: str, bala
         acc_id, _name, _balance, is_archived, _curr, _saving = existing
         if int(is_archived or 0) == 1:
             await db.execute(
-                "UPDATE accounts SET balance=?, is_archived=0, updated_at=?, currency=?, is_saving=? WHERE user_id=? AND id=?",
-                (balance, ts, currency, is_saving, user_id, acc_id),
+                "UPDATE accounts SET balance=?, starting_balance=?, is_archived=0, updated_at=?, currency=?, is_saving=? WHERE user_id=? AND id=?",
+                (balance, balance, ts, currency, is_saving, user_id, acc_id),
             )
+            if balance != 0:
+                cur_lang = await db.execute("SELECT lang FROM settings WHERE user_id=? LIMIT 1", (user_id,))
+                row = await cur_lang.fetchone()
+                lang = row[0] if row else 'ru'
+                note = {
+                    "ru": "Стартовый баланс",
+                    "en": "Starting balance",
+                    "kk": "Бастапқы баланс",
+                }.get(lang, "Стартовый баланс")
+                
+                await db.execute(
+                    "INSERT INTO transactions(user_id, ts, type, amount, account_id, category_id, note, created_at) "
+                    "VALUES(?,?,?,?,?,NULL,?,?)",
+                    (user_id, ts, "starting_balance", balance, acc_id, note, ts),
+                )
             return acc_id, 'restored'
         raise ValueError('active_name_exists')
 
     cur = await db.execute(
-        "INSERT INTO accounts(user_id, name, balance, is_archived, created_at, updated_at, currency, is_saving) VALUES(?,?,?,0,?,?,?,?)",
-        (user_id, name, balance, ts, ts, currency, is_saving),
+        "INSERT INTO accounts(user_id, name, balance, starting_balance, is_archived, created_at, updated_at, currency, is_saving) VALUES(?,?,?,?,0,?,?,?,?)",
+        (user_id, name, balance, balance, ts, ts, currency, is_saving),
     )
     acc_id = cur.lastrowid
 
     if balance != 0:
-        tx_type = "income" if balance > 0 else "expense"
-        
         cur_lang = await db.execute("SELECT lang FROM settings WHERE user_id=? LIMIT 1", (user_id,))
         row = await cur_lang.fetchone()
         lang = row[0] if row else 'ru'
@@ -83,19 +96,10 @@ async def create_account(db: aiosqlite.Connection, user_id: int, name: str, bala
             "kk": "Бастапқы баланс",
         }.get(lang, "Стартовый баланс")
         
-        category_id = None
-        try:
-            from app.db.repositories.categories_repo import find_category_by_name_ci
-            cat_row = await find_category_by_name_ci(db, user_id, tx_type, "Прочее")
-            if cat_row:
-                category_id = cat_row[0]
-        except Exception:
-            pass
-            
         await db.execute(
             "INSERT INTO transactions(user_id, ts, type, amount, account_id, category_id, note, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            (user_id, ts, tx_type, balance, acc_id, category_id, note, ts),
+            "VALUES(?,?,?,?,?,NULL,?,?)",
+            (user_id, ts, "starting_balance", balance, acc_id, note, ts),
         )
 
     return acc_id, 'created'
