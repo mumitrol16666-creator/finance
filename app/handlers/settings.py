@@ -1360,7 +1360,7 @@ async def st_acc_balance_new(m: Message, state: FSMContext, db: aiosqlite.Connec
         if delta != 0:
             from app.db.repositories.tx_repo import create_tx
             
-            tx_type = "income" if delta > 0 else "expense"
+            tx_type = "adjustment"
             lang = data.get("lang", "ru")
             
             note = {
@@ -1369,17 +1369,8 @@ async def st_acc_balance_new(m: Message, state: FSMContext, db: aiosqlite.Connec
                 "kk": "🔧 Балансты түзету (қолмен енгізу)",
             }.get(lang, "🔧 Корректировка баланса (ручной ввод)")
             
-            category_id = None
-            try:
-                from app.db.repositories.categories_repo import find_category_by_name_ci
-                cat_row = await find_category_by_name_ci(db, m.from_user.id, tx_type, "Прочее")
-                if cat_row:
-                    category_id = cat_row[0]
-            except Exception:
-                pass
-
             # Log the system transaction to maintain perfect transaction-to-balance reconciliation
-            await create_tx(db, m.from_user.id, now_iso(), tx_type, delta, int(acc_id), category_id, note, now_iso())
+            await create_tx(db, m.from_user.id, now_iso(), tx_type, delta, int(acc_id), None, note, now_iso())
             
         await db.commit()
     except Exception:
@@ -1598,28 +1589,67 @@ async def st_acc_delete(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conne
 # =========================================================
 
 @router.callback_query(F.data.in_({"st:reset", "st:acc:reset"}))
-async def reset_ask_confirm(c: CallbackQuery, state: FSMContext):
+async def reset_ask_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     await _clear_prompt(c, state)
     await state.set_state(None)
     await state.update_data(settings_return_to="settings_root", ui_scope=SETTINGS_SCOPE)
 
+    lang = await get_lang(db, c.from_user.id)
+
+    if lang == "en":
+        text = (
+            "⚠️ <b>Full Data Reset</b>\n\n"
+            "The following will be completely deleted:\n"
+            "• All your financial transactions and history\n"
+            "• All accounts and their balances\n"
+            "• Categories and budget limits\n"
+            "• Debts and their payment history\n"
+            "• Planned operations\n"
+            "• Recurring incomes and expenses\n"
+            "• AI insights history and AI consultant profile\n"
+            "• Activity streak and progress level\n\n"
+            "🌟 <b>Important: Your Premium subscription remains active!</b>\n"
+            "Paid premium access will NOT be canceled and will remain fully functional.\n\n"
+            "Are you sure you want to reset all financial data? This action cannot be undone."
+        )
+    elif lang == "kk":
+        text = (
+            "⚠️ <b>Деректерді толық өшіру</b>\n\n"
+            "Мыналар толығымен жойылады:\n"
+            "• Барлық қаржылық операцияларыңыз бен тарихыңыз\n"
+            "• Барлық шоттар мен олардың баланстары\n"
+            "• Санаттар мен белгіленген лимиттер (бюджеттер)\n"
+            "• Қарыздар мен оларды төлеу тарихы\n"
+            "• Жоспарланған операциялар\n"
+            "• Тұрақты кірістер мен шығыстар\n"
+            "• ИИ кеңестерінің тарихы мен ИИ профилі\n"
+            "• Белсенділік сериясы мен прогресс деңгейі\n\n"
+            "🌟 <b>Маңызды: Premium жазылымыңыз сақталады!</b>\n"
+            "Төленген премиум-қолжетімділік жойылмайды және белсенді болып қалады.\n\n"
+            "Барлық қаржылық деректерді өшіргіңіз келетініне сенімдісіз бе? Бұл әрекетті қайтару мүмкін емес."
+        )
+    else:
+        text = (
+            "⚠️ <b>Полный сброс данных</b>\n\n"
+            "Будут полностью удалены:\n"
+            "• Все ваши финансовые операции и история\n"
+            "• Все счета и их балансы\n"
+            "• Категории и установленные лимиты (бюджеты)\n"
+            "• Долги и история их выплат\n"
+            "• Планируемые операции\n"
+            "• Постоянные (регулярные) доходы и расходы\n"
+            "• История ИИ-подсказок и профиль ИИ-консультанта\n"
+            "• Серия активности и ваш игровой прогресс\n\n"
+            "🌟 <b>Важно: Ваша Premium-подписка сохранится!</b>\n"
+            "Оплаченный премиум-доступ не аннулируется и останется активным.\n\n"
+            "Вы уверены, что хотите сбросить все финансовые данные? Действие необратимо."
+        )
+
     await _render_screen(
         c,
         state,
-        "⚠️ <b>Полный сброс профиля</b>\n\n"
-        "Будет удалено всё, что связано с аккаунтом:\n"
-        "• операции и история\n"
-        "• счета\n"
-        "• категории и лимиты\n"
-        "• долги\n"
-        "• планируемые операции\n"
-        "• постоянные доходы и расходы\n"
-        "• настройки\n"
-        "• серия активности и прогресс\n"
-        "• сам профиль пользователя\n\n"
-        "После этого бот будет считать тебя новым пользователем.\n"
-        "Действие необратимо.",
-        reply_markup=reset_confirm_kb(),
+        text,
+        reply_markup=reset_confirm_kb(lang),
     )
     await c.answer()
 
@@ -1632,17 +1662,56 @@ async def reset_cancel(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connec
 
 @router.callback_query(F.data == "st:reset:confirm")
 async def reset_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
     try:
         await wipe_user_data(db, c.from_user.id)
     except Exception:
         await db.rollback()
         raise
 
-    await _finish_to_menu(
-        c,
-        state,
-        "✅ <b>Сброс выполнен</b>\nТвой профиль и все финансовые данные удалены.\nЧтобы начать заново, отправь <code>/start</code>.",
+    await _collapse_settings_ui(c, state)
+    await state.clear()
+
+    if lang == "en":
+        msg = (
+            "✅ <b>Reset completed successfully!</b>\n\n"
+            "All your financial data, accounts, and transaction history have been deleted.\n"
+            "🌟 <b>Your Premium subscription remains active!</b> It has not been canceled and remains fully functional.\n\n"
+            "⚠️ <b>HIGHLY RECOMMENDED:</b>\n"
+            "To avoid confusion and errors from old reports, interactive buttons, and messages, <b>please clear your chat history</b> with the bot.\n"
+            "<b>How to do it:</b> tap the bot name at the top ➡️ three dots in the upper right corner ➡️ “Clear history”.\n\n"
+            "After that, click the <b>START</b> button below or send the <code>/start</code> command to set up everything from scratch!"
+        )
+    elif lang == "kk":
+        msg = (
+            "✅ <b>Деректер сәтті өшірілді!</b>\n\n"
+            "Барлық қаржылық деректер, шоттар мен операциялар тарихы жойылды.\n"
+            "🌟 <b>Premium жазылымыңыз белсенді болып қалды!</b> Ол жойылмайды және толық жұмыс істей береді.\n\n"
+            "⚠️ <b>МЫҚТАП ҰСЫНАМЫЗ:</b>\n"
+            "Ескі есептер, интерактивті батырмалар мен бот хабарламалары сізді шатастырмауы үшін <b>чат тарихын міндетті түрде тазалаңыз</b>.\n"
+            "<b>Бұны қалай жасау керек:</b> бот атын басыңыз ➡️ жоғарғы оң жақ бұрыштағы үш нүкте ➡️ «Тарихты тазалау».\n\n"
+            "Осыдан кейін төмендегі <b>СТАРТ</b> батырмасын басыңыз немесе қаржыны жаңадан баптау үшін <code>/start</code> пәрменін жіберіңіз!"
+        )
+    else:
+        msg = (
+            "✅ <b>Сброс выполнен успешно!</b>\n\n"
+            "Все финансовые данные, счета и история операций полностью удалены.\n"
+            "🌟 <b>При этом ваша Premium-подписка осталась активной!</b> Она никуда не делась и продолжит работать.\n\n"
+            "⚠️ <b>КРАЙНЕ РЕКОМЕНДУЕМ:</b>\n"
+            "Чтобы старые сообщения, интерактивные кнопки и отчеты не мешали вам, <b>обязательно очистите историю переписки</b> с ботом. Это очистит чат от старого мусора.\n"
+            "<b>Как это сделать:</b> нажмите на имя бота сверху ➡️ три точки в правом верхнем углу ➡️ «Очистить историю».\n\n"
+            "После этого нажмите кнопку <b>СТАРТ</b> внизу или отправьте команду <code>/start</code>, чтобы настроить всё заново с чистого листа!"
+        )
+
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    markup = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="/start")]],
+        resize_keyboard=True,
+        one_time_keyboard=True
     )
+
+    await c.message.answer(msg, reply_markup=markup, parse_mode=PARSE_MODE)
+    await c.answer()
 
 
 # =========================================================
