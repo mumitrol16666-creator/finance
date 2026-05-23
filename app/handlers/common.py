@@ -483,9 +483,6 @@ def _full_access_days() -> int:
 
 
 def _upgrade_message(lang: str, has_full_access: bool = False) -> str:
-    price = _full_access_price()
-    days = _full_access_days()
-
     if lang == "en":
         greeting = "🌟 <b>Full access activated!</b>" if has_full_access else "You are currently using the free mode."
         return (
@@ -506,9 +503,10 @@ def _upgrade_message(lang: str, has_full_access: bool = False) -> str:
             "• category reports\n"
             "• monthly reports\n"
             "• AI consultant\n\n"
-            f"Price: <b>{price} ⭐</b>\n"
-            f"Access period: <b>{days} days</b>\n\n"
-            "Press the button below to renew or unlock full access."
+            "<b>Subscription pricing:</b>\n"
+            "• <b>1 month</b> — 15 ⭐\n"
+            "• <b>3 months</b> — 115 ⭐\n\n"
+            "Press one of the buttons below to renew or unlock full access."
         )
 
     if lang == "kk":
@@ -531,26 +529,32 @@ def _upgrade_message(lang: str, has_full_access: bool = False) -> str:
             "• санаттар бойынша есептер\n"
             "• айлық есептер\n"
             "• AI-кеңесші\n\n"
-            f"Бағасы: <b>{price} ⭐</b>\n"
-            f"Қолжетімділік мерзімі: <b>{days} күн</b>\n\n"
-            "Толық қолжетімділікті ашу немесе ұзарту үшін төмендегі батырманы бас."
+            "<b>Жазылым құны:</b>\n"
+            "• <b>1 ай</b> — 15 ⭐\n"
+            "• <b>3 ай</b> — 115 ⭐\n\n"
+            "Толық қолжетімділікті ашу немесе ұзарту үшін төмендегі батырмалардың бірін бас."
         )
 
-    greeting = "🌟 <b>У тебя активирован полный доступ!</b>\n\n" if has_full_access else ""
-    stars_per_month = price // (days // 30) if (days and days >= 30) else 50
+    greeting = "🌟 <b>У тебя активирован полный доступ!</b>" if has_full_access else "Сейчас ты пользуешься бесплатной версией."
     return (
-        f"{greeting}✨ <b>FinanceBot: Full Access</b>\n\n"
-        "Бесплатная версия — это отличный цифровой блокнот для трат. Но чтобы бот превратился в вашего личного финансового директора, нужен Full Access.\n\n"
-        "<b>Что открывается в профессиональной версии:</b>\n\n"
-        "🧠 <b>Мозги (AI-Консультант):</b> Нейросеть проанализирует ваши привычки и сама подскажет, где найти скрытые резервы.\n"
-        "🚧 <b>Рамки (Бюджеты и лимиты):</b> Защита от импульсивных покупок. Бот предупредит, если бюджет на категорию трещит по швам.\n"
-        "🔄 <b>Движение (Переводы и Копилки):</b> Мультивалютные переводы и правильный учет ваших накоплений.\n"
-        "⚙️ <b>Автоматизация:</b> Учет подписок, регулярных расходов, долгов и кредитов — чтобы ничего не стало сюрпризом.\n"
-        "📈 <b>Ясность (Глубокие отчеты):</b> Детальная аналитика по каждой категории за любой месяц.\n\n"
-        f"Цена: <b>{price} ⭐</b>\n"
-        f"Срок доступа: <b>{days} дней</b> (всего {stars_per_month} звезд в месяц)\n\n"
+        "✨ <b>Полный доступ</b>\n\n"
+        f"{greeting}\n\n"
+        "<b>Доступно бесплатно:</b>\n"
+        "• запись расходов и доходов\n"
+        "• ведение основных счетов\n"
+        "• отмена последней записи\n"
+        "• базовые дневные и недельные отчеты\n\n"
+        "<b>Открывается в Premium:</b>\n"
+        "• AI-Консультант с персональными советами\n"
+        "• продвинутые лимиты и бюджеты\n"
+        "• переводы между счетами\n"
+        "• подкатегории и месячные отчеты\n"
+        "• учет долгов и регулярных платежей\n\n"
+        "<b>Стоимость подписки:</b>\n"
+        "• <b>1 месяц</b> — 15 ⭐\n"
+        "• <b>3 месяца</b> — 115 ⭐\n\n"
         "Это инвестиция в финансовую дисциплину, которая окупается в первый же месяц.\n\n"
-        "👇 Нажми кнопку ниже, чтобы снять все лимиты прямо сейчас."
+        "👇 Нажми на одну из кнопок ниже, чтобы снять все лимиты прямо сейчас."
     )
 
 
@@ -586,12 +590,9 @@ async def upgrade_info_message(m: Message, state: FSMContext, db: aiosqlite.Conn
     ctx = await get_user_context(db, m.from_user.id)
 
     sent = await m.answer(
-        _upgrade_message(lang, has_full_access=ctx.full_access),
+        _upgrade_message(lang),
         parse_mode="HTML",
-        reply_markup=upgrade_info_kb(
-            lang,
-            price=_full_access_price(),
-        ),
+        reply_markup=upgrade_info_kb(lang),
     )
 
     await state.update_data(
@@ -615,10 +616,7 @@ async def upgrade_info_callback(c: CallbackQuery, state: FSMContext, db: aiosqli
     sent = await c.message.answer(
         _upgrade_message(lang),
         parse_mode="HTML",
-        reply_markup=upgrade_info_kb(
-            lang,
-            price=_full_access_price(),
-        ),
+        reply_markup=upgrade_info_kb(lang),
     )
 
     await state.update_data(
@@ -630,22 +628,42 @@ async def upgrade_info_callback(c: CallbackQuery, state: FSMContext, db: aiosqli
     await c.answer()
 
 
-@router.callback_query(F.data == "upgrade:activate")
+@router.callback_query(F.data.startswith("upgrade:activate"))
 async def upgrade_activate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     await neutralize_keyboard(c)
     lang = await get_lang(db, c.from_user.id)
 
+    pkg = "3m"
+    parts = c.data.split(":")
+    if len(parts) > 2:
+        pkg = parts[2]
+        
+    if pkg == "1m":
+        days = 30
+        price = 15
+        label = "Premium 1 месяц" if lang == "ru" else ("Premium 1 month" if lang == "en" else "Premium 1 ай")
+    else:
+        days = 90
+        price = 115
+        label = "Premium 3 месяца" if lang == "ru" else ("Premium 3 months" if lang == "en" else "Premium 3 ай")
+
+    desc = {
+        "ru": f"Полный доступ ко всем разделам бота на {days} дней.",
+        "en": f"Full access to all bot sections for {days} days.",
+        "kk": f"Боттың барлық бөлімдеріне {days} күнге толық қолжетімділік.",
+    }.get(lang, f"Полный доступ ко всем разделам бота на {days} дней.")
+
     await c.bot.send_invoice(
         chat_id=c.from_user.id,
-        title=t(lang, "BTN_UNLOCK_FULL"),
-        description=_invoice_description(lang)[:255],
-        payload="full_access_upgrade",
+        title=label,
+        description=desc[:255],
+        payload=f"full_access_upgrade:{days}",
         provider_token="",
         currency="XTR",
         prices=[
             LabeledPrice(
-                label=t(lang, "BTN_UNLOCK_FULL"),
-                amount=_full_access_price(),
+                label=label,
+                amount=price,
             )
         ],
     )
@@ -655,7 +673,7 @@ async def upgrade_activate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
 
 @router.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
-    if pre_checkout_query.invoice_payload in {"full_access_upgrade", "ai_chat_extra_messages"}:
+    if pre_checkout_query.invoice_payload.startswith("full_access_upgrade") or pre_checkout_query.invoice_payload == "ai_chat_extra_messages":
         await pre_checkout_query.answer(ok=True)
     else:
         await pre_checkout_query.answer(ok=False, error_message="Unknown payment type")
@@ -684,14 +702,26 @@ async def process_successful_payment(m: Message, state: FSMContext, db: aiosqlit
         await m.answer(success, parse_mode="HTML")
         return
 
-    if payload != "full_access_upgrade":
+    if not payload.startswith("full_access_upgrade"):
         return
 
     data = await state.get_data()
+    days = 90
+    parts = payload.split(":")
+    if len(parts) > 1 and parts[1].isdigit():
+        days = int(parts[1])
+    else:
+        days = _full_access_days()
 
     try:
         await _cleanup_ui(m.bot, m.chat.id, data)
-        await grant_full_access(db, m.from_user.id, days=_full_access_days())
+        await grant_full_access(db, m.from_user.id, days=days)
+        from datetime import datetime as _dt, timezone as _tz
+        now_str = _dt.now(_tz.utc).isoformat()
+        await db.execute(
+            "UPDATE settings SET trial_reminder_sent = 0, updated_at = ? WHERE user_id = ?",
+            (now_str, m.from_user.id)
+        )
         await db.commit()
     except Exception:
         await db.rollback()

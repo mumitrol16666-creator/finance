@@ -394,10 +394,12 @@ def reset_confirm_kb(lang: str = "ru"):
     kb.adjust(1, 1)
     return kb.as_markup()
 
-def upgrade_info_kb(lang: str, price: int) -> InlineKeyboardMarkup:
+def upgrade_info_kb(lang: str, price: int = 0) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    text = t(lang, "BTN_UNLOCK_FULL")
-    kb.button(text=f"{text} ({price} ⭐️)", callback_data="upgrade:activate")
+    lbl_1m = "1 месяц" if lang == "ru" else ("1 month" if lang == "en" else "1 ай")
+    lbl_3m = "3 месяца" if lang == "ru" else ("3 months" if lang == "en" else "3 ай")
+    kb.button(text=f"⭐️ {lbl_1m} (15 ⭐)", callback_data="upgrade:activate:1m")
+    kb.button(text=f"⭐️ {lbl_3m} (115 ⭐)", callback_data="upgrade:activate:3m")
     kb.adjust(1)
     return kb.as_markup()
 

@@ -118,7 +118,13 @@ async def grant_full_access(db: aiosqlite.Connection, user_id: int, days: int = 
 
 
 async def set_newbie_defaults(db: aiosqlite.Connection, user_id: int):
-    await db.execute("UPDATE users SET mode='newbie', progress_level=0, full_access=0 WHERE user_id=?", (user_id,))
+    cur = await db.execute("SELECT full_access FROM users WHERE user_id=?", (user_id,))
+    row = await cur.fetchone()
+    if row and int(row[0] or 0) == 1:
+        # Keep full access mode and active subscription, only reset progress level
+        await db.execute("UPDATE users SET progress_level=0 WHERE user_id=?", (user_id,))
+    else:
+        await db.execute("UPDATE users SET mode='newbie', progress_level=0, full_access=0 WHERE user_id=?", (user_id,))
 
 
 async def get_free_exports_used(db: aiosqlite.Connection, user_id: int) -> int:
