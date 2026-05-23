@@ -20,7 +20,7 @@ import aiosqlite
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import asyncio
@@ -1083,6 +1083,139 @@ def _build_csv(rows: Iterable[tuple], lang: str, currency: str) -> bytes:
     return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
 
+async def send_premium_xlsx_report(bot, db: aiosqlite.Connection, user_id: int, period: str, lang: str, chat_id: int):
+    # Fetch user settings to get currency and timezone
+    settings = await get_settings(db, user_id)
+    currency = _row_get(settings, "currency", 0, default="KZT")
+    tz_name = _row_get(settings, "timezone", 1, default="Asia/Aqtobe")
+
+    try:
+        start_iso, end_iso, label = await _resolve_period(db, user_id, period)
+    except Exception:
+        from app.ui.i18n import t as _t
+        await bot.send_message(chat_id, _t(lang, "EXPORT_PERIOD_ERROR"))
+        return
+
+    rows = await _fetch_rows(db, user_id, start_iso, end_iso)
+    if not rows:
+        empty_text = {
+            "ru": "За выбранный период нет операций.",
+            "en": "No transactions for the selected period.",
+            "kk": "Таңдалған кезеңде операциялар жоқ.",
+        }.get(lang, "За выбранный период нет операций.")
+        await bot.send_message(chat_id, empty_text)
+        return
+
+    # Fetch additional metrics and database records for Executive Summary
+    from app.domain.services.financial_analysis_engine import calculate_financial_metrics
+    from app.domain.services.ai_priority_engine import select_top_insights
+    
+    metrics = await calculate_financial_metrics(db, user_id, tz_name)
+    
+    cur_prof = await db.execute("SELECT user_stage, behavioral_summary, discipline_score FROM ai_profile WHERE user_id=?", (user_id,))
+    row_prof = await cur_prof.fetchone()
+    if row_prof:
+        profile = {"stage": row_prof[0], "behavioral_summary": row_prof[1], "discipline_score": row_prof[2]}
+    else:
+        profile = {"stage": "chaotic", "behavioral_summary": "накапливаем статистику", "discipline_score": 100}
+        
+    cur_ins = await db.execute("SELECT insight_key, insight_text, confidence FROM ai_insights WHERE user_id=? AND status='active'", (user_id,))
+    rows_ins = await cur_ins.fetchall()
+    ai_insights = [{"key": r[0], "text": r[1], "confidence": r[2]} for r in rows_ins]
+    priority_insights = select_top_insights(ai_insights)
+    
+    cur_rec = await db.execute(
+        """
+        SELECT recommendation_type, message_text, target_metric_name, target_metric_start_value, target_metric_goal_value 
+        FROM ai_recommendations_log 
+        WHERE user_id=? AND status='sent' 
+        ORDER BY id DESC LIMIT 1
+        """,
+        (user_id,)
+    )
+    row_rec = await cur_rec.fetchone()
+    if row_rec:
+        latest_rec = {
+            "type": row_rec[0],
+            "text": row_rec[1],
+            "metric": row_rec[2],
+            "start": row_rec[3],
+            "goal": row_rec[4]
+        }
+    else:
+        latest_rec = None
+
+    payload = _build_xlsx(rows, lang, currency, user_id, metrics, profile, priority_insights, latest_rec, tz_name)
+    if payload is not None:
+        filename = f"finance_{label}.xlsx"
+        caption = {
+            "ru": (
+                "📊 <b>Ваш премиум-отчет готов!</b>\n\n"
+                "Файл содержит 3 аналитические вкладки (переключайтесь между ними внизу документа):\n"
+                "1️⃣ <b>Главная сводка</b> — Главный AI-дашборд и оценка финансового здоровья\n"
+                "2️⃣ <b>Аналитика</b> — Категории, сравнение трендов и прогноз\n"
+                "3️⃣ <b>История операций</b> — Полный реестр ваших транзакций"
+            ),
+            "en": (
+                "📊 <b>Your premium report is ready!</b>\n\n"
+                "The file contains 3 analytical sheets (switch between them at the bottom of the document):\n"
+                "1️⃣ <b>Executive Summary</b> — Main AI dashboard and Financial Health score\n"
+                "2️⃣ <b>Analytics</b> — Category structure, trends, and month-end projection\n"
+                "3️⃣ <b>Transaction History</b> — Full transaction ledger"
+            ),
+            "kk": (
+                "📊 <b>Сіздің премиум есебіңіз дайын!</b>\n\n"
+                "Файл 3 талдау парағынан тұрады (құжаттың төменгі жағында ауысыңыз):\n"
+                "1️⃣ <b>Негізгі жиынтық</b> — Басты AI-дашборд және қаржылық денсаулық индексі\n"
+                "2️⃣ <b>Талдау</b> — Санаттар құрылымы, трендтер және болжам\n"
+                "3️⃣ <b>Операциялар тарихы</b> — Барлық транзакциялар тізімі"
+            )
+        }.get(lang, "📊 <b>Ваш премиум-отчет готов!</b>")
+
+        await bot.send_document(
+            chat_id=chat_id,
+            document=BufferedInputFile(payload, filename=filename),
+            caption=caption,
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.startswith("export:buy_single:"))
+async def export_buy_single(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    from app.handlers.common import neutralize_keyboard
+    await neutralize_keyboard(c)
+    period = c.data.split(":")[-1]
+    lang = await get_lang(db, c.from_user.id)
+    
+    title = {
+        "ru": "Разовый Excel-отчет",
+        "en": "Single Excel Report",
+        "kk": "Бір реттік Excel есеп"
+    }.get(lang, "Разовый Excel-отчет")
+    
+    desc = {
+        "ru": f"Подробный Excel-отчет с графиками и AI-аналитикой за выбранный период ({period})",
+        "en": f"Detailed Excel report with charts and AI analytics for ({period})",
+        "kk": f"Таңдалған кезең үшін графиктері мен AI-талдауы бар Excel есеп ({period})"
+    }.get(lang, "Подробный Excel-отчет")
+    
+    await c.bot.send_invoice(
+        chat_id=c.from_user.id,
+        title=title,
+        description=desc[:255],
+        payload=f"export_single:{period}",
+        provider_token="",
+        currency="XTR",
+        prices=[
+            LabeledPrice(
+                label=title,
+                amount=20,
+            )
+        ],
+    )
+    await c.answer()
+
+
 def _export_menu_kb(lang: str):
     kb = InlineKeyboardBuilder()
     labels = {
@@ -1185,105 +1318,33 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
         is_free_trial_now = True
 
     if use_premium_xlsx:
-        # Fetch additional metrics and database records for Executive Summary
-        from app.domain.services.financial_analysis_engine import calculate_financial_metrics
-        from app.domain.services.ai_priority_engine import select_top_insights
-        
-        tz_name = _row_get(settings, "timezone", 1, default="Asia/Aqtobe")
-        metrics = await calculate_financial_metrics(db, user_id, tz_name)
-        
-        cur_prof = await db.execute("SELECT user_stage, behavioral_summary, discipline_score FROM ai_profile WHERE user_id=?", (user_id,))
-        row_prof = await cur_prof.fetchone()
-        if row_prof:
-            profile = {"stage": row_prof[0], "behavioral_summary": row_prof[1], "discipline_score": row_prof[2]}
-        else:
-            profile = {"stage": "chaotic", "behavioral_summary": "накапливаем статистику", "discipline_score": 100}
+        await send_premium_xlsx_report(c.bot, db, user_id, period, lang, c.message.chat.id)
+        if is_free_trial_now:
+            # Mark as used
+            await increment_free_export(db, user_id)
+            await db.commit()
             
-        cur_ins = await db.execute("SELECT insight_key, insight_text, confidence FROM ai_insights WHERE user_id=? AND status='active'", (user_id,))
-        rows_ins = await cur_ins.fetchall()
-        ai_insights = [{"key": r[0], "text": r[1], "confidence": r[2]} for r in rows_ins]
-        priority_insights = select_top_insights(ai_insights)
-        
-        cur_rec = await db.execute(
-            """
-            SELECT recommendation_type, message_text, target_metric_name, target_metric_start_value, target_metric_goal_value 
-            FROM ai_recommendations_log 
-            WHERE user_id=? AND status='sent' 
-            ORDER BY id DESC LIMIT 1
-            """,
-            (user_id,)
-        )
-        row_rec = await cur_rec.fetchone()
-        if row_rec:
-            latest_rec = {
-                "type": row_rec[0],
-                "text": row_rec[1],
-                "metric": row_rec[2],
-                "start": row_rec[3],
-                "goal": row_rec[4]
-            }
-        else:
-            latest_rec = None
-
-        payload = _build_xlsx(rows, lang, currency, user_id, metrics, profile, priority_insights, latest_rec, tz_name)
-        if payload is not None:
-            filename = f"finance_{label}.xlsx"
-            caption = {
+            # Send celebratory 1-time free trial congratulation
+            trial_msg = {
                 "ru": (
-                    "📊 <b>Ваш премиум-отчет готов!</b>\n\n"
-                    "Файл содержит 3 аналитические вкладки (переключайтесь между ними внизу документа):\n"
-                    "1️⃣ <b>Главная сводка</b> — Главный AI-дашборд и оценка финансового здоровья\n"
-                    "2️⃣ <b>Аналитика</b> — Категории, сравнение трендов и прогноз\n"
-                    "3️⃣ <b>История операций</b> — Полный реестр ваших транзакций"
+                    "🎁 <b>Бесплатный Excel-отчёт с графиками</b>\n\n"
+                    "Файл уже отправлен — внутри диаграммы и сводка за период.\n\n"
+                    "<i>Следующие Excel-экспорты — с полным доступом в настройках.</i>"
                 ),
                 "en": (
-                    "📊 <b>Your premium report is ready!</b>\n\n"
-                    "The file contains 3 analytical sheets (switch between them at the bottom of the document):\n"
-                    "1️⃣ <b>Executive Summary</b> — Main AI dashboard and Financial Health score\n"
-                    "2️⃣ <b>Analytics</b> — Category structure, trends, and month-end projection\n"
-                    "3️⃣ <b>Transaction History</b> — Full transaction ledger"
+                    "🎁 <b>Free Excel report with charts</b>\n\n"
+                    "The file is already sent — it includes charts and a period summary.\n\n"
+                    "<i>More Excel exports unlock with Full Access in settings.</i>"
                 ),
                 "kk": (
-                    "📊 <b>Сіздің премиум есебіңіз дайын!</b>\n\n"
-                    "Файл 3 талдау парағынан тұрады (құжаттың төменгі жағында ауысыңыз):\n"
-                    "1️⃣ <b>Негізгі жиынтық</b> — Басты AI-дашборд және қаржылық денсаулық индексі\n"
-                    "2️⃣ <b>Талдау</b> — Санаттар құрылымы, трендтер және болжам\n"
-                    "3️⃣ <b>Операциялар тарихы</b> — Барлық транзакциялар тізімі"
-                )
-            }.get(lang, "📊 <b>Ваш премиум-отчет готов!</b>")
-
-            await c.message.answer_document(
-                BufferedInputFile(payload, filename=filename),
-                caption=caption,
-                parse_mode="HTML"
-            )
+                    "🎁 <b>Графиктері бар тегін Excel есеп</b>\n\n"
+                    "Файл жіберілді — ішінде диаграммалар мен кезең қорытындысы бар.\n\n"
+                    "<i>Келесі Excel экспорттары — баптаулардағы толық қолжетімділікпен.</i>"
+                ),
+            }.get(lang, "🎁 <b>Бесплатный Excel-отчёт</b>")
             
-            if is_free_trial_now:
-                # Mark as used
-                await increment_free_export(db, user_id)
-                await db.commit()
-                
-                # Send celebratory 1-time free trial congratulation
-                trial_msg = {
-                    "ru": (
-                        "🎁 <b>Бесплатный Excel-отчёт с графиками</b>\n\n"
-                        "Файл уже отправлен — внутри диаграммы и сводка за период.\n\n"
-                        "<i>Следующие Excel-экспорты — с полным доступом в настройках.</i>"
-                    ),
-                    "en": (
-                        "🎁 <b>Free Excel report with charts</b>\n\n"
-                        "The file is already sent — it includes charts and a period summary.\n\n"
-                        "<i>More Excel exports unlock with Full Access in settings.</i>"
-                    ),
-                    "kk": (
-                        "🎁 <b>Графиктері бар тегін Excel есеп</b>\n\n"
-                        "Файл жіберілді — ішінде диаграммалар мен кезең қорытындысы бар.\n\n"
-                        "<i>Келесі Excel экспорттары — баптаулардағы толық қолжетімділікпен.</i>"
-                    ),
-                }.get(lang, "🎁 <b>Бесплатный Excel-отчёт</b>")
-                
-                await c.message.answer(trial_msg, parse_mode="HTML")
-            return
+            await c.message.answer(trial_msg, parse_mode="HTML")
+        return
 
     # Fallback to CSV for free users (who already used their trial) or if openpyxl failed
     payload_csv = _build_csv(rows, lang, currency)
@@ -1293,11 +1354,17 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     # Generate the stunning preview dynamically in a separate thread (asyncio.to_thread) to avoid blocking event loop
     png_bytes = await asyncio.to_thread(_build_downgrade_preview_png, rows, lang, currency)
 
+    buy_single_text = {
+        "ru": "📊 Купить этот отчет за 20 ⭐️",
+        "en": "📊 Buy this report for 20 ⭐️",
+        "kk": "📊 Бұл есепті 20 ⭐️-ға сатып алу",
+    }.get(lang, "📊 Купить этот отчет за 20 ⭐️")
+
     upgrade_btn_text = {
-        "ru": "👑 Вернуть графики за 150 ⭐️",
-        "en": "👑 Restore charts for 150 ⭐️",
-        "kk": "👑 Графиктерді қайтару (150 ⭐️)",
-    }.get(lang, "👑 Вернуть графики за 150 ⭐️")
+        "ru": "👑 Полный доступ на 3 мес за 150 ⭐️",
+        "en": "👑 Full Access (3 months) for 150 ⭐️",
+        "kk": "👑 Толық қолжетімділік (3 ай) - 150 ⭐️",
+    }.get(lang, "👑 Полный доступ на 3 мес за 150 ⭐️")
 
     menu_btn_text = {
         "ru": "🏠 В Главное меню",
@@ -1306,6 +1373,7 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     }.get(lang, "🏠 В Главное меню")
 
     paywall_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=buy_single_text, callback_data=f"export:buy_single:{period}")],
         [InlineKeyboardButton(text=upgrade_btn_text, callback_data="upgrade:activate")],
         [InlineKeyboardButton(text=menu_btn_text, callback_data="hub:main")]
     ])
@@ -1315,19 +1383,19 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
             "⚠️ <b>Бесплатный Excel-отчёт уже использован</b>\n\n"
             "На графике — ваши доходы и расходы за период. В полном доступе такие диаграммы "
             "есть в каждом Excel-экспорте.\n\n"
-            "🔥 Вернуть графики в отчёты — <b>150 ⭐️</b> в настройках."
+            "🔥 Вы можете купить этот подробный Excel-отчет разово за <b>20 ⭐️</b> или подключить полный доступ за <b>150 ⭐️</b> в настройках."
         ),
         "en": (
             "⚠️ <b>Your free Excel trial was already used</b>\n\n"
             "The chart shows your income and expenses for the period. With Full Access, "
             "charts are included in every Excel export.\n\n"
-            "🔥 Restore charts — <b>150 ⭐️</b> in settings."
+            "🔥 You can purchase this detailed Excel report as a one-time order for <b>20 ⭐️</b> or get Full Access for <b>150 ⭐️</b> in settings."
         ),
         "kk": (
             "⚠️ <b>Тегін Excel есеп қолданылған</b>\n\n"
             "Графикте кезеңдегі кіріс пен шығыстарыңыз көрсетілген. Толық қолжетімділікте "
             "әр Excel экспортында диаграммалар болады.\n\n"
-            "🔥 Графиктерді қайтару — баптауларда <b>150 ⭐️</b>."
+            "🔥 Сіз бұл есепті бір рет <b>20 ⭐️</b>-ға сатып ала аласыз немесе баптауларда <b>150 ⭐️</b>-ға толық қолжетімділікті қоса аласыз."
         ),
     }.get(lang, "")
 

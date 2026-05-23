@@ -673,7 +673,8 @@ async def upgrade_activate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
 
 @router.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
-    if pre_checkout_query.invoice_payload.startswith("full_access_upgrade") or pre_checkout_query.invoice_payload == "ai_chat_extra_messages":
+    payload = pre_checkout_query.invoice_payload or ""
+    if payload.startswith("full_access_upgrade") or payload == "ai_chat_extra_messages" or payload.startswith("export_single:"):
         await pre_checkout_query.answer(ok=True)
     else:
         await pre_checkout_query.answer(ok=False, error_message="Unknown payment type")
@@ -700,6 +701,17 @@ async def process_successful_payment(m: Message, state: FSMContext, db: aiosqlit
             "kk": "✅ <b>+50 хабарлама қосылды!</b>\n\nAI-мен сөйлесуді жалғастыра аласыз.",
         }.get(lang, "✅ <b>+50 сообщений добавлено!</b>")
         await m.answer(success, parse_mode="HTML")
+        return
+
+    if payload.startswith("export_single:"):
+        period = payload.split(":")[-1]
+        from app.handlers.export import send_premium_xlsx_report
+        try:
+            await send_premium_xlsx_report(m.bot, db, m.from_user.id, period, lang, m.chat.id)
+        except Exception as e:
+            from loguru import logger
+            logger.error(f"Failed to generate and send paid export: {e}")
+            await m.answer("⚠️ Error generating report." if lang == "en" else ("⚠️ Есепті құру қатесі." if lang == "kk" else "⚠️ Ошибка при создании отчета."))
         return
 
     if not payload.startswith("full_access_upgrade"):

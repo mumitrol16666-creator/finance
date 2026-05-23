@@ -62,7 +62,8 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
             "menu_body": "Здесь можно <b>поговорить с AI</b> о деньгах, сделать <b>полный разбор периода</b> или <b>повысить точность анализа</b>.\n\n"
                          "<b>Цель</b>: <b>{goal}</b>\n"
                          "📊 Глубоких разборов осталось: <b>{left} из {limit}</b>\n"
-                         "💬 Сообщений в чате осталось: <b>{chat_left}</b>\n\n"
+                         "💬 Сообщений в чате осталось: <b>{chat_left}</b>\n"
+                         "<i>(лимит сообщений можно увеличить за ⭐)</i>\n\n"
                          "<b>Что выбрать</b>\n"
                          "• <b>Чат с AI</b> — свободный диалог по своим финансам\n"
                          "• <b>Получить разбор</b> — глубокий анализ периода\n"
@@ -86,7 +87,7 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
                               "• всё ли обязательное внесено",
             "clarify_too_short": "Слишком коротко. Нужна хотя бы короткая пометка, что именно может искажать разбор.",
             "clarify_saved": "✅ <b>Уточнение сохранено</b>\n\nТеперь AI будет учитывать эту пометку в следующем разборе или ответе.",
-            "limit_reached": "Лимит отчётов исчерпан",
+            "limit_reached": "Лимит глубоких отчетов исчерпан на этот месяц. Пожалуйста, подождите следующего месяца.",
             "loading_1": "⚙️ <b>AI-консультант</b>\n\nПроверяю качество данных...",
             "loading_2": "⚙️ <b>AI-консультант</b>\n\nСобираю финансовый контекст...",
             "loading_3": "⚙️ <b>AI-консультант</b>\n\nГотовлю честный разбор...",
@@ -107,7 +108,8 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
             "menu_body": "Here you can <b>chat with AI</b> about money, get a <b>full period analysis</b> or <b>improve analysis accuracy</b>.\n\n"
                          "<b>Goal</b>: <b>{goal}</b>\n"
                          "📊 Deep reviews left: <b>{left} out of {limit}</b>\n"
-                         "💬 Chat messages left: <b>{chat_left}</b>\n\n"
+                         "💬 Chat messages left: <b>{chat_left}</b>\n"
+                         "<i>(chat limit can be increased with ⭐)</i>\n\n"
                          "<b>What to choose</b>\n"
                          "• <b>Chat with AI</b> — free-form dialog about your finances\n"
                          "• <b>Get report</b> — deep period analysis\n"
@@ -131,7 +133,7 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
                               "• has everything mandatory been entered",
             "clarify_too_short": "Too short. Please provide at least a brief note on what exactly might skew the analysis.",
             "clarify_saved": "✅ <b>Clarification saved</b>\n\nNow AI will take this note into account in the next review or answer.",
-            "limit_reached": "Reports limit reached",
+            "limit_reached": "Deep reports limit reached for this month. Please wait until next month.",
             "loading_1": "⚙️ <b>AI Consultant</b>\n\nChecking data quality...",
             "loading_2": "⚙️ <b>AI Consultant</b>\n\nGathering financial context...",
             "loading_3": "⚙️ <b>AI Consultant</b>\n\nPreparing an honest review...",
@@ -152,7 +154,8 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
             "menu_body": "Мұнда сіз <b>AI-мен ақша туралы сөйлесе</b> аласыз, <b>кезеңді толық талдай</b> аласыз немесе <b>талдау дәлдігін арттыра</b> аласыз.\n\n"
                          "<b>Мақсат</b>: <b>{goal}</b>\n"
                          "📊 Терең талдаулар қалды: <b>{limit}-тен {left}</b>\n"
-                         "💬 Чат хабарламалары қалды: <b>{chat_left}</b>\n\n"
+                         "💬 Чат хабарламалары қалды: <b>{chat_left}</b>\n"
+                         "<i>(чат хабарламаларының лимитін ⭐-ға арттыруға болады)</i>\n\n"
                          "<b>Не таңдау керек</b>\n"
                          "• <b>AI-мен чат</b> — қаржы бойынша еркін диалог\n"
                          "• <b>Талдау алу</b> — кезеңді терең талдау\n"
@@ -176,7 +179,7 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
                               "• барлық міндетті нәрселер енгізілді ме",
             "clarify_too_short": "Тым қысқа. Талдауды не бұрмалауы мүмкін екендігі туралы кем дегенде қысқаша ескерту қажет.",
             "clarify_saved": "✅ <b>Нақтылау сақталды</b>\n\nЕнді AI бұл ескертуді келесі талдауда немесе жауапта ескереді.",
-            "limit_reached": "Есептер лимиті бітті",
+            "limit_reached": "Осы айға терең есептер лимиті бітті. Келесі айды күтіңіз.",
             "loading_1": "⚙️ <b>AI-кеңесші</b>\n\nДеректер сапасын тексеруде...",
             "loading_2": "⚙️ <b>AI-кеңесші</b>\n\nҚаржылық контекстті жинақтауда...",
             "loading_3": "⚙️ <b>AI-кеңесші</b>\n\nӘділ талдау дайындауда...",
