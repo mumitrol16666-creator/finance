@@ -201,6 +201,24 @@ async def add_ai_chat_extra(db: aiosqlite.Connection, user_id: int, extra: int, 
     )
 
 
+async def get_ai_reports_usage(db: aiosqlite.Connection, user_id: int) -> tuple[int, str | None, int]:
+    """Returns (used, month, extra_purchased)."""
+    cur = await db.execute("SELECT ai_reports_used_month, ai_reports_month, ai_reports_extra FROM settings WHERE user_id=?", (user_id,))
+    row = await cur.fetchone()
+    if not row:
+        return 0, None, 0
+    return int(row[0] or 0), (str(row[1]) if row[1] else None), int(row[2] or 0)
+
+
+async def add_ai_reports_extra(db: aiosqlite.Connection, user_id: int, extra: int, updated_at: str):
+    """Add purchased extra deep reports."""
+    await db.execute(
+        "UPDATE settings SET ai_reports_extra = ai_reports_extra + ?, updated_at=? WHERE user_id=?",
+        (int(extra), updated_at, user_id),
+    )
+
+
+
 async def save_onboarding_interview(
     db: aiosqlite.Connection,
     user_id: int,

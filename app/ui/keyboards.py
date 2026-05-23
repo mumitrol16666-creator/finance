@@ -648,11 +648,56 @@ def ai_consultant_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=t(lang, "AI_CHAT_START"), callback_data="ai:chat:start")
     kb.button(text=t(lang, "AI_REPORT_START"), callback_data="ai:report:start")
+    
+    # Label for increase limits button
+    lbl_limits = {
+        "ru": "⭐ Увеличить лимиты",
+        "en": "⭐ Increase limits",
+        "kk": "⭐ Лимиттерді арттыру"
+    }.get(lang, "⭐ Увеличить лимиты")
+    kb.button(text=lbl_limits, callback_data="ai:limits:menu")
+    
     kb.button(text=t(lang, "AI_EDIT_GOAL"), callback_data="ai:goal:edit")
     kb.button(text=t(lang, "AI_CLARIFY"), callback_data="ai:clarify")
     kb.button(text=t(lang, "AI_BACK"), callback_data="ai:back")
-    kb.adjust(1, 1, 1, 1, 1)
+    kb.adjust(1, 1, 1, 2, 1)
     return kb.as_markup()
+
+
+def ai_limits_buy_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    
+    lbl_reports = {
+        "ru": "📊 +5 разборов (50 ⭐)",
+        "en": "📊 +5 reports (50 ⭐)",
+        "kk": "📊 +5 талдау (50 ⭐)"
+    }.get(lang, "📊 +5 разборов (50 ⭐)")
+    
+    lbl_chat = {
+        "ru": "💬 +50 сообщений (150 ⭐)",
+        "en": "💬 +50 messages (150 ⭐)",
+        "kk": "💬 +50 хабарлама (150 ⭐)"
+    }.get(lang, "💬 +50 сообщений (150 ⭐)")
+    
+    kb.button(text=lbl_reports, callback_data="ai:buy:reports")
+    kb.button(text=lbl_chat, callback_data="ai:chat:buy")
+    kb.button(text=t(lang, "AI_BACK_TO_AI"), callback_data="ai:menu")
+    kb.adjust(1, 1, 1)
+    return kb.as_markup()
+
+
+def ai_reports_limit_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    lbl_buy = {
+        "ru": "📊 Купить +5 разборов (50 ⭐)",
+        "en": "📊 Buy +5 reports (50 ⭐)",
+        "kk": "📊 +5 талдау сатып алу (50 ⭐)"
+    }.get(lang, "📊 Купить +5 разборов (50 ⭐)")
+    kb.button(text=lbl_buy, callback_data="ai:buy:reports")
+    kb.button(text=t(lang, "AI_BACK_TO_AI"), callback_data="ai:menu")
+    kb.adjust(1, 1)
+    return kb.as_markup()
+
 
 
 def ai_chat_kb(lang: str = "ru") -> InlineKeyboardMarkup:

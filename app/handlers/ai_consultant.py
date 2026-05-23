@@ -11,6 +11,8 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message, InlineKeybo
 from app.db.repositories.ai_context_repo import save_ai_context_note
 from app.db.repositories.settings_repo import (
     get_ai_usage,
+    get_ai_reports_usage,
+    add_ai_reports_extra,
     get_ai_chat_usage,
     get_financial_goal,
     get_lang,
@@ -37,6 +39,8 @@ from app.ui.keyboards import (
     ai_report_period_kb,
     cancel_kb,
     reports_kb,
+    ai_limits_buy_kb,
+    ai_reports_limit_kb,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -51,6 +55,8 @@ AI_MONTHLY_LIMIT = 5
 AI_CHAT_MONTHLY_LIMIT = 50
 AI_CHAT_EXTRA_PACK = 50
 AI_CHAT_EXTRA_PRICE = 150
+AI_REPORTS_EXTRA_PACK = 5
+AI_REPORTS_EXTRA_PRICE = 50
 
 
 def _ai_t(lang: str, key: str, **kwargs) -> str:
@@ -62,8 +68,8 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
             "menu_body": "Здесь можно <b>поговорить с AI</b> о деньгах, сделать <b>полный разбор периода</b> или <b>повысить точность анализа</b>.\n\n"
                          "<b>Цель</b>: <b>{goal}</b>\n"
                          "📊 Глубоких разборов осталось: <b>{left} из {limit}</b>\n"
-                         "💬 Сообщений в чате осталось: <b>{chat_left}</b>\n"
-                         "<i>(лимит сообщений можно увеличить за ⭐)</i>\n\n"
+                         "💬 Сообщений в чате осталось: <b>{chat_left} из {chat_limit}</b>\n"
+                         "<i>(лимиты сообщений и разборов можно увеличить за ⭐)</i>\n\n"
                          "<b>Что выбрать</b>\n"
                          "• <b>Чат с AI</b> — свободный диалог по своим финансам\n"
                          "• <b>Получить разбор</b> — глубокий анализ периода\n"
@@ -101,6 +107,10 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
             "chat_buy_success": "✅ <b>+{extra_pack} сообщений добавлено!</b>\n\nМожешь продолжить общение с AI.",
             "chat_buy_title": "Докупить AI-сообщения",
             "chat_buy_desc": "Дополнительные {extra_pack} сообщений для чата с AI-консультантом",
+            "limits_menu_title": "⭐ <b>Увеличение лимитов ИИ</b>\n\nВыбери нужный пакет:",
+            "report_limit_reached": "⚠️ <b>Лимит глубоких отчетов исчерпан</b>\n\nВ этом месяце ты использовал все {limit} глубоких отчетов.\nМожешь докупить пакет из {extra_pack} отчетов за {price} ⭐.",
+            "report_buy_title": "Докупить глубокие отчеты",
+            "report_buy_desc": "Дополнительные {extra_pack} глубоких отчетов от AI-консультанта",
         },
         "en": {
             "goal_label": "Goal",
@@ -108,8 +118,8 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
             "menu_body": "Here you can <b>chat with AI</b> about money, get a <b>full period analysis</b> or <b>improve analysis accuracy</b>.\n\n"
                          "<b>Goal</b>: <b>{goal}</b>\n"
                          "📊 Deep reviews left: <b>{left} out of {limit}</b>\n"
-                         "💬 Chat messages left: <b>{chat_left}</b>\n"
-                         "<i>(chat limit can be increased with ⭐)</i>\n\n"
+                         "💬 Chat messages left: <b>{chat_left} out of {chat_limit}</b>\n"
+                         "<i>(chat and report limits can be increased with ⭐)</i>\n\n"
                          "<b>What to choose</b>\n"
                          "• <b>Chat with AI</b> — free-form dialog about your finances\n"
                          "• <b>Get report</b> — deep period analysis\n"
@@ -147,15 +157,19 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
             "chat_buy_success": "✅ <b>+{extra_pack} messages added!</b>\n\nYou can continue chatting with AI.",
             "chat_buy_title": "Buy AI messages",
             "chat_buy_desc": "Additional {extra_pack} messages for AI consultant chat",
+            "limits_menu_title": "⭐ <b>Increase AI Limits</b>\n\nChoose the package you need:",
+            "report_limit_reached": "⚠️ <b>Deep reports limit reached</b>\n\nYou've used all {limit} deep reports this month.\nYou can buy a pack of {extra_pack} reports for {price} ⭐.",
+            "report_buy_title": "Buy Deep Reports",
+            "report_buy_desc": "Additional {extra_pack} deep reports from AI consultant",
         },
         "kk": {
             "goal_label": "Мақсат",
             "goal_none": "орнатылмаған",
             "menu_body": "Мұнда сіз <b>AI-мен ақша туралы сөйлесе</b> аласыз, <b>кезеңді толық талдай</b> аласыз немесе <b>талдау дәлдігін арттыра</b> аласыз.\n\n"
                          "<b>Мақсат</b>: <b>{goal}</b>\n"
-                         "📊 Терең талдаулар қалды: <b>{limit}-тен {left}</b>\n"
-                         "💬 Чат хабарламалары қалды: <b>{chat_left}</b>\n"
-                         "<i>(чат хабарламаларының лимитін ⭐-ға арттыруға болады)</i>\n\n"
+                         "📊 Терең талдаулар қалды: <b>{left} (барлығы {limit})</b>\n"
+                         "💬 Чат хабарламалары қалды: <b>{chat_left} (барлығы {chat_limit})</b>\n"
+                         "<i>(чат пен талдау лимиттерін ⭐-ға арттыруға болады)</i>\n\n"
                          "<b>Не таңдау керек</b>\n"
                          "• <b>AI-мен чат</b> — қаржы бойынша еркін диалог\n"
                          "• <b>Талдау алу</b> — кезеңді терең талдау\n"
@@ -177,7 +191,7 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
                               "• ай ерекше болды ма\n"
                               "• бір реттік ірі операциялар болды ма\n"
                               "• барлық міндетті нәрселер енгізілді ме",
-            "clarify_too_short": "Тым қысқа. Талдауды не бұрмалауы мүмкін екендігі туралы кем дегенде қысқаша ескерту қажет.",
+            "clarify_too_short": "Тым қысқа. Талдауды не бұрмалауы мүмкін екендіг туралы кем дегенде қысқаша ескерту қажет.",
             "clarify_saved": "✅ <b>Нақтылау сақталды</b>\n\nЕнді AI бұл ескертуді келесі талдауда немесе жауапта ескереді.",
             "limit_reached": "Осы айға терең есептер лимиті бітті. Келесі айды күтіңіз.",
             "loading_1": "⚙️ <b>AI-кеңесші</b>\n\nДеректер сапасын тексеруде...",
@@ -193,6 +207,10 @@ def _ai_t(lang: str, key: str, **kwargs) -> str:
             "chat_buy_success": "✅ <b>+{extra_pack} хабарлама қосылды!</b>\n\nAI-мен сөйлесуді жалғастыра аласыз.",
             "chat_buy_title": "AI хабарламалар сатып алу",
             "chat_buy_desc": "AI-кеңесші чаты үшін қосымша {extra_pack} хабарлама",
+            "limits_menu_title": "⭐ <b>AI лимиттерін арттыру</b>\n\nҚажетті пакетті таңдаңыз:",
+            "report_limit_reached": "⚠️ <b>Терең талдаулар лимиті бітті</b>\n\nОсы айда барлық {limit} терең талдауды пайдаландыңыз.\nТағы {extra_pack} талдауды {price} ⭐-ға сатып алуға болады.",
+            "report_buy_title": "Терең талдаулар сатып алу",
+            "report_buy_desc": "AI-кеңесшіден қосымша {extra_pack} терең талдау есебі",
         }
     }
     base = data.get(lang, data['ru']).get(key, data['ru'].get(key, key))
@@ -300,21 +318,25 @@ async def _show_prompt(target: Message | CallbackQuery, state: FSMContext, db: a
     await state.update_data(prompt_message_id=sent.message_id)
 
 
-async def _ensure_limit(db: aiosqlite.Connection, user_id: int) -> tuple[int, str]:
-    used, month = await get_ai_usage(db, user_id)
+async def _ensure_limit(db: aiosqlite.Connection, user_id: int) -> tuple[int, int, str]:
+    """Returns (used, total_limit, current_month)."""
+    used, month, extra = await get_ai_reports_usage(db, user_id)
     current_month = await _current_month(db, user_id)
     if month != current_month:
         used = 0
+        extra = 0
         await set_ai_usage(db, user_id, 0, current_month, _now_iso())
+        await db.execute("UPDATE settings SET ai_reports_extra = 0, updated_at = ? WHERE user_id = ?", (_now_iso(), user_id))
         await db.commit()
-    return used, current_month
+    total_limit = AI_MONTHLY_LIMIT + extra
+    return used, total_limit, current_month
 
 
-def _menu_text(lang: str, goal_text: str | None, used: int, chat_left: int = 0) -> str:
-    left = max(0, AI_MONTHLY_LIMIT - used)
+def _menu_text(lang: str, goal_text: str | None, used: int, limit: int, chat_left: int = 0, chat_limit: int = 0) -> str:
+    left = max(0, limit - used)
     title = t(lang, "AI_MENU_TITLE")
     goal_str = goal_text if goal_text else _ai_t(lang, "goal_none")
-    return f"{title}\n\n" + _ai_t(lang, "menu_body", goal=goal_str, left=left, limit=AI_MONTHLY_LIMIT, chat_left=chat_left)
+    return f"{title}\n\n" + _ai_t(lang, "menu_body", goal=goal_str, left=left, limit=limit, chat_left=chat_left, chat_limit=chat_limit)
 
 
 async def _ensure_chat_limit(db: aiosqlite.Connection, user_id: int) -> tuple[int, int, int]:
@@ -333,13 +355,13 @@ async def _ensure_chat_limit(db: aiosqlite.Connection, user_id: int) -> tuple[in
 async def _open_menu(target: Message | CallbackQuery, state: FSMContext, db: aiosqlite.Connection) -> None:
     lang = await get_lang(db, target.from_user.id)
     goal = await get_financial_goal(db, target.from_user.id)
-    used, _month = await _ensure_limit(db, target.from_user.id)
+    used, total_limit, _month = await _ensure_limit(db, target.from_user.id)
     chat_used, chat_total, _extra = await _ensure_chat_limit(db, target.from_user.id)
     chat_left = max(0, chat_total - chat_used)
     await state.update_data(ui_scope="ai_consultant")
     await state.set_state(None)
     await _clear_prompt(target, state)
-    await _render_screen(target, state, _menu_text(lang, goal, used, chat_left), reply_markup=ai_consultant_kb(lang), force_new=isinstance(target, Message))
+    await _render_screen(target, state, _menu_text(lang, goal, used, total_limit, chat_left, chat_total), reply_markup=ai_consultant_kb(lang), force_new=isinstance(target, Message))
 
 
 async def _animate_loading(c: CallbackQuery, state: FSMContext, steps: list[str]) -> None:
@@ -690,6 +712,34 @@ async def ai_chat_buy(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     await c.answer()
 
 
+@router.callback_query(F.data == "ai:limits:menu")
+async def ai_limits_menu(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
+    text = _ai_t(lang, "limits_menu_title")
+    await _render_screen(c, state, text, reply_markup=ai_limits_buy_kb(lang))
+    await c.answer()
+
+
+@router.callback_query(F.data == "ai:buy:reports")
+async def ai_buy_reports(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
+    await c.bot.send_invoice(
+        chat_id=c.from_user.id,
+        title=_ai_t(lang, "report_buy_title"),
+        description=_ai_t(lang, "report_buy_desc", extra_pack=AI_REPORTS_EXTRA_PACK)[:255],
+        payload="ai_reports_extra_pack",
+        provider_token="",
+        currency="XTR",
+        prices=[
+            LabeledPrice(
+                label=_ai_t(lang, "report_buy_title"),
+                amount=AI_REPORTS_EXTRA_PRICE,
+            )
+        ],
+    )
+    await c.answer()
+
+
 @router.callback_query(F.data.startswith("ai:period:"))
 async def ai_generate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     from app.db.connection import get_db
@@ -702,10 +752,14 @@ async def ai_generate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
             await ai_goal_edit(c, state, db_session)
             return
 
-        used, month = await _ensure_limit(db_session, c.from_user.id)
-        if used >= AI_MONTHLY_LIMIT:
-            await _open_menu(c, state, db_session)
-            await c.answer(_ai_t(lang, "limit_reached"), show_alert=True)
+        used, total_limit, month = await _ensure_limit(db_session, c.from_user.id)
+        if used >= total_limit:
+            await _render_screen(
+                c, state,
+                _ai_t(lang, "report_limit_reached", limit=total_limit, extra_pack=AI_REPORTS_EXTRA_PACK, price=AI_REPORTS_EXTRA_PRICE),
+                reply_markup=ai_reports_limit_kb(lang),
+            )
+            await c.answer()
             return
 
     await state.update_data(ui_scope="ai_consultant")
