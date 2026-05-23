@@ -22,8 +22,8 @@ SYSTEM_PROMPT = """
 4. ЯЗЫК: Отвечай на том же языке, на котором пишет пользователь (обычно это русский).
 
 === ЭТАПЫ ИНТЕРВЬЮ ===
-- Этап 1: Ты спросил "Что тебя больше всего напрягает в деньгах?". Пользователь ответил.
-  Твоя задача: Ответить с эмпатией на его боль и спросить про Этап 2: "Вспомни свою последнюю трату, из-за которой стало неприятно (например, спонтанный кофе, заказ еды или покупка одежды). Что это было и сколько примерно стоило?"
+- Этап 1: Ты спросил "Какая твоя главная цель в финансах сейчас? Например: начать копить, перестать тратить лишнее или просто понять, куда уходят деньги?". Пользователь ответил.
+  Твоя задача: Ответить с эмпатией на его цель и спросить про Этап 2: "Вспомни свою последнюю трату, из-за которой стало неприятно (например, спонтанный кофе, заказ еды или покупка одежды). Что это было и сколько примерно стоило?"
 - Этап 2: Пользователь рассказал про неприятную трату.
   Твоя задача: Прокомментировать с пониманием и спросить про Этап 3: "А теперь давай о хорошем. Если бы деньги перестали быть проблемой и их хватало на всё самое важное, на что бы ты тратил(а) их в первую очередь?"
 - Этап 3: Пользователь рассказал про свои цели/мечты.
@@ -35,7 +35,8 @@ SYSTEM_PROMPT = """
     * survivor — денег мало, постоянный стресс или долги
     * controller — всё ок, хочет оптимизировать
   Твой ответ на этом этапе должен состоять из двух частей:
-  1. Теплый и ободряющий текст-резюме для пользователя (с эмодзи, описанием его архетипа и планом действий).
+  1. Теплый и ободряющий текст-резюме для пользователя (с эмодзи, описанием его цели и планом действий).
+     ВАЖНО: Ни в коем случае не пиши пользователю его архетип (например, "chaotic", "хаотик", "breaker", "выживающий" и т.д.) и не упоминай само слово "архетип" в тексте-резюме. Оставь эту классификацию в секрете, но используй её, чтобы сделать твои советы более подходящими. Текст-резюме должен быть лаконичным и приятным.
   2. Строго в самом конце сообщения добавь блок JSON следующего формата:
      ===JSON===
      {
@@ -96,7 +97,6 @@ def parse_interview_json(ai_response: str) -> tuple[str, dict | None]:
             
     return ai_response, None
 
-
 def determine_fallback_archetype(pain: str, regret: str, dream: str) -> str:
     """Simple rule-based archetype classifier for fallback mode."""
     text = f"{pain} {regret} {dream}".lower()
@@ -123,40 +123,89 @@ def get_archetype_desc(archetype: str) -> str:
     }
     return descs.get(archetype, descs["controller"])
 
-def get_fallback_interview_response(stage: int, user_answer: str, data: dict) -> str:
+def get_fallback_interview_response(stage: int, user_answer: str, data: dict, lang: str = "ru") -> str:
     """Get static/templated fallback response for interview stage."""
+    lang = (lang or "ru").lower()
+    if lang not in ("ru", "en", "kk"):
+        lang = "ru"
+
     if stage == 1:
-        comment = "Понимаю тебя. Отношения с деньгами бывают непростыми, особенно когда есть ощущение неопределенности или тревоги."
-        question = "Вспомни свою последнюю трату, из-за которой стало неприятно (например, спонтанный кофе, заказ еды или покупка одежды). Что это было и сколько примерно стоило?"
+        comments = {
+            "ru": "Понимаю тебя. Здорово, что ты хочешь разобраться со своими целями — это первый и самый важный шаг к контролю над деньгами.",
+            "en": "I understand. It's great that you want to figure out your goals — this is the first and most important step to controlling your money.",
+            "kk": "Түсінемін. Мақсаттарыңызды айқындағыңыз келгені өте жақсы — бұл ақшаны бақылауға алудың алғашқы және ең маңызды қадамы."
+        }
+        questions = {
+            "ru": "Вспомни свою последнюю трату, из-за которой стало неприятно (например, спонтанный кофе, заказ еды или покупка одежды). Что это было и сколько примерно стоило?",
+            "en": "Think of your last expense that made you feel uncomfortable (e.g. spontaneous coffee, ordering food, or buying clothes). What was it and how much did it cost?",
+            "kk": "Соңғы рет өзіңізге ұнамаған қандай шығын жасадыңыз (мысалы, жоспардан тыс кофе, тамаққа тапсырыс немесе киім сатып алу)? Ол не еді және шамамен қанша тұрды?"
+        }
+        comment = comments.get(lang, comments["ru"])
+        question = questions.get(lang, questions["ru"])
         return f"{comment}\n\n{question}"
     
     elif stage == 2:
-        comment = "Ох, это неприятное чувство после спонтанных трат знакомо многим. Мы часто совершаем их на эмоциях, а потом корим себя. Но с этим можно работать!"
-        question = "А теперь давай о хорошем. Если бы деньги перестали быть проблемой и их хватало на всё самое важное, на что бы ты тратил(а) их в первую очередь?"
+        comments = {
+            "ru": "Ох, это неприятное чувство после спонтанных трат знакомо многим. Мы часто совершаем их на эмоциях, а потом корим себя. Но с этим можно работать!",
+            "en": "Oh, that unpleasant feeling after spontaneous spending is familiar to many. We often make them on emotion and then regret it. But we can work on that!",
+            "kk": "О, мұндай сезім көпшілікке таныс. Біз жиі эмоцияға беріліп, артынан өкінеміз. Бірақ бұнымен жұмыс істеуге болады!"
+        }
+        questions = {
+            "ru": "А теперь давай о хорошем. Если бы деньги перестали быть проблемой и их хватало на всё самое важное, на что бы ты тратил(а) их в первую очередь?",
+            "en": "And now let's talk about the good things. If money stopped being a problem and there was enough for all the most important things, what would you spend it on first?",
+            "kk": "Ал енді жақсы нәрселер туралы сөйлесейік. Егер ақша мәселе болмаса және барлық маңызды нәрселерге жетсе, оны бірінші кезекте не нәрсеге жұмсар едіңіз?"
+        }
+        comment = comments.get(lang, comments["ru"])
+        question = questions.get(lang, questions["ru"])
         return f"{comment}\n\n{question}"
         
     elif stage == 3:
-        comment = "Отличная цель! Деньги — это инструмент для достижения того, что действительно приносит радость и развитие."
-        question = "Чтобы двигаться к целям, важно определить комфортные границы. Сколько ты хотел(а) бы тратить в день на повседневные расходы (в твоей валюте)? Напиши просто число."
+        comments = {
+            "ru": "Отличная цель! Деньги — это инструмент для достижения того, что действительно приносит радость и развитие.",
+            "en": "Great goal! Money is a tool to achieve what really brings joy and development.",
+            "kk": "Тамаша мақсат! Ақша — бұл шынайы қуаныш пен даму әкелетін нәрселерге қол жеткізу құралы."
+        }
+        questions = {
+            "ru": "Чтобы двигаться к целям, важно определить комфортные границы. Сколько ты хотел(а) бы тратить в день на повседневные расходы (в твоей валюте)? Напиши просто число.",
+            "en": "To move towards goals, it is important to define comfortable limits. How much would you like to spend per day on daily expenses (in your currency)? Just type the number.",
+            "kk": "Мақсаттарға жету үшін ыңғайлы шекараларды белгілеу маңызды. Күнделікті шығындарға күніне қанша жұмсағыңыз келеді (өз валютаңызда)? Тек санды жазыңыз."
+        }
+        comment = comments.get(lang, comments["ru"])
+        question = questions.get(lang, questions["ru"])
         return f"{comment}\n\n{question}"
         
     elif stage == 4:
         limit = parse_digit(user_answer)
         pain = data.get("stage_1_pain", "")
         regret = data.get("stage_2_regret", "")
-        dream = data.get("stage_3_dream", "Финансовая независимость")
+        dream = data.get("stage_3_dream", "Финансовая независимость" if lang == "ru" else ("Financial Independence" if lang == "en" else "Қаржылық тәуелсіздік"))
         
         archetype = determine_fallback_archetype(pain, regret, dream)
-        archetype_desc = get_archetype_desc(archetype)
         
-        summary = (
-            "Спасибо за искренность! 😊\n\n"
-            "На основе твоих ответов я составил твой финансовый профиль:\n"
-            f"🎯 **Твоя цель:** {dream}\n"
-            f"💰 **Дневной лимит:** {limit} (в твоей валюте)\n"
-            f"🧠 **Твой архетип:** {archetype_desc}\n\n"
-            "Я буду помогать тебе держать баланс без чувства вины!"
-        )
+        if lang == "ru":
+            summary = (
+                "Спасибо за искренность! 😊\n\n"
+                "На основе твоих ответов я составил твой финансовый профиль:\n"
+                f"🎯 <b>Твоя цель:</b> {dream}\n"
+                f"💰 <b>Дневной лимит:</b> {limit} (в твоей валюте)\n\n"
+                "Я буду помогать тебе держать баланс без чувства вины!"
+            )
+        elif lang == "en":
+            summary = (
+                "Thank you for being sincere! 😊\n\n"
+                "Based on your answers, I have created your financial profile:\n"
+                f"🎯 <b>Your goal:</b> {dream}\n"
+                f"💰 <b>Daily limit:</b> {limit} (in your currency)\n\n"
+                "I will help you keep balance without guilt!"
+            )
+        else:  # kk
+            summary = (
+                "Шынайылығыңыз үшін рақмет! 😊\n\n"
+                "Жауаптарыңыздың негізінде мен сіздің қаржылық профиліңізді жасадым:\n"
+                f"🎯 <b>Мақсатыңыз:</b> {dream}\n"
+                f"💰 <b>Күнделікті лимит:</b> {limit} (өз валютаңызда)\n\n"
+                "Мен сізге өкінішсіз теңгерімді сақтауға көмектесемін!"
+            )
         
         json_payload = {
             "main_goal": dream,
@@ -166,7 +215,7 @@ def get_fallback_interview_response(stage: int, user_answer: str, data: dict) ->
         
         return f"{summary}\n\n===JSON===\n{json.dumps(json_payload, ensure_ascii=False)}\n===JSON==="
         
-    return "Произошла ошибка. Пожалуйста, попробуй еще раз."
+    return "Произошла ошибка. Пожалуйста, попробуй еще раз." if lang == "ru" else ("An error occurred. Please try again." if lang == "en" else "Қате орын алды. Қайтадан байқап көріңіз.")
 
 async def save_interview_results_to_db(db: aiosqlite.Connection, user_id: int, parsed_result: dict):
     """Saves the parsed JSON result of the onboarding interview to the database settings table."""
