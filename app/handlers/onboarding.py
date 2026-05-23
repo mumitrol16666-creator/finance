@@ -45,6 +45,17 @@ async def answer_md(m: Message, text: str, **kwargs):
 async def edit_md(msg, text: str, **kwargs):
     return await msg.edit_text(text, parse_mode=PARSE_MODE, **kwargs)
 
+async def _trigger_interview_or_menu(m_or_c: Message | CallbackQuery, state: FSMContext, db) -> None:
+    user_id = m_or_c.from_user.id
+    message = m_or_c if isinstance(m_or_c, Message) else m_or_c.message
+    cur = await db.execute("SELECT onboarding_interview_done FROM settings WHERE user_id = ?", (user_id,))
+    row = await cur.fetchone()
+    is_done = bool(row and row[0] == 1)
+    if is_done:
+        await cancel_to_main_menu(m_or_c, state, db)
+    else:
+        await start_interview(message, state, db)
+
 @router.message(CommandStart())
 async def start(m: Message, state: FSMContext, db):
     await state.clear()
@@ -171,7 +182,7 @@ async def ob_daily(c: CallbackQuery, state: FSMContext, db):
     if ans == 'no':
         await save_daily_report(db, c.from_user.id, 0, '21:00')
         await finish_onboarding(db, c.from_user.id)
-        await start_interview(c.message, state, db)
+        await _trigger_interview_or_menu(c, state, db)
         await c.answer()
         return
     await save_daily_report(db, c.from_user.id, 1, '21:00')
@@ -193,7 +204,7 @@ async def ob_time_pick(c: CallbackQuery, state: FSMContext, db):
     hhmm = ':'.join(part)
     await save_daily_report(db, c.from_user.id, 1, hhmm)
     await finish_onboarding(db, c.from_user.id)
-    await start_interview(c.message, state, db)
+    await _trigger_interview_or_menu(c, state, db)
     await c.answer()
 
 @router.message(Onboarding.daily_time_custom, F.text)
@@ -204,4 +215,4 @@ async def ob_time_custom(m: Message, state: FSMContext, db):
         return await answer_md(m, get_text(lang, 'TIME_ERROR'))
     await save_daily_report(db, m.from_user.id, 1, hhmm)
     await finish_onboarding(db, m.from_user.id)
-    await start_interview(m, state, db)
+    await _trigger_interview_or_menu(m, state, db)
