@@ -24,9 +24,21 @@ router = Router()
 PARSE_MODE = "HTML"
 
 WELCOME_TEXTS = {
-    "ru": "А теперь давай познакомимся поближе 😊\nНам важно узнать твои цели, чтобы настроить бота под тебя. Это займет всего 1 минуту.",
-    "en": "And now let's get to know each other better 😊\nIt is important for us to know your goals to customize the bot for you. It will take only 1 minute.",
-    "kk": "Ал енді жақынырақ танысайық 😊\nБотты сізге сәйкес баптау үшін қаржылық мақсаттарыңызды білу маңызды. Бұл бар болғаны 1 минут уақытты алады."
+    "ru": (
+        "А теперь давай познакомимся поближе 😊\n"
+        "Нам важно узнать твои цели, чтобы настроить бота под тебя. Это займет всего 1 минуту.\n\n"
+        "🎁 <b>Внимание:</b> это разовое предложение! Пройди опрос прямо сейчас и получи <b>7 дней бесплатного Premium-доступа</b>. Если пропустишь, повторно пройти опрос и получить бонус не получится!"
+    ),
+    "en": (
+        "And now let's get to know each other better 😊\n"
+        "It is important for us to know your goals to customize the bot for you. It will take only 1 minute.\n\n"
+        "🎁 <b>Note:</b> this is a one-time offer! Complete the quick interview now to get <b>7 days of free Premium access</b>. If you skip, you won't be able to take it later or claim the bonus!"
+    ),
+    "kk": (
+        "Ал енді жақынырақ танысайық 😊\n"
+        "Ботты сізге сәйкес баптау үшін қаржылық мақсаттарыңызды білу маңызды. Бұл бар болғаны 1 минут уақытты алады.\n\n"
+        "🎁 <b>Назар аударыңыз:</b> бұл бір реттік ұсыныс! Сауалнамадан қазір өтіп, <b>7 күндік тегін Premium</b> алыңыз. Егер өткізіп жіберсеңіз, кейін сауалнамадан өтіп, бонусты алу мүмкін болмайды!"
+    )
 }
 
 QUESTION_TEXTS = {
