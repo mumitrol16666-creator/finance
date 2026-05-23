@@ -199,3 +199,25 @@ async def add_ai_chat_extra(db: aiosqlite.Connection, user_id: int, extra: int, 
         "UPDATE settings SET ai_chat_extra = ai_chat_extra + ?, updated_at=? WHERE user_id=?",
         (int(extra), updated_at, user_id),
     )
+
+
+async def save_onboarding_interview(
+    db: aiosqlite.Connection,
+    user_id: int,
+    archetype: str,
+    main_goal: str,
+    daily_limit: int,
+    updated_at: str,
+):
+    await db.execute(
+        "UPDATE settings SET "
+        "onboarding_archetype=?, "
+        "onboarding_main_goal=?, "
+        "onboarding_daily_limit=?, "
+        "onboarding_interview_done=1, "
+        "financial_goal_text=?, "
+        "updated_at=? "
+        "WHERE user_id=?",
+        (archetype, main_goal, daily_limit, main_goal, updated_at, user_id),
+    )
+

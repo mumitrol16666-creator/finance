@@ -5,6 +5,15 @@ class Onboarding(StatesGroup):
     acc_balance = State()
     daily_time_custom = State()
 
+
+class OnboardingInterview(StatesGroup):
+    stage_1_pain = State()
+    stage_2_regret = State()
+    stage_3_dream = State()
+    stage_4_limit = State()
+    stage_5_summary = State()
+
+
 class ExpenseFlow(StatesGroup):
     amount = State()
     account = State()
