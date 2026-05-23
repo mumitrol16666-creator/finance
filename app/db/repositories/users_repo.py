@@ -155,3 +155,20 @@ async def get_all_active_users(db: aiosqlite.Connection) -> list[int]:
     rows = await cur.fetchall()
     return [row[0] for row in rows]
 
+
+async def is_promo_used(db: aiosqlite.Connection, user_id: int) -> bool:
+    """
+    Проверяет, была ли использована разовая скидка на подписку.
+    """
+    cur = await db.execute("SELECT COALESCE(promo_used, 0) FROM users WHERE user_id = ?", (user_id,))
+    row = await cur.fetchone()
+    return int(row[0]) == 1 if row else False
+
+
+async def mark_promo_used(db: aiosqlite.Connection, user_id: int) -> None:
+    """
+    Помечает разовую скидку как использованную.
+    """
+    await db.execute("UPDATE users SET promo_used = 1 WHERE user_id = ?", (user_id,))
+
+

@@ -211,8 +211,10 @@ async def _open_hub(target: Message | CallbackQuery, state: FSMContext, db: aios
 
 async def deny_feature_message(ctx: Message | CallbackQuery, db: aiosqlite.Connection, user_id: int) -> None:
     lang = await get_lang(db, user_id)
-    text = _upgrade_message(lang)
-    markup = upgrade_info_kb(lang, price=_full_access_price())
+    from app.db.repositories.users_repo import is_promo_used
+    promo_used = await is_promo_used(db, user_id)
+    text = _upgrade_message(lang, promo_used=promo_used)
+    markup = upgrade_info_kb(lang, promo_used=promo_used)
     
     if isinstance(ctx, CallbackQuery):
         await neutralize_keyboard(ctx)
@@ -482,9 +484,11 @@ def _full_access_days() -> int:
     return int(getattr(settings, "full_access_days", 90))
 
 
-def _upgrade_message(lang: str, has_full_access: bool = False) -> str:
+def _upgrade_message(lang: str, has_full_access: bool = False, promo_used: bool = False) -> str:
     if lang == "en":
         greeting = "🌟 <b>Full access activated!</b>" if has_full_access else "You are currently using the free mode."
+        price_1m = "15 ⭐ (One-time offer)" if not promo_used else "70 ⭐"
+        price_3m = "150 ⭐"
         return (
             "✨ <b>Full access</b>\n\n"
             f"{greeting}\n\n"
@@ -504,13 +508,15 @@ def _upgrade_message(lang: str, has_full_access: bool = False) -> str:
             "• monthly reports\n"
             "• AI consultant\n\n"
             "<b>Subscription pricing:</b>\n"
-            "• <b>1 month</b> — 15 ⭐\n"
-            "• <b>3 months</b> — 115 ⭐\n\n"
+            f"• <b>1 month</b> — {price_1m}\n"
+            f"• <b>3 months</b> — {price_3m}\n\n"
             "Press one of the buttons below to renew or unlock full access."
         )
 
     if lang == "kk":
         greeting = "🌟 <b>Толық қолжетімділік белсенді!</b>" if has_full_access else "Қазір сен тегін режимді қолданып отырсың."
+        price_1m = "15 ⭐ (Бір реттік акция)" if not promo_used else "70 ⭐"
+        price_3m = "150 ⭐"
         return (
             "✨ <b>Толық қолжетімділік</b>\n\n"
             f"{greeting}\n\n"
@@ -530,12 +536,14 @@ def _upgrade_message(lang: str, has_full_access: bool = False) -> str:
             "• айлық есептер\n"
             "• AI-кеңесші\n\n"
             "<b>Жазылым құны:</b>\n"
-            "• <b>1 ай</b> — 15 ⭐\n"
-            "• <b>3 ай</b> — 115 ⭐\n\n"
+            f"• <b>1 ай</b> — {price_1m}\n"
+            f"• <b>3 ай</b> — {price_3m}\n\n"
             "Толық қолжетімділікті ашу немесе ұзарту үшін төмендегі батырмалардың бірін бас."
         )
 
     greeting = "🌟 <b>У тебя активирован полный доступ!</b>" if has_full_access else "Сейчас ты пользуешься бесплатной версией."
+    price_1m = "15 ⭐ (Разовая акция)" if not promo_used else "70 ⭐"
+    price_3m = "150 ⭐"
     return (
         "✨ <b>Полный доступ</b>\n\n"
         f"{greeting}\n\n"
@@ -551,8 +559,8 @@ def _upgrade_message(lang: str, has_full_access: bool = False) -> str:
         "• подкатегории и месячные отчеты\n"
         "• учет долгов и регулярных платежей\n\n"
         "<b>Стоимость подписки:</b>\n"
-        "• <b>1 месяц</b> — 15 ⭐\n"
-        "• <b>3 месяца</b> — 115 ⭐\n\n"
+        f"• <b>1 месяц</b> — {price_1m}\n"
+        f"• <b>3 месяца</b> — {price_3m}\n\n"
         "Это инвестиция в финансовую дисциплину, которая окупается в первый же месяц.\n\n"
         "👇 Нажми на одну из кнопок ниже, чтобы снять все лимиты прямо сейчас."
     )
@@ -587,12 +595,14 @@ async def upgrade_info_message(m: Message, state: FSMContext, db: aiosqlite.Conn
     await _ensure_minimized_menu(m, state, lang)
 
     from app.domain.services.access_service import get_user_context
+    from app.db.repositories.users_repo import is_promo_used
     ctx = await get_user_context(db, m.from_user.id)
+    promo_used = await is_promo_used(db, m.from_user.id)
 
     sent = await m.answer(
-        _upgrade_message(lang),
+        _upgrade_message(lang, has_full_access=ctx.full_access, promo_used=promo_used),
         parse_mode="HTML",
-        reply_markup=upgrade_info_kb(lang),
+        reply_markup=upgrade_info_kb(lang, promo_used=promo_used),
     )
 
     await state.update_data(
@@ -613,10 +623,15 @@ async def upgrade_info_callback(c: CallbackQuery, state: FSMContext, db: aiosqli
 
     await _ensure_minimized_menu(c, state, lang)
 
+    from app.domain.services.access_service import get_user_context
+    from app.db.repositories.users_repo import is_promo_used
+    ctx = await get_user_context(db, c.from_user.id)
+    promo_used = await is_promo_used(db, c.from_user.id)
+
     sent = await c.message.answer(
-        _upgrade_message(lang),
+        _upgrade_message(lang, has_full_access=ctx.full_access, promo_used=promo_used),
         parse_mode="HTML",
-        reply_markup=upgrade_info_kb(lang),
+        reply_markup=upgrade_info_kb(lang, promo_used=promo_used),
     )
 
     await state.update_data(
@@ -640,11 +655,13 @@ async def upgrade_activate(c: CallbackQuery, state: FSMContext, db: aiosqlite.Co
         
     if pkg == "1m":
         days = 30
-        price = 15
+        from app.db.repositories.users_repo import is_promo_used
+        promo_used = await is_promo_used(db, c.from_user.id)
+        price = 15 if not promo_used else 70
         label = "Premium 1 месяц" if lang == "ru" else ("Premium 1 month" if lang == "en" else "Premium 1 ай")
     else:
         days = 90
-        price = 115
+        price = 150
         label = "Premium 3 месяца" if lang == "ru" else ("Premium 3 months" if lang == "en" else "Premium 3 ай")
 
     desc = {
@@ -728,6 +745,9 @@ async def process_successful_payment(m: Message, state: FSMContext, db: aiosqlit
     try:
         await _cleanup_ui(m.bot, m.chat.id, data)
         await grant_full_access(db, m.from_user.id, days=days)
+        if days == 30:
+            from app.db.repositories.users_repo import mark_promo_used
+            await mark_promo_used(db, m.from_user.id)
         from datetime import datetime as _dt, timezone as _tz
         now_str = _dt.now(_tz.utc).isoformat()
         await db.execute(
