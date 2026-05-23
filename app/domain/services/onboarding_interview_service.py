@@ -174,6 +174,11 @@ async def save_interview_results_to_db(db: aiosqlite.Connection, user_id: int, p
     main_goal = parsed_result.get("main_goal") or "Финансовая стабильность"
     daily_limit = int(parsed_result.get("daily_limit") or 5000)
     
+    from app.domain.money import get_user_currency, get_scale
+    currency = await get_user_currency(db, user_id)
+    scale = get_scale(currency)
+    daily_limit_minor = daily_limit * scale
+    
     now_str = datetime.now(timezone.utc).isoformat()
-    await save_onboarding_interview(db, user_id, archetype, main_goal, daily_limit, now_str)
+    await save_onboarding_interview(db, user_id, archetype, main_goal, daily_limit_minor, now_str)
     await db.commit()
