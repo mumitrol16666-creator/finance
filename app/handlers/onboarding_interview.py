@@ -174,12 +174,21 @@ async def handle_stage_4_limit(m: Message, state: FSMContext, db):
         }
     
     try:
+        from app.db.repositories.users_repo import grant_full_access
+        await grant_full_access(db, m.from_user.id, days=7)
         await save_interview_results_to_db(db, m.from_user.id, parsed)
     except Exception as e:
-        logger.error(f"Failed to save interview results to DB: {e}")
+        logger.error(f"Failed to save interview results or grant full access: {e}")
+        
+    lang = await get_lang(db, m.from_user.id)
+    trial_msg = {
+        "ru": "\n\n🎁 <b>Тебе начислено 7 дней бесплатного пробного периода!</b> 🎉",
+        "en": "\n\n🎁 <b>You have been granted 7 days of free trial period!</b> 🎉",
+        "kk": "\n\n🎁 <b>Сізге 7 күндік тегін сынақ мерзімі берілді!</b> 🎉",
+    }.get(lang, "\n\n🎁 <b>Тебе начислено 7 дней бесплатного пробного периода!</b> 🎉")
         
     await state.set_state(OnboardingInterview.stage_5_summary)
-    await m.answer(clean_text, reply_markup=let_go_kb(), parse_mode=PARSE_MODE)
+    await m.answer(clean_text + trial_msg, reply_markup=let_go_kb(), parse_mode=PARSE_MODE)
 
 @router.message(OnboardingInterview.stage_5_summary)
 @router.message(F.text == "🚀 Поехали!")
