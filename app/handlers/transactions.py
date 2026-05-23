@@ -415,25 +415,42 @@ async def _flow_finish(
     state: FSMContext,
     text: str,
     db=None,
+    show_main_menu: bool = False,
 ):
     """
     Финал сценария:
     - удаляем экранное сообщение сценария
     - очищаем FSM
-    - отправляем одно финальное сообщение с main_menu
+    - отправляем финальный чек/сообщение
+    - если передан show_main_menu, дополнительно отправляем полный экран Главного меню
     """
-    if isinstance(ctx, CallbackQuery):
-        await _delete_flow_message(ctx.bot, ctx.message.chat.id, state)
-        await state.clear()
-        lang = await get_lang(db, ctx.from_user.id) if db is not None else "ru"
-        await ctx.message.answer(text, reply_markup=await build_main_menu_markup(db, ctx.from_user.id, lang), parse_mode=PARSE_MODE)
-        await ctx.answer()
-        return
+    bot = ctx.bot
+    chat_id = ctx.message.chat.id if isinstance(ctx, CallbackQuery) else ctx.chat.id
+    user_id = ctx.from_user.id
 
-    await _delete_flow_message(ctx.bot, ctx.chat.id, state)
+    await _delete_flow_message(bot, chat_id, state)
     await state.clear()
-    lang = await get_lang(db, ctx.from_user.id) if db is not None else "ru"
-    await ctx.answer(text, reply_markup=await build_main_menu_markup(db, ctx.from_user.id, lang), parse_mode=PARSE_MODE)
+    lang = await get_lang(db, user_id) if db is not None else "ru"
+
+    menu_kb = await build_main_menu_markup(db, user_id, lang)
+
+    if isinstance(ctx, CallbackQuery):
+        try:
+            await ctx.answer()
+        except Exception:
+            pass
+
+    if show_main_menu and db is not None:
+        # 1. Отправляем чек операции
+        await bot.send_message(chat_id, text, parse_mode=PARSE_MODE)
+        
+        # 2. Отправляем текст Главного меню с основной reply-клавиатурой
+        from app.domain.services.ai_consultant_service import build_main_menu_text
+        menu_text = await build_main_menu_text(db, user_id, lang)
+        await bot.send_message(chat_id, menu_text, reply_markup=menu_kb, parse_mode=PARSE_MODE)
+    else:
+        # Поведение по умолчанию (например, при отмене) - отправляем только одно сообщение с reply-клавиатурой
+        await bot.send_message(chat_id, text, reply_markup=menu_kb, parse_mode=PARSE_MODE)
 
 
 async def _check_and_send_streak_reward(ctx: Message | CallbackQuery, db, streak_before: int) -> None:
@@ -1240,7 +1257,7 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     if feedback:
         msg += f"\n\n<i>{escape(str(feedback))}</i>"
 
-    await _flow_finish(ctx, state, msg, db)
+    await _flow_finish(ctx, state, msg, db, show_main_menu=True)
     await _check_and_send_streak_reward(ctx, db, streak_before)
 
     # Anomaly Detection
@@ -1663,7 +1680,7 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     if data.get("note"):
         msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"
 
-    await _flow_finish(ctx, state, msg, db)
+    await _flow_finish(ctx, state, msg, db, show_main_menu=True)
     await _check_and_send_streak_reward(ctx, db, streak_before)
 
 # =========================================================
@@ -2060,7 +2077,7 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     if data.get("note"):
         msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"
 
-    await _flow_finish(ctx, state, msg, db)
+    await _flow_finish(ctx, state, msg, db, show_main_menu=True)
 
 
 # ---------------------------------------------------------------------------
