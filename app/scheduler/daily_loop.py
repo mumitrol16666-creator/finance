@@ -287,7 +287,7 @@ async def _check_and_send_trial_reminders(bot, db: aiosqlite.Connection):
     try:
         cur = await db.execute(
             """
-            SELECT u.user_id, u.full_access_until, s.lang, s.timezone 
+            SELECT u.user_id, u.full_access_until, s.lang, s.timezone, COALESCE(u.promo_used, 0) AS promo_used
             FROM users u
             JOIN settings s ON u.user_id = s.user_id
             WHERE u.full_access = 1 
@@ -296,7 +296,7 @@ async def _check_and_send_trial_reminders(bot, db: aiosqlite.Connection):
             """
         )
         rows = await cur.fetchall()
-        for user_id, full_access_until, lang, tz_name in rows:
+        for user_id, full_access_until, lang, tz_name, promo_used in rows:
             try:
                 tz = ZoneInfo(tz_name or "Asia/Aqtobe")
             except Exception:
@@ -315,29 +315,33 @@ async def _check_and_send_trial_reminders(bot, db: aiosqlite.Connection):
             days_left = (until_date - local_now.date()).days
             if days_left <= 1:
                 # 6 days have passed, 1 day or less remains of the 7-day trial. Offer renewal.
+                price_1m = "15 звезд (Разовая акция)" if not promo_used else "70 звезд"
+                price_1m_en = "15 stars (One-time offer)" if not promo_used else "70 stars"
+                price_1m_kk = "15 жұлдыз (Бір реттік акция)" if not promo_used else "70 жұлдыз"
+
                 msg = {
                     "ru": (
                         "⚠️ <b>Пробный период заканчивается!</b>\n\n"
                         "Скоро бот перейдет в бесплатный режим с ограничениями. "
                         "Чтобы сохранить все профессиональные функции (ИИ-Консультант, Лимиты, Бюджеты, Регулярные платежи), продли подписку прямо сейчас:\n\n"
-                        "⭐ <b>1 месяц</b> — 15 звезд\n"
-                        "⭐ <b>3 месяца</b> — 115 звезд\n\n"
+                        f"⭐ <b>1 месяц</b> — {price_1m}\n"
+                        "⭐ <b>3 месяца</b> — 150 звезд\n\n"
                         "Нажми одну из кнопок ниже для оплаты через Telegram Stars 👇"
                     ),
                     "en": (
                         "⚠️ <b>Your trial period is ending soon!</b>\n\n"
                         "The bot will revert to the free version with limits. "
                         "To keep full access to all professional features (AI Consultant, Limits, Budgets, Recurring Payments), renew your subscription now:\n\n"
-                        "⭐ <b>1 month</b> — 15 stars\n"
-                        "⭐ <b>3 months</b> — 115 stars\n\n"
+                        f"⭐ <b>1 month</b> — {price_1m_en}\n"
+                        "⭐ <b>3 months</b> — 150 stars\n\n"
                         "Click one of the buttons below to pay with Telegram Stars 👇"
                     ),
                     "kk": (
                         "⚠️ <b>Сынақ мерзіміңіз аяқталуға жақын!</b>\n\n"
                         "Жақында бот шектеулері бар тегін нұсқаға өтеді. "
                         "Барлық кәсіби мүмкіндіктерге (AI-Консультант, Лимиттер, Бюджеттер, Тұрақты төлемдер) толық қолжетімділікті сақтау үшін жазылымды қазір ұзартыңыз:\n\n"
-                        "⭐ <b>1 ай</b> — 15 жұлдыз\n"
-                        "⭐ <b>3 ай</b> — 115 жұлдыз\n\n"
+                        f"⭐ <b>1 ай</b> — {price_1m_kk}\n"
+                        "⭐ <b>3 ай</b> — 150 жұлдыз\n\n"
                         "Telegram Stars арқылы төлеу үшін төмендегі батырмалардың бірін басыңыз 👇"
                     )
                 }.get(lang, "ru")
@@ -347,7 +351,7 @@ async def _check_and_send_trial_reminders(bot, db: aiosqlite.Connection):
                         chat_id=user_id,
                         text=msg,
                         parse_mode="HTML",
-                        reply_markup=upgrade_info_kb(lang)
+                        reply_markup=upgrade_info_kb(lang, promo_used=bool(promo_used))
                     )
                     await db.execute(
                         "UPDATE settings SET trial_reminder_sent = 1, updated_at = ? WHERE user_id = ?",

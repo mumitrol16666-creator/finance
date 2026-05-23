@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
   mode              TEXT    NOT NULL DEFAULT 'newbie',
   progress_level    INTEGER NOT NULL DEFAULT 0,
   full_access       INTEGER NOT NULL DEFAULT 0,
-  free_exports_used INTEGER NOT NULL DEFAULT 0
+  free_exports_used INTEGER NOT NULL DEFAULT 0,
+  promo_used        INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (

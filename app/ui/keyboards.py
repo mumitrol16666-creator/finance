@@ -394,12 +394,29 @@ def reset_confirm_kb(lang: str = "ru"):
     kb.adjust(1, 1)
     return kb.as_markup()
 
-def upgrade_info_kb(lang: str, price: int = 0) -> InlineKeyboardMarkup:
+def upgrade_info_kb(lang: str, promo_used: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    lbl_1m = "1 месяц" if lang == "ru" else ("1 month" if lang == "en" else "1 ай")
-    lbl_3m = "3 месяца" if lang == "ru" else ("3 months" if lang == "en" else "3 ай")
-    kb.button(text=f"⭐️ {lbl_1m} (15 ⭐)", callback_data="upgrade:activate:1m")
-    kb.button(text=f"⭐️ {lbl_3m} (115 ⭐)", callback_data="upgrade:activate:3m")
+    if not promo_used:
+        lbl_1m = {
+            "ru": "1 месяц (15 ⭐) — Скидка 80%!",
+            "en": "1 month (15 ⭐) — 80% OFF!",
+            "kk": "1 ай (15 ⭐) — 80% Жеңілдік!"
+        }.get(lang, "1 месяц (15 ⭐) — Скидка 80%!")
+    else:
+        lbl_1m = {
+            "ru": "1 месяц (70 ⭐)",
+            "en": "1 month (70 ⭐)",
+            "kk": "1 ай (70 ⭐)"
+        }.get(lang, "1 месяц (70 ⭐)")
+
+    lbl_3m = {
+        "ru": "3 месяца (150 ⭐)",
+        "en": "3 months (150 ⭐)",
+        "kk": "3 ай (150 ⭐)"
+    }.get(lang, "3 месяца (150 ⭐)")
+
+    kb.button(text=f"⭐️ {lbl_1m}", callback_data="upgrade:activate:1m")
+    kb.button(text=f"⭐️ {lbl_3m}", callback_data="upgrade:activate:3m")
     kb.adjust(1)
     return kb.as_markup()
 
