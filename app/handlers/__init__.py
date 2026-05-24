@@ -18,6 +18,7 @@ from app.handlers.planning_smart import router as planning_smart_router
 from app.handlers.export import router as export_router
 from app.handlers.charts import router as charts_router
 from app.handlers.teaser_broadcast import router as teaser_broadcast_router
+from app.handlers.admin import router as admin_router
 
 def get_routers():
     return [
@@ -41,5 +42,6 @@ def get_routers():
         lang_router,
         quick_add_router,
         teaser_broadcast_router,
+        admin_router,
     ]
 
