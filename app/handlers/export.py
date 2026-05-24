@@ -1882,6 +1882,33 @@ async def export_from_settings(c: CallbackQuery, state: FSMContext, db: aiosqlit
     await c.answer()
 
 
+@router.callback_query(F.data == "rp:export")
+async def export_from_reports(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
+    prompt = {
+        "ru": (
+            "📤 <b>Экспорт операций</b>\n\n"
+            "Выбери период. Полный отчет включает графики денежных потоков, "
+            "прогресс лимитов по категориям и AI-аналитику.\n\n"
+            "Выбери период:"
+        ),
+        "en": (
+            "📤 <b>Export transactions</b>\n\n"
+            "Pick a period. The full report includes cashflow charts, "
+            "category budget progress, and AI analytics.\n\n"
+            "Pick a period:"
+        ),
+        "kk": (
+            "📤 <b>Операцияларды экспорттау</b>\n\n"
+            "Кезеңді таңдаңыз. Толық есепке ақша ағынының графиктері, "
+            "санаттар бойынша лимиттердің орындалуы және ИИ-талдау кіреді.\n\n"
+            "Кезеңді таңдаңыз:"
+        ),
+    }.get(lang, "📤 <b>Экспорт операций</b>\n\nВыбери период:")
+    await c.message.edit_text(prompt, reply_markup=_export_menu_kb(lang, cancel_cb="rp:hub"), parse_mode="HTML")
+    await c.answer()
+
+
 async def _resolve_period(db: aiosqlite.Connection, user_id: int, period: str) -> tuple[str | None, str | None, str]:
     """Return (start_utc_iso, end_utc_iso, label) for the requested period."""
     if period == "all":

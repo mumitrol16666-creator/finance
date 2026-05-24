@@ -2016,9 +2016,8 @@ async def _go_tx_manage_menu(
         
         kb = InlineKeyboardBuilder()
         kb.button(text={"ru": "🧾 Список операций", "en": "🧾 Transaction list", "kk": "🧾 Операциялар тізімі"}.get(lang), callback_data="st:tx:last10")
-        kb.button(text={"ru": "📤 Экспорт в Excel", "en": "📤 Export to Excel", "kk": "📤 Excel-ге экспорттау"}.get(lang), callback_data="st:tx:export")
         kb.button(text=t(lang, "BTN_BACK"), callback_data="st:root")
-        kb.adjust(1, 1, 1)
+        kb.adjust(1, 1)
         markup = kb.as_markup()
     else:
         from app.handlers.history import _fmt_ts, _tx_type_label, _tx_amount_text
@@ -2077,13 +2076,12 @@ async def _go_tx_manage_menu(
         kb.button(text={"ru": "🗑 Удалить операцию", "en": "🗑 Delete transaction", "kk": "🗑 Операцияны жою"}.get(lang), callback_data=f"st:tx:del:confirm:{tx_id}")
         
         kb.button(text={"ru": "🧾 Последние 10", "en": "🧾 Last 10", "kk": "🧾 Соңғы 10"}.get(lang), callback_data="st:tx:last10")
-        kb.button(text={"ru": "📤 Экспорт в Excel", "en": "📤 Export to Excel", "kk": "📤 Excel-ге экспорттау"}.get(lang), callback_data="st:tx:export")
         kb.button(text=t(lang, "BTN_BACK"), callback_data="st:root")
         
         if ttype == "transfer":
-            kb.adjust(1, 1, 1, 1, 1, 2, 1)
+            kb.adjust(1, 1, 1, 1, 1, 1, 1)
         else:
-            kb.adjust(2, 1, 1, 1, 2, 1)
+            kb.adjust(2, 1, 1, 1, 1, 1)
             
         text = "\n".join(lines)
         markup = kb.as_markup()
