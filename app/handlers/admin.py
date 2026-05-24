@@ -24,7 +24,7 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         # Ignore silently for security
         return
 
-    # 2. SQL Queries (strictly selecting existing columns)
+    # 2. SQL Queries (validated and correct fields)
     users_query = """
         SELECT 
             u.user_id, 
@@ -32,7 +32,7 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
             u.created_at,
             s.lang, 
             s.timezone,
-            (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.user_id AND a.deleted_at IS NULL) as accounts_count,
+            (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.user_id AND a.is_archived = 0) as accounts_count,
             (SELECT COUNT(*) FROM transactions t WHERE t.user_id = u.user_id AND t.deleted_at IS NULL) as tx_count,
             (SELECT COUNT(*) FROM debts d WHERE d.user_id = u.user_id AND d.closed_at IS NULL) as active_debts
         FROM users u
@@ -48,7 +48,7 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
             a.currency, 
             a.is_saving
         FROM accounts a
-        WHERE a.deleted_at IS NULL
+        WHERE a.is_archived = 0
         ORDER BY a.user_id, a.name
     """
 
@@ -62,7 +62,7 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         await m.reply(f"❌ Ошибка выполнения запросов к БД: {e}")
         return
 
-    # 3. Resolve Usernames and Names dynamically from Telegram Bot API (since they aren't stored in DB)
+    # 3. Resolve Usernames and Names dynamically from Telegram Bot API
     user_usernames = {}
     user_first_names = {}
     
