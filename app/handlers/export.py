@@ -1216,7 +1216,7 @@ async def export_buy_single(c: CallbackQuery, state: FSMContext, db: aiosqlite.C
     await c.answer()
 
 
-def _export_menu_kb(lang: str):
+def _export_menu_kb(lang: str, cancel_cb: str = "cancel"):
     kb = InlineKeyboardBuilder()
     labels = {
         "ru": {"day": "📅 За сегодня", "week": "📆 За неделю", "month": "🗓 За месяц", "all": "🗂 Всё", "cancel": "❌ Отмена"},
@@ -1226,9 +1226,21 @@ def _export_menu_kb(lang: str):
     L = labels.get(lang, labels["ru"])
     for key in ("day", "week", "month", "all"):
         kb.button(text=L[key], callback_data=f"export:{key}")
-    kb.button(text=L["cancel"], callback_data="cancel")
+    kb.button(text=L["cancel"], callback_data=cancel_cb)
     kb.adjust(2, 2, 1)
     return kb.as_markup()
+
+
+@router.callback_query(F.data == "st:tx:export")
+async def export_from_settings(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
+    prompt = {
+        "ru": "📤 <b>Экспорт операций</b>\n\nВыбери период:",
+        "en": "📤 <b>Export transactions</b>\n\nPick a period:",
+        "kk": "📤 <b>Операцияларды экспорттау</b>\n\nКезеңді таңда:",
+    }.get(lang, "📤 <b>Экспорт операций</b>\n\nВыбери период:")
+    await c.message.edit_text(prompt, reply_markup=_export_menu_kb(lang, cancel_cb="st:tx_manage"), parse_mode="HTML")
+    await c.answer()
 
 
 async def _resolve_period(db: aiosqlite.Connection, user_id: int, period: str) -> tuple[str | None, str | None, str]:

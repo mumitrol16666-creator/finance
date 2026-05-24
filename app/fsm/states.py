@@ -57,6 +57,10 @@ class SettingsFlow(StatesGroup):
     add_currency = State()
     add_type = State()
 
+    # Transaction Editing Flow States
+    tx_edit_amount = State()
+    tx_edit_note = State()
+
 
 class QuickAddFlow(StatesGroup):
     draft = State()

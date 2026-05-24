@@ -1983,3 +1983,454 @@ async def st_notifs_exp_set(c: CallbackQuery, state: FSMContext, db: aiosqlite.C
     await db.commit()
     await _go_notifs_menu(c, state, db)
     await c.answer()
+
+
+# =========================================================
+# Transaction History & Editing (st:tx_manage)
+# =========================================================
+
+async def _go_tx_manage_menu(
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    db: aiosqlite.Connection,
+    *,
+    already_answered: bool = False
+) -> None:
+    from app.db.repositories.tx_repo import get_last_active_tx
+    from app.db.repositories.settings_repo import get_lang
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    
+    user_id = target.from_user.id
+    lang = await get_lang(db, user_id)
+    tx = await get_last_active_tx(db, user_id)
+    
+    await state.set_state(None)
+    await state.update_data(settings_return_to="tx_manage_menu", ui_scope=SETTINGS_SCOPE)
+    
+    if not tx:
+        text = {
+            "ru": "🧾 <b>Управление операциями</b>\n\nУ вас пока нет записанных операций.",
+            "en": "🧾 <b>Manage Transactions</b>\n\nYou don't have any recorded transactions yet.",
+            "kk": "🧾 <b>Операцияларды басқару</b>\n\nСізде әлі жазылған операциялар жоқ.",
+        }.get(lang, "🧾 <b>Управление операциями</b>\n\nУ вас пока нет записанных операций.")
+        
+        kb = InlineKeyboardBuilder()
+        kb.button(text={"ru": "🧾 Список операций", "en": "🧾 Transaction list", "kk": "🧾 Операциялар тізімі"}.get(lang), callback_data="st:tx:last10")
+        kb.button(text={"ru": "📤 Экспорт в Excel", "en": "📤 Export to Excel", "kk": "📤 Excel-ге экспорттау"}.get(lang), callback_data="st:tx:export")
+        kb.button(text=t(lang, "BTN_BACK"), callback_data="st:root")
+        kb.adjust(1, 1, 1)
+        markup = kb.as_markup()
+    else:
+        from app.handlers.history import _fmt_ts, _tx_type_label, _tx_amount_text
+        
+        tx_id = tx["id"]
+        ttype = tx["type"]
+        ts = tx["ts"]
+        note = tx["note"]
+        
+        lines = []
+        kb = InlineKeyboardBuilder()
+        
+        if ttype == "transfer":
+            from_name = tx["from_account_name"]
+            to_name = tx["to_account_name"]
+            amount = tx["amount"]
+            curr = tx["from_currency"]
+            
+            lines.append({
+                "ru": f"🧾 <b>Последняя операция: Перевод</b>\n\n💵 Сумма: <b>{_fmt_money(amount, curr)}</b>\n🏦 Откуда: <b>{escape(str(from_name))}</b>\n🏦 Куда: <b>{escape(str(to_name))}</b>",
+                "en": f"🧾 <b>Last Operation: Transfer</b>\n\n💵 Amount: <b>{_fmt_money(amount, curr)}</b>\n🏦 From: <b>{escape(str(from_name))}</b>\n🏦 To: <b>{escape(str(to_name))}</b>",
+                "kk": f"🧾 <b>Соңғы операция: Аударым</b>\n\n💵 Сомасы: <b>{_fmt_money(amount, curr)}</b>\n🏦 Қайдан: <b>{escape(str(from_name))}</b>\n🏦 Қайда: <b>{escape(str(to_name))}</b>",
+            }.get(lang))
+            
+            kb.button(text={"ru": "✏️ Изменить сумму", "en": "✏️ Edit amount", "kk": "✏️ Соманы өзгерту"}.get(lang), callback_data=f"st:tx:edit:amount:{tx_id}")
+            kb.button(text={"ru": "✏️ Изменить счёт отправления", "en": "✏️ Edit sender account", "kk": "✏️ Жөнелту шотын өзгерту"}.get(lang), callback_data=f"st:tx:edit:acc_from:{tx_id}")
+            kb.button(text={"ru": "✏️ Изменить счёт получения", "en": "✏️ Edit receiver account", "kk": "✏️ Қабылдау шотын өзгерту"}.get(lang), callback_data=f"st:tx:edit:acc_to:{tx_id}")
+        else:
+            acc_name = tx["account_name"]
+            curr = tx["currency"]
+            amount = tx["amount"]
+            cat_name = tx["category_name"] or ("Без категории" if lang == "ru" else ("No category" if lang == "en" else "Санатсыз"))
+            cat_emoji = tx["category_emoji"] or ""
+            cat_str = f"{cat_emoji} {cat_name}".strip()
+            
+            type_lbl = _tx_type_label(lang, ttype, amount)
+            amount_str = _tx_amount_text(amount)
+            
+            lines.append({
+                "ru": f"🧾 <b>Последняя операция: {type_lbl}</b>\n\n💵 Сумма: <b>{amount_str} {curr}</b>\n🏦 Счёт: <b>{escape(str(acc_name))}</b>\n🗂 Категория: <b>{escape(str(cat_str))}</b>",
+                "en": f"🧾 <b>Last Operation: {type_lbl}</b>\n\n💵 Amount: <b>{amount_str} {curr}</b>\n🏦 Account: <b>{escape(str(acc_name))}</b>\n🗂 Category: <b>{escape(str(cat_str))}</b>",
+                "kk": f"🧾 <b>Соңғы операция: {type_lbl}</b>\n\n💵 Сомасы: <b>{amount_str} {curr}</b>\n🏦 Шот: <b>{escape(str(acc_name))}</b>\n🗂 Санат: <b>{escape(str(cat_str))}</b>",
+            }.get(lang))
+            
+            kb.button(text={"ru": "✏️ Изменить сумму", "en": "✏️ Edit amount", "kk": "✏️ Соманы өзгерту"}.get(lang), callback_data=f"st:tx:edit:amount:{tx_id}")
+            kb.button(text={"ru": "✏️ Изменить счёт", "en": "✏️ Edit account", "kk": "✏️ Шотты өзгерту"}.get(lang), callback_data=f"st:tx:edit:acc:{tx_id}")
+            kb.button(text={"ru": "✏️ Изменить категорию", "en": "✏️ Edit category", "kk": "✏️ Санатты өзгерту"}.get(lang), callback_data=f"st:tx:edit:cat:{tx_id}")
+            
+        lines.append({
+            "ru": f"🕒 Дата: <b>{_fmt_ts(ts)}</b>\n📝 Комментарий: <i>{escape(str(note or '—'))}</i>",
+            "en": f"🕒 Date: <b>{_fmt_ts(ts)}</b>\n📝 Note: <i>{escape(str(note or '—'))}</i>\n",
+            "kk": f"🕒 Күні: <b>{_fmt_ts(ts)}</b>\n📝 Пікір: <i>{escape(str(note or '—'))}</i>",
+        }.get(lang))
+        
+        kb.button(text={"ru": "✏️ Изменить комментарий", "en": "✏️ Edit note", "kk": "✏️ Пікірді өзгерту"}.get(lang), callback_data=f"st:tx:edit:note:{tx_id}")
+        kb.button(text={"ru": "🗑 Удалить операцию", "en": "🗑 Delete transaction", "kk": "🗑 Операцияны жою"}.get(lang), callback_data=f"st:tx:del:confirm:{tx_id}")
+        
+        kb.button(text={"ru": "🧾 Последние 10", "en": "🧾 Last 10", "kk": "🧾 Соңғы 10"}.get(lang), callback_data="st:tx:last10")
+        kb.button(text={"ru": "📤 Экспорт в Excel", "en": "📤 Export to Excel", "kk": "📤 Excel-ге экспорттау"}.get(lang), callback_data="st:tx:export")
+        kb.button(text=t(lang, "BTN_BACK"), callback_data="st:root")
+        
+        if ttype == "transfer":
+            kb.adjust(1, 1, 1, 1, 1, 2, 1)
+        else:
+            kb.adjust(2, 1, 1, 1, 2, 1)
+            
+        text = "\n".join(lines)
+        markup = kb.as_markup()
+
+    await _render_screen(target, state, text, reply_markup=markup)
+
+
+@router.callback_query(F.data == "st:tx_manage")
+async def st_tx_manage(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    await _go_tx_manage_menu(c, state, db)
+    await c.answer()
+
+
+@router.callback_query(F.data == "st:tx:last10")
+async def st_tx_last10(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    await state.update_data(history_return_to="tx_manage")
+    from app.handlers.history import _render_history
+    await _render_history(c, db, c.from_user.id, offset=0, prefer_edit=True, state=state)
+
+
+@router.callback_query(F.data.startswith("st:tx:del:confirm:"))
+async def st_tx_del_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    tx_id = int(c.data.split(":")[-1])
+    lang = await get_lang(db, c.from_user.id)
+    
+    text = {
+        "ru": "⚠️ <b>Подтверждение удаления</b>\n\nВы уверены, что хотите удалить эту операцию? Баланс счёта будет автоматически пересчитан. Это действие нельзя отменить.",
+        "en": "⚠️ <b>Confirm Deletion</b>\n\nAre you sure you want to delete this transaction? Account balance will be updated automatically. This cannot be undone.",
+        "kk": "⚠️ <b>Жоюды растау</b>\n\nБұл операцияны жойғыңыз келетініне сенімдісіз бе? Шот балансы автоматты түрде қайта есептеледі. Бұл әрекетті болдырмау мүмкін емес.",
+    }.get(lang)
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text={"ru": "🗑 Да, удалить", "en": "🗑 Yes, delete", "kk": "🗑 Иә, жою"}.get(lang), callback_data=f"st:tx:del:yes:{tx_id}")
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="st:tx_manage")
+    kb.adjust(1, 1)
+    
+    await _render_screen(c, state, text, reply_markup=kb.as_markup())
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("st:tx:del:yes:"))
+async def st_tx_del_yes(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    tx_id = int(c.data.split(":")[-1])
+    lang = await get_lang(db, c.from_user.id)
+    
+    from app.db.repositories.tx_repo import delete_tx
+    try:
+        ok, _status = await delete_tx(db, c.from_user.id, tx_id)
+        if ok:
+            await db.commit()
+            msg = {"ru": "✅ Операция удалена", "en": "✅ Transaction deleted", "kk": "✅ Операция жойылды"}.get(lang)
+        else:
+            await db.rollback()
+            msg = {"ru": "❌ Не удалось найти или удалить операцию", "en": "❌ Failed to delete transaction", "kk": "❌ Операцияны жою мүмкін болмады"}.get(lang)
+    except Exception:
+        await db.rollback()
+        raise
+        
+    await c.answer(msg, show_alert=True)
+    await _go_tx_manage_menu(c, state, db)
+
+
+@router.callback_query(F.data.startswith("st:tx:edit:amount:"))
+async def st_tx_edit_amount_init(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    tx_id = int(c.data.split(":")[-1])
+    lang = await get_lang(db, c.from_user.id)
+    
+    text = {
+        "ru": "✏️ <b>Изменение суммы</b>\n\nВведите новую сумму операции (целое число):",
+        "en": "✏️ <b>Edit Amount</b>\n\nEnter the new transaction amount (integer):",
+        "kk": "✏️ <b>Соманы өзгерту</b>\n\nЖаңа операция сомасын енгізіңіз (бүтін сан):",
+    }.get(lang)
+    
+    await state.set_state(SettingsFlow.tx_edit_amount)
+    await state.update_data(edit_tx_id=tx_id)
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="st:tx_manage")
+    kb.adjust(1)
+    
+    await _render_screen(c, state, text, reply_markup=kb.as_markup())
+    await c.answer()
+
+
+@router.message(SettingsFlow.tx_edit_amount, F.text)
+async def st_tx_edit_amount_process(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, m.from_user.id)
+    from app.domain.validators import parse_positive_int
+    
+    text_val = m.text.strip().replace(" ", "").replace(",", "").replace(".", "")
+    val = parse_positive_int(text_val)
+    
+    if val is None or val <= 0:
+        err = {"ru": "Пожалуйста, введите положительное целое число.", "en": "Please enter a positive integer.", "kk": "Оң бүтін санды енгізіңіз."}.get(lang)
+        await m.answer(err)
+        return
+        
+    data = await state.get_data()
+    tx_id = data.get("edit_tx_id")
+    
+    if not tx_id:
+        await _go_tx_manage_menu(m, state, db)
+        return
+        
+    from app.db.repositories.tx_repo import update_tx
+    try:
+        ok = await update_tx(db, user_id=m.from_user.id, tx_id=tx_id, new_amount=val)
+        if ok:
+            await db.commit()
+            success = {"ru": "✅ Сумма успешно изменена", "en": "✅ Amount updated successfully", "kk": "✅ Сома сәтті өзгертілді"}.get(lang)
+            await m.answer(success)
+        else:
+            await db.rollback()
+            err_msg = {"ru": "❌ Ошибка при изменении суммы", "en": "❌ Error updating amount", "kk": "❌ Соманы өзгерту қатесі"}.get(lang)
+            await m.answer(err_msg)
+    except Exception:
+        await db.rollback()
+        raise
+        
+    await _go_tx_manage_menu(m, state, db)
+
+
+@router.callback_query(F.data.startswith("st:tx:edit:note:"))
+async def st_tx_edit_note_init(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    tx_id = int(c.data.split(":")[-1])
+    lang = await get_lang(db, c.from_user.id)
+    
+    text = {
+        "ru": "✏️ <b>Изменение комментария</b>\n\nОтправьте новый комментарий для операции.\nЧтобы стереть комментарий, нажмите кнопку ниже.",
+        "en": "✏️ <b>Edit Note</b>\n\nSend a new comment for this transaction.\nTo clear the comment, tap the button below.",
+        "kk": "✏️ <b>Пікірді өзгерту</b>\n\nОперацияға жаңа пікір жіберіңіз.\nПікірді өшіру үшін төмендегі батырманы басыңыз.",
+    }.get(lang)
+    
+    await state.set_state(SettingsFlow.tx_edit_note)
+    await state.update_data(edit_tx_id=tx_id)
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text={"ru": "🗑 Стереть комментарий", "en": "🗑 Clear comment", "kk": "🗑 Пікірді өшіру"}.get(lang), callback_data=f"st:tx:edit:note:clear:{tx_id}")
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="st:tx_manage")
+    kb.adjust(1, 1)
+    
+    await _render_screen(c, state, text, reply_markup=kb.as_markup())
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("st:tx:edit:note:clear:"))
+async def st_tx_edit_note_clear(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    tx_id = int(c.data.split(":")[-1])
+    lang = await get_lang(db, c.from_user.id)
+    
+    from app.db.repositories.tx_repo import update_tx
+    try:
+        ok = await update_tx(db, user_id=c.from_user.id, tx_id=tx_id, new_note="")
+        if ok:
+            await db.commit()
+            success = {"ru": "✅ Комментарий стерт", "en": "✅ Comment cleared", "kk": "✅ Пікір өшірілді"}.get(lang)
+            await c.answer(success, show_alert=True)
+        else:
+            await db.rollback()
+            await c.answer("Error", show_alert=True)
+    except Exception:
+        await db.rollback()
+        raise
+        
+    await _go_tx_manage_menu(c, state, db)
+
+
+@router.message(SettingsFlow.tx_edit_note, F.text)
+async def st_tx_edit_note_process(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, m.from_user.id)
+    new_note = m.text.strip()
+    
+    if len(new_note) > 100:
+        err = {"ru": "Комментарий слишком длинный (максимум 100 символов).", "en": "Comment too long (max 100 chars).", "kk": "Пікір тым ұзын (макс. 100 таңба)."}.get(lang)
+        await m.answer(err)
+        return
+        
+    data = await state.get_data()
+    tx_id = data.get("edit_tx_id")
+    
+    if not tx_id:
+        await _go_tx_manage_menu(m, state, db)
+        return
+        
+    from app.db.repositories.tx_repo import update_tx
+    try:
+        ok = await update_tx(db, user_id=m.from_user.id, tx_id=tx_id, new_note=new_note)
+        if ok:
+            await db.commit()
+            success = {"ru": "✅ Комментарий сохранен", "en": "✅ Comment updated", "kk": "✅ Пікір сақталды"}.get(lang)
+            await m.answer(success)
+        else:
+            await db.rollback()
+            err_msg = {"ru": "❌ Ошибка", "en": "❌ Error", "kk": "❌ Қате"}.get(lang)
+            await m.answer(err_msg)
+    except Exception:
+        await db.rollback()
+        raise
+        
+    await _go_tx_manage_menu(m, state, db)
+
+
+@router.callback_query(F.data.startswith("st:tx:edit:cat:"))
+async def st_tx_edit_cat_init(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    tx_id = int(c.data.split(":")[-1])
+    lang = await get_lang(db, c.from_user.id)
+    
+    cur = await db.execute("SELECT type FROM transactions WHERE user_id=? AND id=? AND deleted_at IS NULL", (c.from_user.id, tx_id))
+    row = await cur.fetchone()
+    if not row:
+        await _go_tx_manage_menu(c, state, db)
+        await c.answer()
+        return
+    
+    tx_type = row[0]
+    from app.db.repositories.categories_repo import list_categories
+    cats = await list_categories(db, c.from_user.id, tx_type)
+    
+    text = {
+        "ru": "✏️ <b>Выбор категории</b>\n\nВыберите новую категорию из списка:",
+        "en": "✏️ <b>Select Category</b>\n\nSelect a new category from the list:",
+        "kk": "✏️ <b>Санатты таңдау</b>\n\nТізімнен жаңа санатты таңдаңыз:",
+    }.get(lang)
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    for cid, name, emoji in cats:
+        from app.ui.i18n import t_category
+        lbl = f"{emoji+' ' if emoji else ''}{t_category(name, lang)}"
+        kb.button(text=lbl, callback_data=f"st:tx:set_cat:{tx_id}:{cid}")
+        
+    uncat_lbl = {"ru": "⚪ Без категории", "en": "⚪ No category", "kk": "⚪ Санатсыз"}.get(lang)
+    kb.button(text=uncat_lbl, callback_data=f"st:tx:set_cat:{tx_id}:-1")
+    
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="st:tx_manage")
+    kb.adjust(*([2] * (len(cats) // 2)), 1, 1)
+    
+    await _render_screen(c, state, text, reply_markup=kb.as_markup())
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("st:tx:set_cat:"))
+async def st_tx_set_cat_process(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    _, _, _, _, tx_id, cat_id = c.data.split(":")
+    tx_id = int(tx_id)
+    cat_id = int(cat_id)
+    lang = await get_lang(db, c.from_user.id)
+    
+    from app.db.repositories.tx_repo import update_tx
+    try:
+        ok = await update_tx(db, user_id=c.from_user.id, tx_id=tx_id, new_category_id=cat_id)
+        if ok:
+            await db.commit()
+            success = {"ru": "✅ Категория успешно изменена", "en": "✅ Category updated", "kk": "✅ Санат өзгертілді"}.get(lang)
+            await c.answer(success, show_alert=True)
+        else:
+            await db.rollback()
+            await c.answer("Error", show_alert=True)
+    except Exception:
+        await db.rollback()
+        raise
+        
+    await _go_tx_manage_menu(c, state, db)
+
+
+@router.callback_query(F.data.startswith("st:tx:edit:acc"))
+async def st_tx_edit_acc_init(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    parts = c.data.split(":")
+    mode = parts[3]
+    tx_id = int(parts[4])
+    lang = await get_lang(db, c.from_user.id)
+    
+    from app.db.repositories.accounts_repo import list_accounts
+    accounts = await list_accounts(db, c.from_user.id)
+    
+    if mode == "acc_from":
+        prompt = {
+            "ru": "✏️ <b>Изменение счёта отправления</b>\n\nВыбери новый счёт, с которого сделан перевод:",
+            "en": "✏️ <b>Edit Sender Account</b>\n\nSelect a new account to transfer from:",
+            "kk": "✏️ <b>Жөнелту шотын өзгерту</b>\n\nАударым жасалған жаңа шотты таңдаңыз:",
+        }.get(lang)
+    elif mode == "acc_to":
+        prompt = {
+            "ru": "✏️ <b>Изменение счёта получения</b>\n\nВыбери новый счёт, на который сделан перевод:",
+            "en": "✏️ <b>Edit Receiver Account</b>\n\nSelect a new account to transfer to:",
+            "kk": "✏️ <b>Қабылдау шотын өзгерту</b>\n\nАударым жіберілетін жаңа шотты таңдаңыз:",
+        }.get(lang)
+    else:
+        prompt = {
+            "ru": "✏️ <b>Изменение счёта</b>\n\nВыбери новый счёт для этой операции:",
+            "en": "✏️ <b>Edit Account</b>\n\nSelect a new account for this transaction:",
+            "kk": "✏️ <b>Шотты өзгерту</b>\n\nБұл операция үшін жаңа шотты таңдаңыз:",
+        }.get(lang)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    for acc_id, name, balance, is_archived, currency, is_saving in accounts:
+        icon = "🎯" if is_saving else "💳"
+        kb.button(text=f"{icon} {name} ({currency})", callback_data=f"st:tx:set_acc:{mode}:{tx_id}:{acc_id}")
+        
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="st:tx_manage")
+    kb.adjust(1)
+    
+    await _render_screen(c, state, prompt, reply_markup=kb.as_markup())
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("st:tx:set_acc:"))
+async def st_tx_set_acc_process(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    _, _, _, mode, tx_id, acc_id = c.data.split(":")
+    tx_id = int(tx_id)
+    acc_id = int(acc_id)
+    lang = await get_lang(db, c.from_user.id)
+    
+    from app.db.repositories.tx_repo import update_tx
+    try:
+        if mode == "acc_from":
+            ok = await update_tx(db, user_id=c.from_user.id, tx_id=tx_id, new_account_id=acc_id)
+        elif mode == "acc_to":
+            ok = await update_tx(db, user_id=c.from_user.id, tx_id=tx_id, new_to_account_id=acc_id)
+        else:
+            ok = await update_tx(db, user_id=c.from_user.id, tx_id=tx_id, new_account_id=acc_id)
+            
+        if ok:
+            await db.commit()
+            success = {"ru": "✅ Счёт успешно изменен", "en": "✅ Account updated", "kk": "✅ Шот өзгертілді"}.get(lang)
+            await c.answer(success, show_alert=True)
+        else:
+            await db.rollback()
+            await c.answer("Error", show_alert=True)
+    except Exception:
+        await db.rollback()
+        raise
+        
+    await _go_tx_manage_menu(c, state, db)
+
