@@ -380,11 +380,12 @@ def reports_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb.button(text=t(lang, "BTN_TODAY"), callback_data="rp:view:day:0")
     kb.button(text=t(lang, "BTN_WEEK"), callback_data="rp:view:week:0")
     kb.button(text=t(lang, "BTN_MONTH"), callback_data="rp:view:month:0")
-    # Row 2: Streak
+    # Row 2: Streak & Export
     kb.button(text=t(lang, "BTN_STREAK"), callback_data="rp:streak")
+    kb.button(text=t(lang, "BTN_EXPORT"), callback_data="rp:export")
     # Row 3: AI Consultant
     kb.button(text=t(lang, "BTN_AI_REPORT"), callback_data="ai:open")
-    kb.adjust(3, 1, 1)
+    kb.adjust(3, 2, 1)
     return kb.as_markup()
 
 
