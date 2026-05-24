@@ -265,9 +265,15 @@ def _build_xlsx(
     profile: dict,
     priority_insights: dict,
     latest_rec: dict | None,
-    tz_name: str = "Asia/Aqtobe"
+    tz_name: str = "Asia/Aqtobe",
+    accounts_data: list = None,
+    budgets_data: list = None,
+    liabilities_data: list = None,
+    recurring_data: list = None,
+    planned_data: list = None,
+    all_insights: list = None
 ) -> bytes | None:
-    """Render rows into a premium, app-like 3-sheet Excel workbook.
+    """Render rows into a premium, app-like 4-sheet Excel workbook.
     
     Aesthetics:
     - Minimalist Apple/Stripe-inspired Slate & Emerald theme.
@@ -319,7 +325,12 @@ def _build_xlsx(
             "no_anomalies": "Аномалий или повышенных рисков не обнаружено.",
             "sheet_dashboard": "Главная сводка",
             "sheet_analytics": "Аналитика",
+            "sheet_schedules": "Долги и расписание",
             "sheet_transactions": "История операций",
+            "liabilities_title": "Кредиты и долги",
+            "recurring_title": "Регулярные платежи и подписки",
+            "planned_title": "Запланированные операции",
+            "ai_analytic_insight": "AI АНАЛИЗ КАТЕГОРИЙ",
             "raw_headers": ["ID", "Дата и время", "Тип", "Сумма", "Валюта", "Счёт", "Категория", "Комментарий"]
         },
         "en": {
@@ -351,7 +362,12 @@ def _build_xlsx(
             "no_anomalies": "No anomalies or high risks detected.",
             "sheet_dashboard": "Executive Summary",
             "sheet_analytics": "Analytics",
+            "sheet_schedules": "Debts & Schedules",
             "sheet_transactions": "Transaction History",
+            "liabilities_title": "Debts & Liabilities",
+            "recurring_title": "Recurring Payments & Subs",
+            "planned_title": "Planned Transactions",
+            "ai_analytic_insight": "AI CATEGORY ANALYSIS",
             "raw_headers": ["ID", "Date & Time", "Type", "Amount", "Currency", "Account", "Category", "Note"]
         },
         "kk": {
@@ -383,7 +399,12 @@ def _build_xlsx(
             "no_anomalies": "Аномалиялар немесе жоғары қауіптер табылған жоқ.",
             "sheet_dashboard": "Негізгі жиынтық",
             "sheet_analytics": "Талдау",
+            "sheet_schedules": "Борыштар мен кесте",
             "sheet_transactions": "Операциялар тарихы",
+            "liabilities_title": "Несиелер мен борыштар",
+            "recurring_title": "Тұрақты төлемдер",
+            "planned_title": "Жоспарланған операциялар",
+            "ai_analytic_insight": "AI САНАТТАРДЫ ТАЛДАУ",
             "raw_headers": ["ID", "Күні мен уақыты", "Түрі", "Сома", "Валюта", "Шот", "Санат", "Түсініктеме"]
         }
     }
@@ -400,7 +421,6 @@ def _build_xlsx(
         tx_id, ts, ttype, amount, account, category, emoji, note = r
         val = abs(int(amount or 0))
         
-        # Parse date and convert to local timezone to group by local month correctly
         try:
             dt = datetime.fromisoformat(ts)
             if dt.tzinfo is None:
@@ -423,7 +443,6 @@ def _build_xlsx(
 
     wb = Workbook()
     
-    # Premium Typography & Styling
     font_main_title = Font(name="Segoe UI", size=14, bold=True, color="FFFFFF")
     font_sec_hdr = Font(name="Segoe UI", size=11, bold=True, color="1E293B")
     font_tbl_hdr = Font(name="Segoe UI", size=10, bold=True, color="475569")
@@ -432,26 +451,22 @@ def _build_xlsx(
     font_subtext = Font(name="Segoe UI", size=9, color="64748B")
     font_mono = Font(name="Consolas", size=10, color="0F172A")
     
-    # Cards styling
     font_card_val = Font(name="Segoe UI", size=22, bold=True, color="0F172A")
     
-    # Soft distinct premium colors for cards
-    fill_health = PatternFill(start_color="EFF6FF", end_color="EFF6FF", fill_type="solid") # soft blue-50
-    fill_runway = PatternFill(start_color="ECFDF5", end_color="ECFDF5", fill_type="solid") # soft emerald-50
-    fill_burn = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")   # soft slate-50
+    fill_health = PatternFill(start_color="EFF6FF", end_color="EFF6FF", fill_type="solid")
+    fill_runway = PatternFill(start_color="ECFDF5", end_color="ECFDF5", fill_type="solid")
+    fill_burn = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
     
-    font_card_title_1 = Font(name="Segoe UI", size=9, bold=True, color="1E40AF") # Deep Indigo/Blue
-    font_card_title_2 = Font(name="Segoe UI", size=9, bold=True, color="065F46") # Deep Emerald
-    font_card_title_3 = Font(name="Segoe UI", size=9, bold=True, color="334155") # Dark Slate
+    font_card_title_1 = Font(name="Segoe UI", size=9, bold=True, color="1E40AF")
+    font_card_title_2 = Font(name="Segoe UI", size=9, bold=True, color="065F46")
+    font_card_title_3 = Font(name="Segoe UI", size=9, bold=True, color="334155")
     
-    # Color Fills
-    fill_header_banner = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid") # Dark Slate
-    fill_card = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")         # Light Slate-50
-    fill_tbl_hdr = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")     # Slate-100
-    fill_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")       # Slate-50
-    fill_accent_green = PatternFill(start_color="ECFDF5", end_color="ECFDF5", fill_type="solid") # Emerald Light
+    fill_header_banner = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    fill_card = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+    fill_tbl_hdr = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+    fill_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+    fill_accent_green = PatternFill(start_color="ECFDF5", end_color="ECFDF5", fill_type="solid")
     
-    # Custom Borders
     thin_gray = Side(style='thin', color='E2E8F0')
     border_all = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=thin_gray)
     border_bottom = Border(bottom=Side(style='thin', color='E2E8F0'))
@@ -462,9 +477,8 @@ def _build_xlsx(
     # ==========================================
     ws_sum = wb.active
     ws_sum.title = L["sheet_dashboard"]
-    ws_sum.views.sheetView[0].showGridLines = False # Disable grid lines for a clean canvas
+    ws_sum.views.sheetView[0].showGridLines = False
 
-    # Title Banner Block (Dark Premium Header)
     ws_sum.merge_cells("A1:K1")
     ws_sum["A1"] = L["title_summary"]
     ws_sum["A1"].font = font_main_title
@@ -472,7 +486,6 @@ def _build_xlsx(
     ws_sum["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws_sum.row_dimensions[1].height = 42
 
-    # Calculate financial health score
     sav_pct = metrics.get("savings_rate", {}).get("savings_rate_pct", 0)
     sav_score = min(40, max(0, int(sav_pct * 1.33)))
     runway = metrics.get("runway_days", 0)
@@ -486,8 +499,6 @@ def _build_xlsx(
     discipline_score = min(30, max(0, int(discipline * 0.3)))
     health_score = sav_score + runway_score + discipline_score
 
-    # Summary Cards Layout (3 spacious columns of cards)
-    # Card 1: Financial Health (A3:C5)
     ws_sum.merge_cells("A3:C3")
     ws_sum.merge_cells("A4:C4")
     ws_sum.merge_cells("A5:C5")
@@ -507,7 +518,6 @@ def _build_xlsx(
     ws_sum["A5"].font = font_subtext
     ws_sum["A5"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # Card 2: Runway (E3:G5)
     ws_sum.merge_cells("E3:G3")
     ws_sum.merge_cells("E4:G4")
     ws_sum.merge_cells("E5:G5")
@@ -527,7 +537,6 @@ def _build_xlsx(
     ws_sum["E5"].font = font_subtext
     ws_sum["E5"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # Card 3: Daily Burn Rate (I3:K5)
     ws_sum.merge_cells("I3:K3")
     ws_sum.merge_cells("I4:K4")
     ws_sum.merge_cells("I5:K5")
@@ -551,7 +560,6 @@ def _build_xlsx(
     ws_sum["I5"].font = font_subtext
     ws_sum["I5"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # Style cards with background fills & borders
     for c in ["A", "B", "C"]:
         for r in [3, 4, 5]:
             ws_sum[f"{c}{r}"].fill = fill_health
@@ -586,7 +594,6 @@ def _build_xlsx(
     ws_sum.row_dimensions[4].height = 32
     ws_sum.row_dimensions[5].height = 20
 
-    # Section 1: Main Financial Risk
     ws_sum["A7"] = L["main_risk"]
     ws_sum["A7"].font = font_sec_hdr
     ws_sum.row_dimensions[7].height = 28
@@ -608,7 +615,6 @@ def _build_xlsx(
     ws_sum["A8"].fill = fill_card
     ws_sum.row_dimensions[8].height = 30
 
-    # Section 2: AI Recommended Action
     ws_sum["A10"] = L["ai_rec"]
     ws_sum["A10"].font = font_sec_hdr
     ws_sum.row_dimensions[10].height = 28
@@ -629,7 +635,6 @@ def _build_xlsx(
     ws_sum["A11"].fill = fill_accent_green
     ws_sum.row_dimensions[11].height = 30
 
-    # Section 3: Behavioral Profile
     ws_sum["A13"] = L["behavioral"]
     ws_sum["A13"].font = font_sec_hdr
     ws_sum.row_dimensions[13].height = 28
@@ -650,8 +655,92 @@ def _build_xlsx(
     ws_sum["A14"].fill = fill_card
     ws_sum.row_dimensions[14].height = 30
 
-    # Fixed wide column definitions for executive summary to completely prevent text cropping
-    widths_sum = {"A": 15, "B": 15, "C": 15, "D": 5, "E": 15, "F": 15, "G": 15, "H": 5, "I": 15, "J": 15, "K": 15}
+    # Accounts & Balances Section (A16 onwards)
+    if accounts_data:
+        ws_sum.cell(row=16, column=1, value={"ru": "💳 Счета и текущие балансы", "en": "💳 Accounts & Balances", "kk": "💳 Шоттар және ағымдағы баланстар"}.get(lang)).font = font_sec_hdr
+        ws_sum.row_dimensions[16].height = 28
+        
+        headers_acc = {
+            "ru": ["Счёт", "", "", "Тип", "Валюта", "Стартовый", "Текущий", "", "Изменение", "Рост %"],
+            "en": ["Account", "", "", "Type", "Currency", "Starting", "Current", "", "Change", "Growth %"],
+            "kk": ["Шот", "", "", "Түрі", "Валюта", "Бастапқы", "Ағымдағы", "", "Өзгеруі", "Өсу %"]
+        }.get(lang)
+        
+        ws_sum.merge_cells("A17:C17")
+        ws_sum["A17"] = headers_acc[0]
+        ws_sum.cell(row=17, column=4, value=headers_acc[3])
+        ws_sum.cell(row=17, column=5, value=headers_acc[4])
+        ws_sum.cell(row=17, column=6, value=headers_acc[5])
+        ws_sum.cell(row=17, column=7, value=headers_acc[6])
+        ws_sum.cell(row=17, column=9, value=headers_acc[8])
+        ws_sum.cell(row=17, column=10, value=headers_acc[9])
+        
+        for col_idx in [1, 2, 3, 4, 5, 6, 7, 9, 10]:
+            c_cell = ws_sum.cell(row=17, column=col_idx)
+            c_cell.font = font_tbl_hdr
+            c_cell.fill = fill_tbl_hdr
+            c_cell.alignment = Alignment(horizontal="center", vertical="center")
+            c_cell.border = border_all
+        ws_sum.row_dimensions[17].height = 24
+        
+        a_idx = 18
+        for row in accounts_data:
+            # acc_id, name, balance, starting_balance, currency, is_saving
+            acc_id, name, balance, starting_balance, curr, is_saving = row
+            starting_balance = int(starting_balance or 0)
+            balance = int(balance or 0)
+            
+            type_str = {
+                "ru": "Накопительный" if is_saving else "Обычный",
+                "en": "Saving" if is_saving else "Regular",
+                "kk": "Жинақтаушы" if is_saving else "Қалыпты"
+            }.get(lang)
+            
+            diff = balance - starting_balance
+            growth_pct = (diff / starting_balance) if starting_balance > 0 else 0.0
+            
+            ws_sum.merge_cells(start_row=a_idx, start_column=1, end_row=a_idx, end_column=3)
+            ws_sum.cell(row=a_idx, column=1, value=name).alignment = Alignment(horizontal="left", indent=1)
+            ws_sum.cell(row=a_idx, column=4, value=type_str).alignment = Alignment(horizontal="center")
+            ws_sum.cell(row=a_idx, column=5, value=curr).alignment = Alignment(horizontal="center")
+            ws_sum.cell(row=a_idx, column=6, value=starting_balance).number_format = '#,##0'
+            ws_sum.cell(row=a_idx, column=7, value=balance).number_format = '#,##0'
+            ws_sum.cell(row=a_idx, column=9, value=diff).number_format = '#,##0'
+            ws_sum.cell(row=a_idx, column=10, value=growth_pct).number_format = '0.0%'
+            
+            for col_idx in [1, 2, 3, 4, 5, 6, 7, 9, 10]:
+                cell = ws_sum.cell(row=a_idx, column=col_idx)
+                cell.font = font_data
+                cell.border = border_all
+                if a_idx % 2 == 1:
+                    cell.fill = fill_zebra
+            ws_sum.row_dimensions[a_idx].height = 20
+            a_idx += 1
+            
+        ws_sum.merge_cells(start_row=a_idx, start_column=1, end_row=a_idx, end_column=3)
+        ws_sum.cell(row=a_idx, column=1, value=L["total"]).font = font_bold
+        ws_sum.cell(row=a_idx, column=1).alignment = Alignment(horizontal="center")
+        
+        tot_starting = sum(int(r[3] or 0) for r in accounts_data)
+        tot_current = sum(int(r[2] or 0) for r in accounts_data)
+        tot_diff = tot_current - tot_starting
+        tot_growth = (tot_diff / tot_starting) if tot_starting > 0 else 0.0
+        
+        ws_sum.cell(row=a_idx, column=6, value=tot_starting).font = font_bold
+        ws_sum.cell(row=a_idx, column=6).number_format = '#,##0'
+        ws_sum.cell(row=a_idx, column=7, value=tot_current).font = font_bold
+        ws_sum.cell(row=a_idx, column=7).number_format = '#,##0'
+        
+        ws_sum.cell(row=a_idx, column=9, value=tot_diff).font = font_bold
+        ws_sum.cell(row=a_idx, column=9).number_format = '#,##0'
+        ws_sum.cell(row=a_idx, column=10, value=tot_growth).font = font_bold
+        ws_sum.cell(row=a_idx, column=10).number_format = '0.0%'
+        
+        for col_idx in [1, 2, 3, 4, 5, 6, 7, 9, 10]:
+            ws_sum.cell(row=a_idx, column=col_idx).border = border_double_bottom
+        ws_sum.row_dimensions[a_idx].height = 22
+
+    widths_sum = {"A": 15, "B": 15, "C": 15, "D": 15, "E": 15, "F": 15, "G": 15, "H": 5, "I": 15, "J": 15, "K": 15}
     for col, w in widths_sum.items():
         ws_sum.column_dimensions[col].width = w
 
@@ -725,66 +814,8 @@ def _build_xlsx(
     
     last_month_row = row_idx
 
-    # Category breakdown (Right Side Table - starts at column H)
-    ws_an["H1"] = L["category_title"]
-    ws_an["H1"].font = font_sec_hdr
-
-    headers_c = [L["col_category"], L["col_spent"], L["col_share"]]
-    for c_idx, h in enumerate(headers_c, start=8):  # H, I, J
-        cell = ws_an.cell(row=2, column=c_idx, value=h)
-        cell.font = font_tbl_hdr
-        cell.fill = fill_tbl_hdr
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = border_all
-
-    sorted_cats = sorted(category_data.items(), key=lambda x: x[1], reverse=True)
-    c_row_idx = 3
-    total_category_spent = sum(category_data.values())
-
-    if sorted_cats:
-        for cat_name, spent in sorted_cats:
-            ws_an.cell(row=c_row_idx, column=8, value=cat_name)
-            ws_an.cell(row=c_row_idx, column=9, value=spent)
-            
-            # Progress Bar & percentage in string
-            share_val = spent / total_category_spent if total_category_spent > 0 else 0.0
-            num_blocks = int(round(share_val * 10))
-            bar_str = "█" * num_blocks + "░" * (10 - num_blocks)
-            ws_an.cell(row=c_row_idx, column=10, value=f"{bar_str}  {share_val * 100:.1f}%")
-            
-            ws_an.cell(row=c_row_idx, column=9).number_format = '#,##0'
-            ws_an.cell(row=c_row_idx, column=10).alignment = Alignment(horizontal="left")
-            
-            for c in range(8, 11):
-                cell = ws_an.cell(row=c_row_idx, column=c)
-                cell.font = font_data
-                cell.border = border_all
-                if c_row_idx % 2 == 1:
-                    cell.fill = fill_zebra
-            ws_an.row_dimensions[c_row_idx].height = 20
-            c_row_idx += 1
-
-        # Total Category spent
-        ws_an.cell(row=c_row_idx, column=8, value=L["total"]).font = font_bold
-        ws_an.cell(row=c_row_idx, column=8).alignment = Alignment(horizontal="center")
-        ws_an.cell(row=c_row_idx, column=9, value=total_category_spent).font = font_bold
-        ws_an.cell(row=c_row_idx, column=10, value="██████████  100%").font = font_bold
-        ws_an.cell(row=c_row_idx, column=9).number_format = '#,##0'
-        
-        for c in range(8, 11):
-            ws_an.cell(row=c_row_idx, column=c).border = border_double_bottom
-        ws_an.row_dimensions[c_row_idx].height = 22
-    else:
-        ws_an.cell(row=3, column=8, value="-").alignment = Alignment(horizontal="center")
-        ws_an.cell(row=3, column=9, value=0)
-        ws_an.cell(row=3, column=10, value="░░░░░░░░░░  0%")
-        c_row_idx = 3
-
-    last_cat_row = c_row_idx
-
-    # Trend Comparison Block (Generous rows and columns to prevent truncation)
-    start_trend_row = max(last_month_row, last_cat_row) + 3
-    
+    # Trend Comparison Block (Left Side)
+    start_trend_row = last_month_row + 3
     ws_an.cell(row=start_trend_row, column=1, value=L["trends_title"]).font = font_sec_hdr
     ws_an.row_dimensions[start_trend_row].height = 28
     
@@ -812,15 +843,12 @@ def _build_xlsx(
 
     net_c = inc_c - exp_c
     net_p = inc_p - exp_p
-    
     sav_c = (net_c / inc_c) if inc_c > 0 else 0.0
     sav_p = (net_p / inc_p) if inc_p > 0 else 0.0
 
-    # Localized month headers
-    prev_hdr = format_localized_month(m_prev, lang) if m_prev else ("-" if lang == "ru" else ("-" if lang == "kk" else "-"))
-    curr_hdr = format_localized_month(m_curr, lang) if m_curr else ("-" if lang == "ru" else ("-" if lang == "kk" else "-"))
+    prev_hdr = format_localized_month(m_prev, lang) if m_prev else "-"
+    curr_hdr = format_localized_month(m_curr, lang) if m_curr else "-"
 
-    # Table headers
     comp_headers = {
         "ru": ["Показатель", prev_hdr, curr_hdr, "Изменение"],
         "en": ["Metric", prev_hdr, curr_hdr, "Change"],
@@ -835,7 +863,6 @@ def _build_xlsx(
         cell.border = border_all
     ws_an.row_dimensions[start_trend_row + 1].height = 22
 
-    # Calculate change values and strings
     def get_pct_change_str(curr, prev, higher_is_bad=False):
         if prev == 0:
             if curr == 0:
@@ -859,14 +886,11 @@ def _build_xlsx(
     pct_inc = get_pct_change_str(inc_c, inc_p, False)
     pct_exp = get_pct_change_str(exp_c, exp_p, True)
     net_change = get_net_change_str(net_c, net_p)
-    
-    # Savings rate difference in percentage points
     sav_diff_pct = (sav_c - sav_p) * 100.0
     sign_sav = "+" if sav_diff_pct > 0 else ""
     emoji_sav = " 📈" if sav_diff_pct > 0 else " 📉 ⚠️"
     sav_change = f"{sign_sav}{sav_diff_pct:+.1f}%{emoji_sav}".replace("+-", "-").replace("++", "+")
 
-    # Localized metric rows
     row_labels = {
         "ru": ["Доходы", "Расходы", "Чистый доход", "Норма сбережений"],
         "en": ["Income", "Expenses", "Net Income", "Savings Rate"],
@@ -876,18 +900,16 @@ def _build_xlsx(
     comp_rows = [
         (row_labels[0], inc_p, inc_c, pct_inc, False),
         (row_labels[1], exp_p, exp_c, pct_exp, False),
-        (row_labels[2], net_p, net_c, net_change, True), # diff is raw text
+        (row_labels[2], net_p, net_c, net_change, True),
         (row_labels[3], sav_p, sav_c, sav_change, False, "0.0%")
     ]
 
     t_row = start_trend_row + 2
     for r_idx, item in enumerate(comp_rows):
         label, p_val, c_val, change_str, is_raw_text, *custom_fmt = item
-        
         ws_an.cell(row=t_row, column=1, value=label).font = font_data
         ws_an.cell(row=t_row, column=1).border = border_all
         
-        # Previous Month Cell
         cell_p = ws_an.cell(row=t_row, column=2)
         if not is_raw_text:
             cell_p.value = p_val
@@ -898,7 +920,6 @@ def _build_xlsx(
         cell_p.border = border_all
         cell_p.alignment = Alignment(horizontal="right")
 
-        # Current Month Cell
         cell_c = ws_an.cell(row=t_row, column=3)
         if not is_raw_text:
             cell_c.value = c_val
@@ -909,50 +930,253 @@ def _build_xlsx(
         cell_c.border = border_all
         cell_c.alignment = Alignment(horizontal="right")
 
-        # Delta Cell
         cell_d = ws_an.cell(row=t_row, column=4, value=change_str)
         cell_d.font = font_bold
         cell_d.border = border_all
         cell_d.alignment = Alignment(horizontal="center")
         
-        # Zebra striping
         if t_row % 2 == 1:
             for col in range(1, 5):
                 ws_an.cell(row=t_row, column=col).fill = fill_zebra
-                
         ws_an.row_dimensions[t_row].height = 20
         t_row += 1
 
-    # Prediction Block (Right Side of Trends)
-    ws_an.cell(row=start_trend_row, column=8, value=L["prediction_title"]).font = font_sec_hdr
-    
-    # Calculate Prediction
+    end_left_row = t_row
+
+    # ==========================================
+    # RIGHT SIDE (Columns H:L)
+    # ==========================================
+    # 1. Category breakdown
+    ws_an["H1"] = L["category_title"]
+    ws_an["H1"].font = font_sec_hdr
+    ws_an.row_dimensions[1].height = 30
+
+    headers_c = [L["col_category"], L["col_spent"], L["col_share"]]
+    for c_idx, h in enumerate(headers_c, start=8):  # H, I, J
+        cell = ws_an.cell(row=2, column=c_idx, value=h)
+        cell.font = font_tbl_hdr
+        cell.fill = fill_tbl_hdr
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border_all
+    ws_an.row_dimensions[2].height = 24
+
+    sorted_cats = sorted(category_data.items(), key=lambda x: x[1], reverse=True)
+    c_row_idx = 3
+    total_category_spent = sum(category_data.values())
+
+    if sorted_cats:
+        for cat_name, spent in sorted_cats:
+            ws_an.cell(row=c_row_idx, column=8, value=cat_name)
+            ws_an.cell(row=c_row_idx, column=9, value=spent)
+            
+            share_val = spent / total_category_spent if total_category_spent > 0 else 0.0
+            num_blocks = int(round(share_val * 10))
+            bar_str = "█" * num_blocks + "░" * (10 - num_blocks)
+            ws_an.cell(row=c_row_idx, column=10, value=f"{bar_str}  {share_val * 100:.1f}%")
+            
+            ws_an.cell(row=c_row_idx, column=9).number_format = '#,##0'
+            ws_an.cell(row=c_row_idx, column=10).alignment = Alignment(horizontal="left")
+            
+            for c in range(8, 11):
+                cell = ws_an.cell(row=c_row_idx, column=c)
+                cell.font = font_data
+                cell.border = border_all
+                if c_row_idx % 2 == 1:
+                    cell.fill = fill_zebra
+            ws_an.row_dimensions[c_row_idx].height = 20
+            c_row_idx += 1
+
+        ws_an.cell(row=c_row_idx, column=8, value=L["total"]).font = font_bold
+        ws_an.cell(row=c_row_idx, column=8).alignment = Alignment(horizontal="center")
+        ws_an.cell(row=c_row_idx, column=9, value=total_category_spent).font = font_bold
+        ws_an.cell(row=c_row_idx, column=10, value="██████████  100%").font = font_bold
+        ws_an.cell(row=c_row_idx, column=9).number_format = '#,##0'
+        
+        for c in range(8, 11):
+            ws_an.cell(row=c_row_idx, column=c).border = border_double_bottom
+        ws_an.row_dimensions[c_row_idx].height = 22
+    else:
+        ws_an.cell(row=3, column=8, value="-").alignment = Alignment(horizontal="center")
+        ws_an.cell(row=3, column=9, value=0)
+        ws_an.cell(row=3, column=10, value="░░░░░░░░░░  0%")
+        c_row_idx = 3
+
+    last_cat_row = c_row_idx
+
+    # 2. Budgets & Limits (Columns H:L)
+    start_bud_row = last_cat_row + 2
+    budgets_title_str = {
+        "ru": "📌 Лимиты и бюджеты категорий",
+        "en": "📌 Category Budgets & Limits",
+        "kk": "📌 Санаттар лимиттері мен бюджеттері"
+    }.get(lang, "📌 Лимиты и бюджеты категорий")
+    ws_an.cell(row=start_bud_row, column=8, value=budgets_title_str).font = font_sec_hdr
+    ws_an.row_dimensions[start_bud_row].height = 28
+
+    headers_b = [
+        L["col_category"],
+        {"ru": "Лимит", "en": "Limit", "kk": "Лимит"}.get(lang),
+        L["col_spent"],
+        {"ru": "Осталось", "en": "Remaining", "kk": "Қалды"}.get(lang),
+        {"ru": "Использовано", "en": "Used %", "kk": "Қолданылды"}.get(lang)
+    ]
+    for c_idx, h in enumerate(headers_b, start=8):  # H, I, J, K, L
+        cell = ws_an.cell(row=start_bud_row + 1, column=c_idx, value=h)
+        cell.font = font_tbl_hdr
+        cell.fill = fill_tbl_hdr
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border_all
+    ws_an.row_dimensions[start_bud_row + 1].height = 24
+
+    b_row_idx = start_bud_row + 2
+    if budgets_data:
+        tot_b_limit = 0
+        tot_b_spent = 0
+        for brow in budgets_data:
+            b_name, b_emoji, b_limit, b_spent = brow
+            b_limit = int(b_limit or 0)
+            b_spent = int(b_spent or 0)
+            b_rem = b_limit - b_spent
+            b_pct = b_spent / b_limit if b_limit > 0 else 0.0
+            
+            b_translated = t_category(b_name, lang)
+            b_display = f"{b_emoji} {b_translated}".strip() if b_emoji or b_translated else b_name
+            
+            ws_an.cell(row=b_row_idx, column=8, value=b_display).alignment = Alignment(horizontal="left", indent=1)
+            ws_an.cell(row=b_row_idx, column=9, value=b_limit)
+            ws_an.cell(row=b_row_idx, column=10, value=b_spent)
+            ws_an.cell(row=b_row_idx, column=11, value=b_rem)
+            
+            # Progress bar
+            num_blocks = min(10, max(0, int(round(b_pct * 10))))
+            bar_str = "█" * num_blocks + "░" * (10 - num_blocks)
+            ws_an.cell(row=b_row_idx, column=12, value=f"{bar_str}  {b_pct * 100:.1f}%")
+            
+            ws_an.cell(row=b_row_idx, column=9).number_format = '#,##0'
+            ws_an.cell(row=b_row_idx, column=10).number_format = '#,##0'
+            ws_an.cell(row=b_row_idx, column=11).number_format = '#,##0'
+            ws_an.cell(row=b_row_idx, column=12).alignment = Alignment(horizontal="left")
+            
+            for c in range(8, 13):
+                cell = ws_an.cell(row=b_row_idx, column=c)
+                cell.font = font_data
+                cell.border = border_all
+                if b_row_idx % 2 == 1:
+                    cell.fill = fill_zebra
+            ws_an.row_dimensions[b_row_idx].height = 20
+            
+            tot_b_limit += b_limit
+            tot_b_spent += b_spent
+            b_row_idx += 1
+            
+        tot_b_rem = tot_b_limit - tot_b_spent
+        tot_b_pct = tot_b_spent / tot_b_limit if tot_b_limit > 0 else 0.0
+        
+        ws_an.cell(row=b_row_idx, column=8, value=L["total"]).font = font_bold
+        ws_an.cell(row=b_row_idx, column=8).alignment = Alignment(horizontal="center")
+        ws_an.cell(row=b_row_idx, column=9, value=tot_b_limit).font = font_bold
+        ws_an.cell(row=b_row_idx, column=10, value=tot_b_spent).font = font_bold
+        ws_an.cell(row=b_row_idx, column=11, value=tot_b_rem).font = font_bold
+        
+        num_blocks = min(10, max(0, int(round(tot_b_pct * 10))))
+        tot_bar_str = "█" * num_blocks + "░" * (10 - num_blocks)
+        ws_an.cell(row=b_row_idx, column=12, value=f"{tot_bar_str}  {tot_b_pct * 100:.1f}%").font = font_bold
+        
+        ws_an.cell(row=b_row_idx, column=9).number_format = '#,##0'
+        ws_an.cell(row=b_row_idx, column=10).number_format = '#,##0'
+        ws_an.cell(row=b_row_idx, column=11).number_format = '#,##0'
+        
+        for c in range(8, 13):
+            ws_an.cell(row=b_row_idx, column=c).border = border_double_bottom
+        ws_an.row_dimensions[b_row_idx].height = 22
+        end_bud_row = b_row_idx
+    else:
+        # Placeholder row
+        no_budgets_text = {
+            "ru": "Лимиты бюджетов не установлены",
+            "en": "No budgets limits set",
+            "kk": "Бюджет лимиттері орнатылмаған"
+        }.get(lang)
+        ws_an.merge_cells(start_row=b_row_idx, start_column=8, end_row=b_row_idx, end_column=12)
+        cell_empty = ws_an.cell(row=b_row_idx, column=8, value=no_budgets_text)
+        cell_empty.font = font_subtext
+        cell_empty.alignment = Alignment(horizontal="center", vertical="center")
+        for c in range(8, 13):
+            ws_an.cell(row=b_row_idx, column=c).border = border_all
+        ws_an.row_dimensions[b_row_idx].height = 20
+        end_bud_row = b_row_idx
+
+    # 3. Month-End Prediction (Columns H:L)
+    start_pred_row = end_bud_row + 2
+    ws_an.cell(row=start_pred_row, column=8, value=L["prediction_title"]).font = font_sec_hdr
+    ws_an.row_dimensions[start_pred_row].height = 28
+
     now_local = datetime.now(ZoneInfo(tz_name))
     days_in_month = calendar.monthrange(now_local.year, now_local.month)[1]
     day_of_month = max(1, now_local.day)
-    
     curr_month_str = now_local.strftime("%Y-%m")
     curr_month_exp = monthly_data[curr_month_str]["expense"] if curr_month_str in monthly_data else total_expense
     projected_spending = int((curr_month_exp / day_of_month) * days_in_month)
-    
-    # Spanning columns to prevent text clipping
-    ws_an.merge_cells(start_row=start_trend_row + 1, start_column=8, end_row=start_trend_row + 1, end_column=9)
-    ws_an.cell(row=start_trend_row + 1, column=8, value=L["projected_spending"]).font = font_data
-    ws_an.cell(row=start_trend_row + 1, column=8).border = border_bottom
-    ws_an.cell(row=start_trend_row + 1, column=9).border = border_bottom
-    
-    cell_proj = ws_an.cell(row=start_trend_row + 1, column=10, value=projected_spending)
+
+    ws_an.merge_cells(start_row=start_pred_row + 1, start_column=8, end_row=start_pred_row + 1, end_column=10)
+    ws_an.cell(row=start_pred_row + 1, column=8, value=L["projected_spending"]).font = font_data
+    ws_an.cell(row=start_pred_row + 1, column=8).border = border_bottom
+    ws_an.cell(row=start_pred_row + 1, column=9).border = border_bottom
+    ws_an.cell(row=start_pred_row + 1, column=10).border = border_bottom
+
+    cell_proj = ws_an.cell(row=start_pred_row + 1, column=12, value=projected_spending)
     cell_proj.font = font_mono
     cell_proj.alignment = Alignment(horizontal="right")
     cell_proj.number_format = f'#,##0" {currency}"'
     cell_proj.border = border_bottom
-    ws_an.row_dimensions[start_trend_row + 1].height = 22
+    ws_an.cell(row=start_pred_row + 1, column=11).border = border_bottom
+    ws_an.cell(row=start_pred_row + 1, column=12).border = border_bottom
+    ws_an.row_dimensions[start_pred_row + 1].height = 22
 
-    # Anomaly Detection Block (Pushed down to prevent overlap)
-    ws_an.cell(row=start_trend_row + 7, column=1, value=L["anomalies_title"]).font = font_sec_hdr
-    ws_an.row_dimensions[start_trend_row + 7].height = 28
+    # 4. AI Category Analysis (Columns H:L)
+    start_ai_cat_row = start_pred_row + 3
+    ws_an.cell(row=start_ai_cat_row, column=8, value=L["ai_analytic_insight"]).font = font_sec_hdr
+    ws_an.row_dimensions[start_ai_cat_row].height = 28
+
+    category_insights = []
+    if all_insights:
+        for ins in all_insights:
+            key = ins.get("key", "").lower()
+            if any(k in key for k in ["category", "spike", "budget", "expense"]):
+                category_insights.append(ins.get("text"))
     
-    # Detect category spikes
+    if category_insights:
+        ai_cat_text = "💡 " + "\n\n💡 ".join(category_insights)
+    else:
+        ai_cat_text = {
+            "ru": "💡 Анализ трат по категориям не выявил критических отклонений. Все расходы находятся в пределах нормы.",
+            "en": "💡 Category spending analysis did not reveal any critical deviations. All expenses are within normal ranges.",
+            "kk": "💡 Санаттар бойынша шығыстарды талдау ешқандай критикалық ауытқуларды анықтаған жоқ. Барлық шығыстар қалыпты шегінде."
+        }.get(lang)
+
+    ws_an.merge_cells(start_row=start_ai_cat_row + 1, start_column=8, end_row=start_ai_cat_row + 3, end_column=12)
+    cell_ai_cat = ws_an.cell(row=start_ai_cat_row + 1, column=8, value=ai_cat_text)
+    cell_ai_cat.font = font_data
+    cell_ai_cat.fill = fill_accent_green
+    cell_ai_cat.alignment = Alignment(wrap_text=True, vertical="center", indent=1)
+    
+    for r in range(start_ai_cat_row + 1, start_ai_cat_row + 4):
+        for c in range(8, 13):
+            ws_an.cell(row=r, column=c).border = border_all
+            ws_an.cell(row=r, column=c).fill = fill_accent_green
+    ws_an.row_dimensions[start_ai_cat_row + 1].height = 20
+    ws_an.row_dimensions[start_ai_cat_row + 2].height = 20
+    ws_an.row_dimensions[start_ai_cat_row + 3].height = 20
+    
+    end_right_row = start_ai_cat_row + 3
+
+    # ==========================================
+    # ANOMALIES (Merged Columns A:L)
+    # ==========================================
+    start_anomaly_row = max(end_left_row, end_right_row) + 3
+    ws_an.cell(row=start_anomaly_row, column=1, value=L["anomalies_title"]).font = font_sec_hdr
+    ws_an.row_dimensions[start_anomaly_row].height = 28
+
     anomalies = []
     for cat_name, spent in sorted_cats:
         if total_category_spent > 0:
@@ -967,28 +1191,308 @@ def _build_xlsx(
     if not anomalies:
         anomalies.append(L["no_anomalies"])
         
-    a_row = start_trend_row + 6
+    a_row = start_anomaly_row + 1
     for anomaly in anomalies:
-        ws_an.merge_cells(start_row=a_row, start_column=1, end_row=a_row, end_column=10)
+        ws_an.merge_cells(start_row=a_row, start_column=1, end_row=a_row, end_column=12)
         cell_an = ws_an.cell(row=a_row, column=1, value=f"• {anomaly}")
         cell_an.font = font_subtext
         cell_an.alignment = Alignment(vertical="center", indent=1)
         ws_an.row_dimensions[a_row].height = 20
         a_row += 1
 
-    # Generous Column Widths for Analytics Sheet to prevent "Изменение д"
-    widths_an = {"A": 24, "B": 15, "C": 15, "D": 15, "E": 15, "F": 4, "G": 4, "H": 25, "I": 18, "J": 24}
+    # Widths for Analytics Sheet to prevent truncation
+    widths_an = {"A": 24, "B": 15, "C": 15, "D": 15, "E": 15, "F": 4, "G": 4, "H": 25, "I": 18, "J": 18, "K": 18, "L": 24}
     for col, w in widths_an.items():
         ws_an.column_dimensions[col].width = w
 
     # ==========================================
-    # SHEET 3: TRANSACTIONS (Clean raw table)
+    # SHEET 3: DEBTS & SCHEDULES (Credits, Recurring, Planned)
+    # ==========================================
+    ws_sch = wb.create_sheet(title=L["sheet_schedules"])
+    ws_sch.views.sheetView[0].showGridLines = False
+
+    # 1. Debts & Liabilities table (Columns A:F)
+    ws_sch.cell(row=1, column=1, value=L["liabilities_title"]).font = font_sec_hdr
+    ws_sch.row_dimensions[1].height = 30
+
+    headers_liab = {
+        "ru": ["Название обязательства", "Тип", "Остаток долга", "Сумма платежа", "Дата платежа", "Примечание"],
+        "en": ["Liability Title", "Type", "Remaining Debt", "Payment Amount", "Due Date", "Note"],
+        "kk": ["Міндеттеме атауы", "Түрі", "Қарыз қалдығы", "Төлем сомасы", "Төлем күні", "Түсініктеме"]
+    }.get(lang)
+
+    for c_idx, h in enumerate(headers_liab, start=1):
+        cell = ws_sch.cell(row=2, column=c_idx, value=h)
+        cell.font = font_tbl_hdr
+        cell.fill = fill_tbl_hdr
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border_all
+    ws_sch.row_dimensions[2].height = 24
+
+    liab_kind_map = {
+        "ru": {"private_out": "Мне должны", "private_in": "Мой долг", "loan": "Кредит", "credit_card": "Кр. карта"},
+        "en": {"private_out": "Owed to me", "private_in": "My debt", "loan": "Loan", "credit_card": "Credit Card"},
+        "kk": {"private_out": "Маған қарыз", "private_in": "Менің қарызым", "loan": "Несие", "credit_card": "Несиелік карта"}
+    }.get(lang, {"private_out": "Owed to me", "private_in": "My debt", "loan": "Loan", "credit_card": "Credit Card"})
+
+    l_row_idx = 3
+    if liabilities_data:
+        for lrow in liabilities_data:
+            l_kind, l_title, l_rem, l_pay, l_date, l_note = lrow
+            l_rem = int(l_rem or 0)
+            l_pay = int(l_pay or 0) if l_pay is not None else 0
+            
+            l_kind_str = liab_kind_map.get(str(l_kind or "").strip().lower(), str(l_kind or ""))
+            
+            ws_sch.cell(row=l_row_idx, column=1, value=l_title).alignment = Alignment(horizontal="left", indent=1)
+            ws_sch.cell(row=l_row_idx, column=2, value=l_kind_str).alignment = Alignment(horizontal="center")
+            ws_sch.cell(row=l_row_idx, column=3, value=l_rem)
+            ws_sch.cell(row=l_row_idx, column=4, value=l_pay)
+            ws_sch.cell(row=l_row_idx, column=5, value=str(l_date or "")).alignment = Alignment(horizontal="center")
+            ws_sch.cell(row=l_row_idx, column=6, value=str(l_note or "")).alignment = Alignment(horizontal="left")
+            
+            ws_sch.cell(row=l_row_idx, column=3).number_format = '#,##0'
+            ws_sch.cell(row=l_row_idx, column=4).number_format = '#,##0'
+            
+            for c in range(1, 7):
+                cell = ws_sch.cell(row=l_row_idx, column=c)
+                cell.font = font_data
+                cell.border = border_all
+                if l_row_idx % 2 == 1:
+                    cell.fill = fill_zebra
+            ws_sch.row_dimensions[l_row_idx].height = 20
+            l_row_idx += 1
+            
+        ws_sch.cell(row=l_row_idx, column=1, value=L["total"]).font = font_bold
+        ws_sch.cell(row=l_row_idx, column=1).alignment = Alignment(horizontal="center")
+        
+        tot_l_rem = sum(int(r[2] or 0) for r in liabilities_data)
+        tot_l_pay = sum(int(r[3] or 0) for r in liabilities_data if r[3] is not None)
+        
+        ws_sch.cell(row=l_row_idx, column=3, value=tot_l_rem).font = font_bold
+        ws_sch.cell(row=l_row_idx, column=4, value=tot_l_pay).font = font_bold
+        ws_sch.cell(row=l_row_idx, column=3).number_format = '#,##0'
+        ws_sch.cell(row=l_row_idx, column=4).number_format = '#,##0'
+        
+        for c in range(1, 7):
+            ws_sch.cell(row=l_row_idx, column=c).border = border_double_bottom
+        ws_sch.row_dimensions[l_row_idx].height = 22
+        last_liab_row = l_row_idx
+    else:
+        no_liab_text = {
+            "ru": "Нет активных кредитов или долгов",
+            "en": "No active debts or liabilities",
+            "kk": "Белсенді несиелер немесе борыштар жоқ"
+        }.get(lang)
+        ws_sch.merge_cells(start_row=l_row_idx, start_column=1, end_row=l_row_idx, end_column=6)
+        cell_empty = ws_sch.cell(row=l_row_idx, column=1, value=no_liab_text)
+        cell_empty.font = font_subtext
+        cell_empty.alignment = Alignment(horizontal="center", vertical="center")
+        for c in range(1, 7):
+            ws_sch.cell(row=l_row_idx, column=c).border = border_all
+        ws_sch.row_dimensions[l_row_idx].height = 20
+        last_liab_row = l_row_idx
+
+    # 2. Recurring payments and subscriptions (Columns H:L)
+    ws_sch.cell(row=1, column=8, value=L["recurring_title"]).font = font_sec_hdr
+
+    headers_rec = {
+        "ru": ["Название шаблона", "Сумма", "Тип", "День списания", "Комментарий"],
+        "en": ["Template Name", "Amount", "Type", "Day of Month", "Comment"],
+        "kk": ["Үлгі атауы", "Сомасы", "Түрі", "Төлем күні", "Түсініктеме"]
+    }.get(lang)
+
+    for c_idx, h in enumerate(headers_rec, start=8):  # H, I, J, K, L
+        cell = ws_sch.cell(row=2, column=c_idx, value=h)
+        cell.font = font_tbl_hdr
+        cell.fill = fill_tbl_hdr
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border_all
+    ws_sch.row_dimensions[2].height = 24
+
+    rec_type_map = {
+        "ru": {"expense": "Расход", "income": "Доход"},
+        "en": {"expense": "Expense", "income": "Income"},
+        "kk": {"expense": "Шығыс", "income": "Кіріс"}
+    }.get(lang, {"expense": "Expense", "income": "Income"})
+
+    r_row_idx = 3
+    if recurring_data:
+        for rrow in recurring_data:
+            r_title, r_amt, r_type, r_day, r_comment, r_next = rrow
+            r_amt = int(r_amt or 0)
+            
+            r_type_str = rec_type_map.get(str(r_type or "").strip().lower(), str(r_type or ""))
+            
+            r_schedule = {
+                "ru": f"каждый {r_day}-й день",
+                "en": f"day {r_day} monthly",
+                "kk": f"әр айдың {r_day}-күні"
+            }.get(lang, f"day {r_day} monthly")
+            
+            ws_sch.cell(row=r_row_idx, column=8, value=r_title).alignment = Alignment(horizontal="left", indent=1)
+            ws_sch.cell(row=r_row_idx, column=9, value=r_amt)
+            ws_sch.cell(row=r_row_idx, column=10, value=r_type_str).alignment = Alignment(horizontal="center")
+            ws_sch.cell(row=r_row_idx, column=11, value=r_schedule).alignment = Alignment(horizontal="center")
+            ws_sch.cell(row=r_row_idx, column=12, value=str(r_comment or "")).alignment = Alignment(horizontal="left")
+            
+            ws_sch.cell(row=r_row_idx, column=9).number_format = '#,##0'
+            
+            for c in range(8, 13):
+                cell = ws_sch.cell(row=r_row_idx, column=c)
+                cell.font = font_data
+                cell.border = border_all
+                if r_row_idx % 2 == 1:
+                    cell.fill = fill_zebra
+            ws_sch.row_dimensions[r_row_idx].height = 20
+            r_row_idx += 1
+            
+        ws_sch.cell(row=r_row_idx, column=8, value=L["total"]).font = font_bold
+        ws_sch.cell(row=r_row_idx, column=8).alignment = Alignment(horizontal="center")
+        
+        tot_r_exp = sum(int(r[1] or 0) for r in recurring_data if r[2] == 'expense')
+        ws_sch.cell(row=r_row_idx, column=9, value=tot_r_exp).font = font_bold
+        ws_sch.cell(row=r_row_idx, column=9).number_format = '#,##0'
+        
+        for c in range(8, 13):
+            ws_sch.cell(row=r_row_idx, column=c).border = border_double_bottom
+        ws_sch.row_dimensions[r_row_idx].height = 22
+        last_rec_row = r_row_idx
+    else:
+        no_rec_text = {
+            "ru": "Нет регулярных платежей",
+            "en": "No recurring payments",
+            "kk": "Тұрақты төлемдер жоқ"
+        }.get(lang)
+        ws_sch.merge_cells(start_row=r_row_idx, start_column=8, end_row=r_row_idx, end_column=12)
+        cell_empty = ws_sch.cell(row=r_row_idx, column=8, value=no_rec_text)
+        cell_empty.font = font_subtext
+        cell_empty.alignment = Alignment(horizontal="center", vertical="center")
+        for c in range(8, 13):
+            ws_sch.cell(row=r_row_idx, column=c).border = border_all
+        ws_sch.row_dimensions[r_row_idx].height = 20
+        last_rec_row = r_row_idx
+
+    # 3. Planned operations (Columns A:L)
+    start_planned_row = max(last_liab_row, last_rec_row) + 3
+    ws_sch.cell(row=start_planned_row, column=1, value=L["planned_title"]).font = font_sec_hdr
+    ws_sch.row_dimensions[start_planned_row].height = 28
+
+    headers_plan = {
+        "ru": ["Название цели", "Тип", "Сумма", "Планируемая дата", "Счёт", "Категория", "Обязательно", "Комментарий"],
+        "en": ["Goal Title", "Type", "Amount", "Planned Date", "Account", "Category", "Mandatory", "Comment"],
+        "kk": ["Мақсат атауы", "Түрі", "Сомасы", "Жоспарланған күн", "Шот", "Санат", "Міндетті", "Түсініктеме"]
+    }.get(lang)
+
+    ws_sch.merge_cells(start_row=start_planned_row + 1, start_column=1, end_row=start_planned_row + 1, end_column=2)
+    ws_sch.cell(row=start_planned_row + 1, column=1, value=headers_plan[0])
+    
+    col_mappings_plan = [
+        (3, headers_plan[1]),
+        (4, headers_plan[2]),
+        (5, headers_plan[3]),
+        (6, headers_plan[4]),
+        (8, headers_plan[5]),
+        (9, headers_plan[6]),
+        (10, headers_plan[7])
+    ]
+    
+    for c_idx, h in col_mappings_plan:
+        if c_idx == 10:
+            ws_sch.merge_cells(start_row=start_planned_row + 1, start_column=10, end_row=start_planned_row + 1, end_column=12)
+        elif c_idx == 6:
+            ws_sch.merge_cells(start_row=start_planned_row + 1, start_column=6, end_row=start_planned_row + 1, end_column=7)
+        ws_sch.cell(row=start_planned_row + 1, column=c_idx, value=h)
+        
+    for c in range(1, 13):
+        cell = ws_sch.cell(row=start_planned_row + 1, column=c)
+        cell.font = font_tbl_hdr
+        cell.fill = fill_tbl_hdr
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border_all
+    ws_sch.row_dimensions[start_planned_row + 1].height = 24
+
+    p_row_idx = start_planned_row + 2
+    if planned_data:
+        for prow in planned_data:
+            p_title, p_kind, p_amt, p_date, p_acc, p_cat_name, p_cat_emoji, p_req, p_comment = prow
+            p_amt = int(p_amt or 0)
+            
+            p_kind_str = rec_type_map.get(str(p_kind or "").strip().lower(), str(p_kind or ""))
+            p_req_str = {
+                "ru": "Да" if p_req else "Нет",
+                "en": "Yes" if p_req else "No",
+                "kk": "Иә" if p_req else "Жоқ"
+            }.get(lang, "Yes" if p_req else "No")
+            
+            p_translated_cat = t_category(p_cat_name, lang)
+            p_cat_display = f"{p_cat_emoji} {p_translated_cat}".strip() if p_cat_emoji or p_translated_cat else p_cat_name
+            
+            ws_sch.merge_cells(start_row=p_row_idx, start_column=1, end_row=p_row_idx, end_column=2)
+            ws_sch.cell(row=p_row_idx, column=1, value=p_title).alignment = Alignment(horizontal="left", indent=1)
+            ws_sch.cell(row=p_row_idx, column=3, value=p_kind_str).alignment = Alignment(horizontal="center")
+            ws_sch.cell(row=p_row_idx, column=4, value=p_amt)
+            ws_sch.cell(row=p_row_idx, column=5, value=str(p_date or "")).alignment = Alignment(horizontal="center")
+            
+            ws_sch.merge_cells(start_row=p_row_idx, start_column=6, end_row=p_row_idx, end_column=7)
+            ws_sch.cell(row=p_row_idx, column=6, value=str(p_acc or "")).alignment = Alignment(horizontal="left", indent=1)
+            
+            ws_sch.cell(row=p_row_idx, column=8, value=p_cat_display).alignment = Alignment(horizontal="left", indent=1)
+            ws_sch.cell(row=p_row_idx, column=9, value=p_req_str).alignment = Alignment(horizontal="center")
+            
+            ws_sch.merge_cells(start_row=p_row_idx, start_column=10, end_row=p_row_idx, end_column=12)
+            ws_sch.cell(row=p_row_idx, column=10, value=str(p_comment or "")).alignment = Alignment(horizontal="left", indent=1)
+            
+            ws_sch.cell(row=p_row_idx, column=4).number_format = '#,##0'
+            
+            for c in range(1, 13):
+                cell = ws_sch.cell(row=p_row_idx, column=c)
+                cell.font = font_data
+                cell.border = border_all
+                if p_row_idx % 2 == 1:
+                    cell.fill = fill_zebra
+            ws_sch.row_dimensions[p_row_idx].height = 20
+            p_row_idx += 1
+            
+        ws_sch.merge_cells(start_row=p_row_idx, start_column=1, end_row=p_row_idx, end_column=3)
+        ws_sch.cell(row=p_row_idx, column=1, value=L["total"]).font = font_bold
+        ws_sch.cell(row=p_row_idx, column=1).alignment = Alignment(horizontal="center")
+        
+        tot_p_amt = sum(int(r[2] or 0) for r in planned_data if r[1] == 'expense')
+        ws_sch.cell(row=p_row_idx, column=4, value=tot_p_amt).font = font_bold
+        ws_sch.cell(row=p_row_idx, column=4).number_format = '#,##0'
+        
+        for c in range(1, 13):
+            cell = ws_sch.cell(row=p_row_idx, column=c)
+            cell.border = border_double_bottom
+            if c in [1, 2, 3]:
+                cell.font = font_bold
+        ws_sch.row_dimensions[p_row_idx].height = 22
+    else:
+        no_plan_text = {
+            "ru": "Нет запланированных операций",
+            "en": "No planned transactions",
+            "kk": "Жоспарланған операциялар жоқ"
+        }.get(lang)
+        ws_sch.merge_cells(start_row=p_row_idx, start_column=1, end_row=p_row_idx, end_column=12)
+        cell_empty = ws_sch.cell(row=p_row_idx, column=1, value=no_plan_text)
+        cell_empty.font = font_subtext
+        cell_empty.alignment = Alignment(horizontal="center", vertical="center")
+        for c in range(1, 13):
+            ws_sch.cell(row=p_row_idx, column=c).border = border_all
+        ws_sch.row_dimensions[p_row_idx].height = 20
+
+    widths_sch = {"A": 25, "B": 18, "C": 16, "D": 16, "E": 16, "F": 20, "G": 10, "H": 25, "I": 16, "J": 16, "K": 20, "L": 25}
+    for col, w in widths_sch.items():
+        ws_sch.column_dimensions[col].width = w
+
+    # ==========================================
+    # SHEET 4: TRANSACTIONS (Clean raw table)
     # ==========================================
     ws_tx = wb.create_sheet(title=L["sheet_transactions"])
     ws_tx.views.sheetView[0].showGridLines = True
     ws_tx.append(L["raw_headers"])
 
-    # Format headers
     for cell in ws_tx[1]:
         cell.font = font_tbl_hdr
         cell.fill = fill_tbl_hdr
@@ -996,22 +1500,49 @@ def _build_xlsx(
         cell.border = border_all
     ws_tx.row_dimensions[1].height = 26
 
-    # Transaction type localized labels dictionary mapping
     type_local_map = {
         "ru": {"income": "Доход", "expense": "Расход", "transfer": "Перевод"},
         "en": {"income": "Income", "expense": "Expense", "transfer": "Transfer"},
         "kk": {"income": "Кіріс", "expense": "Шығыс", "transfer": "Аударма"}
     }.get(lang, {"income": "Income", "expense": "Expense", "transfer": "Transfer"})
 
-    for idx, r in enumerate(rows_list, start=2):
+    tx_row_idx = 2
+    last_month_key = None
+
+    for r in rows_list:
         tx_id, ts, ttype, amount, account, category, emoji, note = r
+        
+        try:
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            local_dt = dt.astimezone(ZoneInfo(tz_name))
+            month_key = local_dt.strftime("%Y-%m")
+            month_display = format_localized_month(month_key, lang)
+        except Exception:
+            month_key = str(ts)[:7] if ts and len(str(ts)) >= 7 else "Unknown"
+            month_display = month_key
+            
+        if month_key != last_month_key:
+            ws_tx.merge_cells(start_row=tx_row_idx, start_column=1, end_row=tx_row_idx, end_column=8)
+            cell_sep = ws_tx.cell(row=tx_row_idx, column=1, value=f"📅 {month_display.upper()}")
+            cell_sep.font = Font(name="Segoe UI", size=10, bold=True, color="475569")
+            cell_sep.fill = fill_tbl_hdr
+            cell_sep.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            
+            for col in range(1, 9):
+                c_cell = ws_tx.cell(row=tx_row_idx, column=col)
+                c_cell.fill = fill_tbl_hdr
+                c_cell.border = Border(top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1'))
+                
+            ws_tx.row_dimensions[tx_row_idx].height = 26
+            tx_row_idx += 1
+            last_month_key = month_key
+
         translated_cat = t_category(category, lang)
         cat_display = f"{emoji} {translated_cat}".strip() if emoji or translated_cat else ""
-        
-        # Localize type (Income/Expense/Transfer)
         ttype_display = type_local_map.get(str(ttype or "").strip().lower(), str(ttype or ""))
         
-        # Format date strictly to YYYY-MM-DD HH:MM in user's timezone to avoid raw UTC
         try:
             dt = datetime.fromisoformat(ts)
             if dt.tzinfo is None:
@@ -1021,7 +1552,7 @@ def _build_xlsx(
         except Exception:
             clean_date = str(ts)[:16].replace("T", " ") if ts else ""
         
-        ws_tx.append([
+        row_vals = [
             int(tx_id),
             clean_date,
             ttype_display,
@@ -1030,28 +1561,26 @@ def _build_xlsx(
             str(account or ""),
             cat_display,
             str(note or ""),
-        ])
+        ]
 
-        # Zebra striping
-        if idx % 2 == 1:
-            for cell in ws_tx[idx]:
-                cell.fill = fill_zebra
-                
-        # Cell border and alignment formatting
-        for cell_idx, cell in enumerate(ws_tx[idx], start=1):
+        for col_idx, val in enumerate(row_vals, start=1):
+            cell = ws_tx.cell(row=tx_row_idx, column=col_idx, value=val)
             cell.font = font_data
             cell.border = border_all
-            if cell_idx in [1, 2, 3, 5]: # ID, Date, Type, Currency
+            if tx_row_idx % 2 == 1:
+                cell.fill = fill_zebra
+                
+            if col_idx in [1, 2, 3, 5]:
                 cell.alignment = Alignment(horizontal="center")
-            elif cell_idx == 4: # Amount
+            elif col_idx == 4:
                 cell.alignment = Alignment(horizontal="right")
-            else: # Account, Category, Note
+                cell.number_format = '#,##0'
+            else:
                 cell.alignment = Alignment(horizontal="left")
             
-        ws_tx.cell(row=idx, column=4).number_format = '#,##0'
-        ws_tx.row_dimensions[idx].height = 20
+        ws_tx.row_dimensions[tx_row_idx].height = 20
+        tx_row_idx += 1
 
-    # Widths configured generously for raw transactions to fit formatted dates and amounts
     widths_tx = [10, 26, 14, 15, 10, 18, 22, 40]
     for col_idx, width in enumerate(widths_tx, start=1):
         ws_tx.column_dimensions[chr(ord("A") + col_idx - 1)].width = width
@@ -1060,8 +1589,6 @@ def _build_xlsx(
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
-
-
 
 
 def _build_csv(rows: Iterable[tuple], lang: str, currency: str) -> bytes:
@@ -1145,30 +1672,142 @@ async def send_premium_xlsx_report(bot, db: aiosqlite.Connection, user_id: int, 
     else:
         latest_rec = None
 
-    payload = _build_xlsx(rows, lang, currency, user_id, metrics, profile, priority_insights, latest_rec, tz_name)
+    # Fetch details for Sheet 1, Sheet 2, Sheet 3
+    cur_acc = await db.execute(
+        """
+        SELECT id, name, balance, starting_balance, currency, is_saving
+        FROM accounts
+        WHERE user_id = ? AND is_archived = 0
+        """,
+        (user_id,)
+    )
+    accounts_data = await cur_acc.fetchall()
+
+    now_local = await now_in_user_tz(db, user_id)
+    curr_month_str = now_local.strftime("%Y-%m")
+    
+    from app.domain.services.reports_service import month_bounds_utc, iso
+    start_utc, end_utc, _, _ = month_bounds_utc(tz_name, datetime.now(timezone.utc))
+    start_iso_curr = iso(start_utc)
+    end_iso_curr = iso(end_utc)
+
+    cur_bud = await db.execute(
+        """
+        SELECT c.name, c.emoji, b.limit_amount,
+               COALESCE((
+                   SELECT SUM(t.amount)
+                   FROM transactions t
+                   WHERE t.user_id = b.user_id
+                     AND t.category_id = b.category_id
+                     AND t.type = 'expense'
+                     AND t.deleted_at IS NULL
+                     AND t.ts >= ? AND t.ts < ?
+               ), 0) AS spent
+        FROM budgets b
+        JOIN categories c ON c.id = b.category_id
+        WHERE b.user_id = ? AND b.month = ?
+        """,
+        (start_iso_curr, end_iso_curr, user_id, curr_month_str)
+    )
+    budgets_data = await cur_bud.fetchall()
+
+    liabilities_data = []
+    try:
+        cur_liab = await db.execute(
+            """
+            SELECT kind, title, remaining_amount, payment_amount, next_payment_date, note
+            FROM liabilities
+            WHERE user_id = ? AND status = 'active'
+            """,
+            (user_id,)
+        )
+        liabilities_data = await cur_liab.fetchall()
+    except Exception:
+        try:
+            cur_deb = await db.execute(
+                """
+                SELECT direction AS kind, title, remaining_amount, payment_amount, next_payment_date, note
+                FROM debts
+                WHERE user_id = ? AND is_active = 1
+                """,
+                (user_id,)
+            )
+            liabilities_data = await cur_deb.fetchall()
+        except Exception:
+            pass
+
+    recurring_data = []
+    try:
+        cur_rec = await db.execute(
+            """
+            SELECT title, amount, 'expense' AS rtype, day_of_month, comment, next_run_date
+            FROM recurring_expenses
+            WHERE user_id = ? AND is_archived = 0
+            UNION ALL
+            SELECT title, amount, 'income' AS rtype, day_of_month, comment, next_run_date
+            FROM recurring_incomes
+            WHERE user_id = ? AND is_archived = 0
+            ORDER BY day_of_month ASC
+            """,
+            (user_id, user_id)
+        )
+        recurring_data = await cur_rec.fetchall()
+    except Exception:
+        pass
+
+    planned_data = []
+    try:
+        cur_plan = await db.execute(
+            """
+            SELECT p.title, p.kind, p.amount, p.planned_date, a.name AS account_name, c.name AS category_name, c.emoji AS category_emoji, p.is_required, p.comment
+            FROM planned_transactions p
+            LEFT JOIN accounts a ON a.id = p.account_id
+            LEFT JOIN categories c ON c.id = p.category_id
+            WHERE p.user_id = ? AND p.is_archived = 0
+            ORDER BY date(p.planned_date) ASC
+            """,
+            (user_id,)
+        )
+        planned_data = await cur_plan.fetchall()
+    except Exception:
+        pass
+
+    payload = _build_xlsx(
+        rows, lang, currency, user_id, metrics, profile, priority_insights, latest_rec, tz_name,
+        accounts_data=accounts_data,
+        budgets_data=budgets_data,
+        liabilities_data=liabilities_data,
+        recurring_data=recurring_data,
+        planned_data=planned_data,
+        all_insights=ai_insights
+    )
+    
     if payload is not None:
         filename = f"finance_{label}.xlsx"
         caption = {
             "ru": (
                 "📊 <b>Ваш премиум-отчет готов!</b>\n\n"
-                "Файл содержит 3 аналитические вкладки (переключайтесь между ними внизу документа):\n"
-                "1️⃣ <b>Главная сводка</b> — Главный AI-дашборд и оценка финансового здоровья\n"
-                "2️⃣ <b>Аналитика</b> — Категории, сравнение трендов и прогноз\n"
-                "3️⃣ <b>История операций</b> — Полный реестр ваших транзакций"
+                "Файл содержит 4 аналитические вкладки (переключайтесь между ними внизу документа):\n"
+                "1️⃣ <b>Главная сводка</b> — Главный AI-дашборд, балансы и оценка финансового здоровья\n"
+                "2️⃣ <b>Аналитика</b> — Бюджеты, сравнение трендов, прогноз и AI-анализ категорий\n"
+                "3️⃣ <b>Долги и расписание</b> — Кредиты, долги, регулярные платежи и планы\n"
+                "4️⃣ <b>История операций</b> — Детальный реестр транзакций с разделителями по месяцам"
             ),
             "en": (
                 "📊 <b>Your premium report is ready!</b>\n\n"
-                "The file contains 3 analytical sheets (switch between them at the bottom of the document):\n"
-                "1️⃣ <b>Executive Summary</b> — Main AI dashboard and Financial Health score\n"
-                "2️⃣ <b>Analytics</b> — Category structure, trends, and month-end projection\n"
-                "3️⃣ <b>Transaction History</b> — Full transaction ledger"
+                "The file contains 4 analytical sheets (switch between them at the bottom of the document):\n"
+                "1️⃣ <b>Executive Summary</b> — Main AI dashboard, balances, and Financial Health score\n"
+                "2️⃣ <b>Analytics</b> — Budgets, trends comparison, prediction, and AI category analysis\n"
+                "3️⃣ <b>Debts & Schedules</b> — Liabilities, recurring bills, and plans\n"
+                "4️⃣ <b>Transaction History</b> — Full transaction ledger with monthly separators"
             ),
             "kk": (
                 "📊 <b>Сіздің премиум есебіңіз дайын!</b>\n\n"
-                "Файл 3 талдау парағынан тұрады (құжаттың төменгі жағында ауысыңыз):\n"
-                "1️⃣ <b>Негізгі жиынтық</b> — Басты AI-дашборд және қаржылық денсаулық индексі\n"
-                "2️⃣ <b>Талдау</b> — Санаттар құрылымы, трендтер және болжам\n"
-                "3️⃣ <b>Операциялар тарихы</b> — Барлық транзакциялар тізімі"
+                "Файл 4 талдау парағынан тұрады (құжаттың төменгі жағында ауысыңыз):\n"
+                "1️⃣ <b>Негізгі жиынтық</b> — Басты AI-дашборд, баланстар және қаржылық денсаулық индексі\n"
+                "2️⃣ <b>Талдау</b> — Бюджеттер, трендтер, болжам және AI санаттарды талдау\n"
+                "3️⃣ <b>Борыштар мен кесте</b> — Несиелер, борыштар, тұрақты төлемдер және жоспарлар\n"
+                "4️⃣ <b>Операциялар тарихы</b> — Ай бойынша бөлінген барлық транзакциялар тізімі"
             )
         }.get(lang, "📊 <b>Ваш премиум-отчет готов!</b>")
 
