@@ -1,5 +1,6 @@
 from __future__ import annotations
 import io
+import asyncio
 import aiosqlite
 from aiogram import Router, Bot
 from aiogram.filters import Command
@@ -23,12 +24,10 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         # Ignore silently for security
         return
 
-    # 2. SQL Queries
+    # 2. SQL Queries (strictly selecting existing columns)
     users_query = """
         SELECT 
             u.user_id, 
-            u.username, 
-            u.first_name, 
             u.full_access, 
             u.created_at,
             s.lang, 
@@ -44,13 +43,11 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
     accounts_query = """
         SELECT 
             a.user_id, 
-            u.username, 
             a.name, 
             a.balance, 
             a.currency, 
             a.is_saving
         FROM accounts a
-        JOIN users u ON a.user_id = u.user_id
         WHERE a.deleted_at IS NULL
         ORDER BY a.user_id, a.name
     """
@@ -65,7 +62,25 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         await m.reply(f"❌ Ошибка выполнения запросов к БД: {e}")
         return
 
-    # 3. Create Workbook
+    # 3. Resolve Usernames and Names dynamically from Telegram Bot API (since they aren't stored in DB)
+    user_usernames = {}
+    user_first_names = {}
+    
+    for u in users:
+        uid = u[0]
+        try:
+            chat = await bot.get_chat(uid)
+            username = f"@{chat.username}" if chat.username else "—"
+            first_name = chat.first_name or "—"
+        except Exception:
+            username = "—"
+            first_name = "—"
+        user_usernames[uid] = username
+        user_first_names[uid] = first_name
+        # Prevent Telegram API spam rate-limits
+        await asyncio.sleep(0.05)
+
+    # 4. Create Workbook
     wb = Workbook()
     
     # Fonts and Fills (Premium Deep Blue/Slate theme)
@@ -101,10 +116,14 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         cell.border = thin_border
         
     for row_idx, u in enumerate(users, start=2):
-        is_premium = "Да 👑" if u[3] == 1 else "Нет"
+        uid = u[0]
+        is_premium = "Да 👑" if u[1] == 1 else "Нет"
+        username = user_usernames.get(uid, "—")
+        first_name = user_first_names.get(uid, "—")
+        
         row_data = [
-            u[0], f"@{u[1]}" if u[1] else "—", u[2] or "—", is_premium,
-            u[4] or "—", (u[5] or "ru").upper(), u[6] or "—", u[7], u[8], u[9]
+            uid, username, first_name, is_premium,
+            u[2] or "—", (u[3] or "ru").upper(), u[4] or "—", u[5], u[6], u[7]
         ]
         ws_users.append(row_data)
         for col_idx in range(1, len(headers_users) + 1):
@@ -138,10 +157,13 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         cell.border = thin_border
         
     for row_idx, acc in enumerate(accounts, start=2):
-        is_saving = "Да 🎯" if acc[5] == 1 else "Нет 💳"
+        uid = acc[0]
+        is_saving = "Да 🎯" if acc[4] == 1 else "Нет 💳"
+        username = user_usernames.get(uid, "—")
+        
         row_data = [
-            acc[0], f"@{acc[1]}" if acc[1] else "—", acc[2],
-            acc[3], acc[4], is_saving
+            uid, username, acc[1],
+            acc[2], acc[3], is_saving
         ]
         ws_accounts.append(row_data)
         for col_idx in range(1, len(headers_accounts) + 1):
@@ -176,7 +198,7 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
                 if cell.row > 1:
                     ws.row_dimensions[cell.row].height = 20
 
-    # 4. Save to buffer and send
+    # 5. Save to buffer and send
     try:
         file_stream = io.BytesIO()
         wb.save(file_stream)
