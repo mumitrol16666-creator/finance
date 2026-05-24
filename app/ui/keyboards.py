@@ -283,9 +283,10 @@ def settings_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=t(lang, "BTN_SETTINGS_CAT_LIMITS"), callback_data="st:catlim")
     kb.button(text=t(lang, "BTN_SETTINGS_NOTIFS"), callback_data="st:notifs")
+    kb.button(text=t(lang, "BTN_SETTINGS_TX_MANAGE"), callback_data="st:tx_manage")
     kb.button(text=t(lang, "BTN_LANGUAGE"), callback_data="st:lang")
     kb.button(text=t(lang, "BTN_SETTINGS_RESET"), callback_data="st:reset")
-    kb.adjust(1, 1, 1, 1)
+    kb.adjust(1, 1, 1, 1, 1)
     return kb.as_markup()
 
 def settings_accounts_kb(lang: str = "ru") -> InlineKeyboardMarkup:

@@ -183,7 +183,7 @@ def _history_text(lang: str, rows: list[tuple], offset: int) -> str:
     return "\n".join(lines).rstrip()
 
 
-def _history_kb(lang: str, rows: list[tuple], offset: int) -> InlineKeyboardMarkup:
+def _history_kb(lang: str, rows: list[tuple], offset: int, back_cb: str = "rp:hub") -> InlineKeyboardMarkup:
     L = _L(lang)
     kb = InlineKeyboardBuilder()
     for tx_id, ts, ttype, amount, acc_name, note in rows:
@@ -197,7 +197,7 @@ def _history_kb(lang: str, rows: list[tuple], offset: int) -> InlineKeyboardMark
     for text, cb in nav:
         kb.button(text=text, callback_data=cb)
     kb.button(text=L["refresh"], callback_data=f"hist:page:{offset}")
-    kb.button(text=L["back"], callback_data="rp:hub")
+    kb.button(text=L["back"], callback_data=back_cb)
     kb.adjust(*([1] * len(rows)), len(nav) if nav else 1, 2)
     return kb.as_markup()
 
@@ -235,7 +235,14 @@ async def _render_history(
     rows = rows[offset: offset + PAGE_SIZE] if offset > 0 else rows[:PAGE_SIZE]
     lang = await get_lang(db, user_id)
     text = _history_text(lang, rows, offset)
-    kb = _history_kb(lang, rows, offset)
+
+    back_cb = "rp:hub"
+    if state is not None:
+        data = await state.get_data()
+        if data.get("history_return_to") == "tx_manage":
+            back_cb = "st:tx_manage"
+
+    kb = _history_kb(lang, rows, offset, back_cb=back_cb)
 
     if isinstance(target, CallbackQuery):
         edited = await _safe_edit_text(target.message, text, reply_markup=kb) if prefer_edit else False
