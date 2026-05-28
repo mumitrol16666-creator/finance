@@ -511,6 +511,8 @@ def _action_buttons_kb(
     edit2_cb: str | None = None,
     edit3_text: str | None = None,
     edit3_cb: str | None = None,
+    edit4_text: str | None = None,
+    edit4_cb: str | None = None,
     save_text: str = "✅ Сохранить",
     cancel_text: str = "❌ Отмена",
 ) -> InlineKeyboardMarkup:
@@ -518,16 +520,21 @@ def _action_buttons_kb(
         [InlineKeyboardButton(text=save_text, callback_data=save_cb)]
     ]
 
-    edit_row: list[InlineKeyboardButton] = []
+    edit_row1: list[InlineKeyboardButton] = []
     if edit1_text and edit1_cb:
-        edit_row.append(InlineKeyboardButton(text=edit1_text, callback_data=edit1_cb))
+        edit_row1.append(InlineKeyboardButton(text=edit1_text, callback_data=edit1_cb))
     if edit2_text and edit2_cb:
-        edit_row.append(InlineKeyboardButton(text=edit2_text, callback_data=edit2_cb))
-    if edit_row:
-        rows.append(edit_row)
+        edit_row1.append(InlineKeyboardButton(text=edit2_text, callback_data=edit2_cb))
+    if edit_row1:
+        rows.append(edit_row1)
 
+    edit_row2: list[InlineKeyboardButton] = []
     if edit3_text and edit3_cb:
-        rows.append([InlineKeyboardButton(text=edit3_text, callback_data=edit3_cb)])
+        edit_row2.append(InlineKeyboardButton(text=edit3_text, callback_data=edit3_cb))
+    if edit4_text and edit4_cb:
+        edit_row2.append(InlineKeyboardButton(text=edit4_text, callback_data=edit4_cb))
+    if edit_row2:
+        rows.append(edit_row2)
 
     rows.append(
         [InlineKeyboardButton(text=cancel_text, callback_data=save_cb.rsplit(":", 1)[0] + ":cancel")]
@@ -554,10 +561,14 @@ def _overdraft_kb(
 def _exp_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     return _action_buttons_kb(
         "expcfm:save",
-        edit1_text=_i18n_t(lang, "TX_EDIT_CAT"),
-        edit1_cb="expcfm:category",
-        edit2_text=_i18n_t(lang, "TX_EDIT_NOTE"),
-        edit2_cb="expcfm:note",
+        edit1_text=_i18n_t(lang, "TX_EDIT_AMOUNT"),
+        edit1_cb="expcfm:amount",
+        edit2_text=_i18n_t(lang, "TX_EDIT_ACCOUNT"),
+        edit2_cb="expcfm:account",
+        edit3_text=_i18n_t(lang, "TX_EDIT_CAT"),
+        edit3_cb="expcfm:category",
+        edit4_text=_i18n_t(lang, "TX_EDIT_NOTE"),
+        edit4_cb="expcfm:note",
         save_text=_i18n_t(lang, "BTN_SAVE"),
         cancel_text=_i18n_t(lang, "BTN_CANCEL"),
     )
@@ -566,10 +577,14 @@ def _exp_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
 def _inc_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     return _action_buttons_kb(
         "inccfm:save",
-        edit1_text=_i18n_t(lang, "TX_EDIT_CAT"),
-        edit1_cb="inccfm:category",
-        edit2_text=_i18n_t(lang, "TX_EDIT_NOTE"),
-        edit2_cb="inccfm:note",
+        edit1_text=_i18n_t(lang, "TX_EDIT_AMOUNT"),
+        edit1_cb="inccfm:amount",
+        edit2_text=_i18n_t(lang, "TX_EDIT_ACCOUNT"),
+        edit2_cb="inccfm:account",
+        edit3_text=_i18n_t(lang, "TX_EDIT_CAT"),
+        edit3_cb="inccfm:category",
+        edit4_text=_i18n_t(lang, "TX_EDIT_NOTE"),
+        edit4_cb="inccfm:note",
         save_text=_i18n_t(lang, "BTN_SAVE"),
         cancel_text=_i18n_t(lang, "BTN_CANCEL"),
     )
@@ -884,6 +899,14 @@ async def exp_amount(m: Message, state: FSMContext, db):
         return await m.answer(_i18n_t(lang, "AMOUNT_INVALID"), reply_markup=cancel_kb(lang))
 
     await state.update_data(amount=amt)
+
+    data = await state.get_data()
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=None)
+        await state.set_state(ExpenseFlow.confirm)
+        await _exp_render_confirm(m, state, db)
+        return
+
     await state.set_state(ExpenseFlow.account)
 
     await _exp_render_account(m, state, db)
@@ -905,6 +928,15 @@ async def exp_account(c: CallbackQuery, state: FSMContext, db):
     )
 
     data = await state.get_data()
+
+    # If editing from confirm, return directly to confirm screen
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=None)
+        await state.set_state(ExpenseFlow.confirm)
+        await _exp_render_confirm(c, state, db)
+        await c.answer()
+        return
+
     if data.get("category_id"):
         await state.set_state(ExpenseFlow.confirm)
         await _exp_render_confirm(c, state, db)
@@ -942,8 +974,24 @@ async def exp_category(c: CallbackQuery, state: FSMContext, db):
         category_limit=category_limit,
         category_limit_month=month,
     )
-    await state.set_state(ExpenseFlow.need_note)
 
+    data = await state.get_data()
+
+    # If editing from confirm or note already set, skip need_note
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=None)
+        await state.set_state(ExpenseFlow.confirm)
+        await _exp_render_confirm(c, state, db)
+        await c.answer()
+        return
+
+    if data.get("note") is not None:
+        await state.set_state(ExpenseFlow.confirm)
+        await _exp_render_confirm(c, state, db)
+        await c.answer()
+        return
+
+    await state.set_state(ExpenseFlow.need_note)
     await _exp_render_need_note(c, state)
     await c.answer()
 
@@ -1101,7 +1149,23 @@ async def exp_confirm(c: CallbackQuery, state: FSMContext, db):
         await _flow_finish(c, state, _i18n_t(lang, "CANCELLED").split(".")[0] + ".", db)
         return
 
+    if action == "amount":
+        await state.update_data(editing_from_confirm=True)
+        await state.set_state(ExpenseFlow.amount)
+        lang = (await state.get_data()).get("lang", "ru")
+        await _flow_render(c, state, _i18n_t(lang, "ENTER_AMOUNT_HINT"), reply_markup=cancel_kb(lang))
+        await c.answer()
+        return
+
+    if action == "account":
+        await state.update_data(editing_from_confirm=True)
+        await state.set_state(ExpenseFlow.account)
+        await _exp_render_account(c, state, db)
+        await c.answer()
+        return
+
     if action == "category":
+        await state.update_data(editing_from_confirm=True)
         await state.set_state(ExpenseFlow.category)
         await _exp_render_category(c, state, db)
         await c.answer()
@@ -1436,6 +1500,14 @@ async def inc_amount(m: Message, state: FSMContext, db):
         return await m.answer(_i18n_t(lang, "AMOUNT_INVALID"), reply_markup=cancel_kb(lang))
 
     await state.update_data(amount=amt)
+
+    data = await state.get_data()
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=None)
+        await state.set_state(IncomeFlow.confirm)
+        await _inc_render_confirm(m, state, db)
+        return
+
     await state.set_state(IncomeFlow.account)
 
 
@@ -1458,6 +1530,15 @@ async def inc_account(c: CallbackQuery, state: FSMContext, db):
     )
 
     data = await state.get_data()
+
+    # If editing from confirm, return directly to confirm screen
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=None)
+        await state.set_state(IncomeFlow.confirm)
+        await _inc_render_confirm(c, state, db)
+        await c.answer()
+        return
+
     if data.get("category_id"):
         await state.set_state(IncomeFlow.confirm)
         await _inc_render_confirm(c, state, db)
@@ -1491,8 +1572,24 @@ async def inc_category(c: CallbackQuery, state: FSMContext, db):
         category_name=cat_name,
         category_emoji=(cat_emoji or ""),
     )
-    await state.set_state(IncomeFlow.need_note)
 
+    data = await state.get_data()
+
+    # If editing from confirm or note already set, skip need_note
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=None)
+        await state.set_state(IncomeFlow.confirm)
+        await _inc_render_confirm(c, state, db)
+        await c.answer()
+        return
+
+    if data.get("note") is not None:
+        await state.set_state(IncomeFlow.confirm)
+        await _inc_render_confirm(c, state, db)
+        await c.answer()
+        return
+
+    await state.set_state(IncomeFlow.need_note)
     await _inc_render_need_note(c, state)
     await c.answer()
 
@@ -1550,7 +1647,23 @@ async def inc_confirm(c: CallbackQuery, state: FSMContext, db):
         await _flow_finish(c, state, _i18n_t(lang, "CANCELLED").split(".")[0] + ".", db)
         return
 
+    if action == "amount":
+        await state.update_data(editing_from_confirm=True)
+        await state.set_state(IncomeFlow.amount)
+        lang = (await state.get_data()).get("lang", "ru")
+        await _flow_render(c, state, _i18n_t(lang, "ENTER_AMOUNT_HINT"), reply_markup=cancel_kb(lang))
+        await c.answer()
+        return
+
+    if action == "account":
+        await state.update_data(editing_from_confirm=True)
+        await state.set_state(IncomeFlow.account)
+        await _inc_render_account(c, state, db)
+        await c.answer()
+        return
+
     if action == "category":
+        await state.update_data(editing_from_confirm=True)
         await state.set_state(IncomeFlow.category)
         await _inc_render_category(c, state, db)
         await c.answer()
