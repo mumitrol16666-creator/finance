@@ -9,7 +9,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardRemove, BufferedInputFile, InputMediaPhoto
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.db.repositories.accounts_repo import list_accounts
@@ -896,12 +896,58 @@ async def _render_report(
 
     lines += ["", labels["streak_title"], _build_streak_line(lang, streak_cur, streak_best)]
 
-    rendered = await _edit_or_answer(
-        m,
-        db,
-        "\n".join(lines),
-        reply_markup=_report_kb(lang, period, show_categories),
-        prefer_edit=prefer_edit,
-    )
+    caption = "\n".join(lines)
+    show_chart = show_categories and exp > 0 and len(cats) > 0
+    reply_markup = _report_kb(lang, period, show_categories)
+    is_photo = bool(m.photo)
+
+    if show_chart:
+        from app.domain.services.chart_service import draw_expense_donut_chart
+        formatted_total = f"-{_fmt_money(exp)}"
+        chart_buf = draw_expense_donut_chart(cats, exp, formatted_total, lang)
+        file_input = BufferedInputFile(chart_buf.getvalue(), filename="chart.png")
+
+        # Truncate caption if it exceeds 1024 characters (Telegram limitation)
+        if len(caption) > 1000:
+            caption = caption[:997] + "..."
+
+        if is_photo:
+            if prefer_edit:
+                try:
+                    rendered = await m.edit_media(
+                        media=InputMediaPhoto(media=file_input, caption=caption, parse_mode=PARSE_MODE),
+                        reply_markup=reply_markup
+                    )
+                except Exception:
+                    try:
+                        await m.delete()
+                    except Exception:
+                        pass
+                    rendered = await m.answer_photo(photo=file_input, caption=caption, reply_markup=reply_markup, parse_mode=PARSE_MODE)
+            else:
+                rendered = await m.answer_photo(photo=file_input, caption=caption, reply_markup=reply_markup, parse_mode=PARSE_MODE)
+        else:
+            if prefer_edit:
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+            rendered = await m.answer_photo(photo=file_input, caption=caption, reply_markup=reply_markup, parse_mode=PARSE_MODE)
+    else:
+        if is_photo:
+            try:
+                await m.delete()
+            except Exception:
+                pass
+            rendered = await m.answer(caption, reply_markup=reply_markup, parse_mode=PARSE_MODE)
+        else:
+            rendered = await _edit_or_answer(
+                m,
+                db,
+                caption,
+                reply_markup=reply_markup,
+                prefer_edit=prefer_edit,
+            )
+
     if state is not None and rendered is not None:
         await state.update_data(flow_message_id=rendered.message_id, ui_scope="reports")
