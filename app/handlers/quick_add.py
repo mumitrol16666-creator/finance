@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 import time
 import re
 import aiosqlite
@@ -31,7 +33,7 @@ from app.handlers.transactions import (
     add_expense_v2,
     add_income,
 )
-from app.domain.services.ai_llm_service import parse_quick_add_ai, has_openai_key
+from app.domain.services.ai_llm_service import parse_quick_add_ai, transcribe_audio_ai, has_openai_key
 
 router = Router()
 
@@ -86,8 +88,28 @@ async def _autopick_if_possible(db, user_id: int, state: FSMContext):
     data = await state.get_data()
     kind = data.get("kind")
     note = (data.get("note") or "").strip()
+    category_hint = (data.get("category_hint") or "").strip()
 
-    if kind in ("income", "expense") and note:
+    if kind not in ("income", "expense"):
+        return
+
+    # --- 1. Try category_hint first (from AI voice/text parsing) ---
+    if category_hint:
+        hint_hit = await find_category_by_name_ci(db, user_id, kind, category_hint)
+        if not hint_hit:
+            hint_hit = await find_category_by_note_hint(db, user_id, kind, category_hint)
+        if hint_hit:
+            cid, cname, cemoji = hint_hit
+            # When matched via category_hint, keep note intact as user comment
+            await state.update_data(
+                category_id=cid,
+                category_name=cname,
+                category_emoji=(cemoji or ""),
+            )
+            return
+
+    # --- 2. Fallback: match via note field (original behavior) ---
+    if note:
         exact_hit = await find_category_by_name_ci(db, user_id, kind, note)
         hit = exact_hit
 
@@ -111,6 +133,57 @@ async def _autopick_if_possible(db, user_id: int, state: FSMContext):
             await state.update_data(**update_payload)
 
 
+
+# Transliteration map for common account name aliases (user language -> stored name)
+_ACCOUNT_ALIASES: dict[str, str] = {
+    "каспи": "kaspi",
+    "каспий": "kaspi",
+    "kaspi": "kaspi",
+    "халык": "halyk",
+    "halyk": "halyk",
+    "наличные": "наличные",
+    "нал": "наличные",
+    "cash": "наличные",
+    "карта": "карта",
+    "card": "карта",
+    "jusan": "jusan",
+    "жусан": "jusan",
+    "форте": "forte",
+    "forte": "forte",
+}
+
+
+async def _autopick_account(db, user_id: int, state: FSMContext):
+    """Try to auto-select an account based on AI-provided account_hint."""
+    data = await state.get_data()
+    hint = (data.get("account_hint") or "").strip().lower()
+    if not hint:
+        return
+
+    accounts = await list_accounts(db, user_id)
+    if not accounts:
+        return
+
+    # Normalize the hint through alias map
+    normalized_hint = _ACCOUNT_ALIASES.get(hint, hint)
+
+    for acc in accounts:
+        acc_id = acc[0]
+        acc_name = (acc[1] or "").strip()
+        acc_name_lower = acc_name.lower()
+
+        # Exact match
+        if acc_name_lower == hint or acc_name_lower == normalized_hint:
+            await state.update_data(account_id=acc_id)
+            return
+
+    # Substring match as fallback
+    for acc in accounts:
+        acc_id = acc[0]
+        acc_name = (acc[1] or "").strip().lower()
+        if hint in acc_name or normalized_hint in acc_name or acc_name in hint:
+            await state.update_data(account_id=acc_id)
+            return
 
 
 async def _handoff_to_transactions(
@@ -231,6 +304,7 @@ async def quick_autostart(m: Message, state: FSMContext, db):
                     quick_started_at=time.time(),
                 )
                 await _autopick_if_possible(db, m.from_user.id, state)
+                await _autopick_account(db, m.from_user.id, state)
                 await _handoff_to_transactions(m, state, db)
                 return
 
@@ -465,3 +539,108 @@ def _batch_confirm_kb(lang: str):
     kb.button(text=no, callback_data="qa:batch:cancel")
     kb.adjust(1)
     return kb.as_markup()
+
+
+# =========================================================
+# Voice Input Handler
+# =========================================================
+
+@router.message(F.voice)
+async def voice_quick_add(m: Message, state: FSMContext, db):
+    """Handle voice messages: transcribe via Whisper, parse via AI, prefill transaction."""
+    lang = await get_lang(db, m.from_user.id)
+
+    if not has_openai_key():
+        no_key_text = {
+            "ru": "⚠️ Голосовой ввод недоступен: не настроен OpenAI API ключ.",
+            "en": "⚠️ Voice input unavailable: OpenAI API key not configured.",
+            "kk": "⚠️ Дауыстық енгізу қолжетімсіз: OpenAI API кілті орнатылмаған.",
+        }
+        await m.answer(no_key_text.get(lang, no_key_text["ru"]))
+        return
+
+    # Show "recording" chat action while we work
+    try:
+        await m.bot.send_chat_action(m.chat.id, "upload_voice")
+    except Exception:
+        pass
+
+    # Download voice file to a temp location
+    tmp_path = None
+    try:
+        voice_file = await m.bot.get_file(m.voice.file_id)
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".ogg")
+        os.close(tmp_fd)
+        await m.bot.download_file(voice_file.file_path, tmp_path)
+
+        # Transcribe
+        text = await transcribe_audio_ai(tmp_path)
+    except Exception as exc:
+        from loguru import logger
+        logger.warning("Voice download/transcribe error: {}", exc)
+        text = ""
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    if not text:
+        fail_text = {
+            "ru": "😕 Не удалось распознать голосовое сообщение. Попробуйте ещё раз.",
+            "en": "😕 Could not recognize the voice message. Please try again.",
+            "kk": "😕 Дауыстық хабарламаны тану мүмкін болмады. Қайталап көріңіз.",
+        }
+        await m.answer(fail_text.get(lang, fail_text["ru"]))
+        return
+
+    # Show recognized text
+    preview_text = {
+        "ru": f'🗣️ Распознано: "<i>{text}</i>"',
+        "en": f'🗣️ Recognized: "<i>{text}</i>"',
+        "kk": f'🗣️ Танылды: "<i>{text}</i>"',
+    }
+    await m.answer(preview_text.get(lang, preview_text["ru"]), parse_mode="HTML")
+
+    # Parse via AI
+    try:
+        await m.bot.send_chat_action(m.chat.id, "typing")
+    except Exception:
+        pass
+
+    drafts = await parse_quick_add_ai(text)
+    if not drafts:
+        no_draft_text = {
+            "ru": "🤔 Не удалось распознать транзакцию. Попробуйте сказать, например:\n<i>\"Расход 2000 кофе Каспи Купил кофе\"</i>",
+            "en": '🤔 Could not parse a transaction. Try saying, e.g.:\n<i>"Expense 2000 coffee Kaspi Bought coffee"</i>',
+            "kk": '🤔 Транзакцияны тану мүмкін болмады. Мысалы, айтыңыз:\n<i>"Шығын 2000 кофе Каспи Кофе сатып алдым"</i>',
+        }
+        await m.answer(no_draft_text.get(lang, no_draft_text["ru"]), parse_mode="HTML")
+        return
+
+    # Multiple drafts -> batch confirm
+    if len(drafts) > 1:
+        await state.set_state(QuickAddFlow.batch_confirm)
+        await state.update_data(drafts=drafts, quick_started_at=time.time())
+        preview = await _render_batch_preview(drafts, lang)
+        kb = _batch_confirm_kb(lang)
+        sent = await m.answer(preview, reply_markup=kb, parse_mode="HTML")
+        await state.update_data(flow_message_id=sent.message_id)
+        return
+
+    # Single draft -> prefill and handoff
+    d = drafts[0]
+    await state.set_state(QuickAddFlow.draft)
+    await state.update_data(
+        amount=d["amount"],
+        note=d.get("note"),
+        kind=d.get("kind", "expense"),
+        category_hint=d.get("category_hint"),
+        account_hint=d.get("account_hint"),
+        date_offset=d.get("date_offset", 0),
+        quick_started_at=time.time(),
+    )
+    await _autopick_if_possible(db, m.from_user.id, state)
+    await _autopick_account(db, m.from_user.id, state)
+    await _handoff_to_transactions(m, state, db)

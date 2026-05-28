@@ -296,3 +296,31 @@ async def parse_quick_add_ai(text: str) -> list[dict[str, Any]]:
         return []
     except Exception:
         return []
+
+
+async def transcribe_audio_ai(file_path: str) -> str:
+    """Transcribe an audio file (ogg/opus) to text using OpenAI Whisper.
+
+    Runs the synchronous OpenAI call inside ``asyncio.to_thread`` so the
+    event loop is never blocked.
+
+    Returns the transcribed text or an empty string on failure.
+    """
+    if not has_openai_key():
+        return ""
+    try:
+        def _do_transcribe() -> str:
+            client = get_openai_client()
+            with open(file_path, "rb") as audio:
+                result = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio,
+                    language="ru",
+                )
+            return (result.text or "").strip()
+
+        return await asyncio.to_thread(_do_transcribe)
+    except Exception as exc:
+        logger.warning("Whisper transcription failed: {}", exc)
+        return ""
+

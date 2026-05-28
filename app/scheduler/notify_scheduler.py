@@ -592,10 +592,10 @@ async def tick_notify(bot):
                 tz, tz_norm = _safe_tz(str(tz_name or "UTC"))
 
                 local_now = now_utc.astimezone(tz)
-                
-                # Suppress all notifications during quiet hours (22:00 - 08:00 user local time)
-                if local_now.hour >= 22 or local_now.hour < 8:
-                    continue
+
+                # Quiet hours flag (22:00 - 08:00 user local time)
+                # Only suppress nudges/reminders, NOT scheduled daily reports
+                is_quiet = local_now.hour >= 22 or local_now.hour < 8
 
                 local_date = local_now.date().isoformat()
 
@@ -605,27 +605,29 @@ async def tick_notify(bot):
                 report_local = local_now.replace(hour=rep_h, minute=rep_m, second=0, microsecond=0)
                 pre_local = report_local - timedelta(hours=1)
 
-                await _send_recurring_reminders(
-                    bot, db, uid, str(currency or "KZT"), tz_norm, str(lang or "ru"), now_utc,
-                    int(inc_enabled or 1), int(inc_days or 0),
-                    int(exp_enabled or 1), int(exp_days or 1)
-                )
+                # --- Suppress recurring reminders, debt reminders, and nudges during quiet hours ---
+                if not is_quiet:
+                    await _send_recurring_reminders(
+                        bot, db, uid, str(currency or "KZT"), tz_norm, str(lang or "ru"), now_utc,
+                        int(inc_enabled or 1), int(inc_days or 0),
+                        int(exp_enabled or 1), int(exp_days or 1)
+                    )
 
-                if int(debts_enabled or 0) == 1:
-                    try:
-                        await _send_debt_reminders(
-                            bot, db, uid,
-                            str(currency or "KZT"),
-                            tz_norm,
-                            str(lang or "ru"),
-                            int(debts_days_before or 3),
-                            now_utc,
-                        )
-                    except Exception as e:
-                        logger.warning(f"debt reminders failed uid={uid}: {e}")
+                    if int(debts_enabled or 0) == 1:
+                        try:
+                            await _send_debt_reminders(
+                                bot, db, uid,
+                                str(currency or "KZT"),
+                                tz_norm,
+                                str(lang or "ru"),
+                                int(debts_days_before or 3),
+                                now_utc,
+                            )
+                        except Exception as e:
+                            logger.warning(f"debt reminders failed uid={uid}: {e}")
 
-                # ---------------- NUDGES ----------------
-                if int(nudge_enabled or 0) == 1:
+                # ---------------- NUDGES (suppressed during quiet hours) ----------------
+                if not is_quiet and int(nudge_enabled or 0) == 1:
                     interval = int(nudge_interval_min or 180)
                     nudge_end = report_local - timedelta(hours=1)
                     end_cap = local_now.replace(hour=22, minute=0, second=0, microsecond=0)
