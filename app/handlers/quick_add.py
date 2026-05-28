@@ -24,7 +24,8 @@ from app.db.repositories.categories_repo import (
     find_category_by_note_hint,
 )
 # ПУБЛИЧНЫЕ точки входа из transactions.py
-from app.handlers.common import cancel_to_main_menu, build_main_menu_markup, neutralize_keyboard
+from app.handlers.common import cancel_to_main_menu, build_main_menu_markup, neutralize_keyboard, deny_feature_message
+from app.domain.services.access_service import FEATURE_AI, can_use_feature
 from app.handlers.transactions import (
     start_prefilled_expense,
     start_prefilled_income,
@@ -548,6 +549,10 @@ def _batch_confirm_kb(lang: str):
 @router.message(F.voice)
 async def voice_quick_add(m: Message, state: FSMContext, db):
     """Handle voice messages: transcribe via Whisper, parse via AI, prefill transaction."""
+    if not await can_use_feature(db, m.from_user.id, FEATURE_AI):
+        await deny_feature_message(m, db, m.from_user.id)
+        return
+
     lang = await get_lang(db, m.from_user.id)
 
     if not has_openai_key():
