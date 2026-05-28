@@ -211,10 +211,12 @@ async def _open_hub(target: Message | CallbackQuery, state: FSMContext, db: aios
 
 async def deny_feature_message(ctx: Message | CallbackQuery, db: aiosqlite.Connection, user_id: int) -> None:
     lang = await get_lang(db, user_id)
-    from app.db.repositories.users_repo import is_promo_used
+    from app.db.repositories.users_repo import is_promo_used, is_eligible_for_trial_3d
     promo_used = await is_promo_used(db, user_id)
+    show_trial = await is_eligible_for_trial_3d(db, user_id)
+    
     text = _upgrade_message(lang, promo_used=promo_used)
-    markup = upgrade_info_kb(lang, promo_used=promo_used)
+    markup = upgrade_info_kb(lang, promo_used=promo_used, show_trial_btn=show_trial)
     
     if isinstance(ctx, CallbackQuery):
         await neutralize_keyboard(ctx)
@@ -595,14 +597,15 @@ async def upgrade_info_message(m: Message, state: FSMContext, db: aiosqlite.Conn
     await _ensure_minimized_menu(m, state, lang)
 
     from app.domain.services.access_service import get_user_context
-    from app.db.repositories.users_repo import is_promo_used
+    from app.db.repositories.users_repo import is_promo_used, is_eligible_for_trial_3d
     ctx = await get_user_context(db, m.from_user.id)
     promo_used = await is_promo_used(db, m.from_user.id)
+    show_trial = await is_eligible_for_trial_3d(db, m.from_user.id)
 
     sent = await m.answer(
         _upgrade_message(lang, has_full_access=ctx.full_access, promo_used=promo_used),
         parse_mode="HTML",
-        reply_markup=upgrade_info_kb(lang, promo_used=promo_used),
+        reply_markup=upgrade_info_kb(lang, promo_used=promo_used, show_trial_btn=show_trial),
     )
 
     await state.update_data(
@@ -624,14 +627,15 @@ async def upgrade_info_callback(c: CallbackQuery, state: FSMContext, db: aiosqli
     await _ensure_minimized_menu(c, state, lang)
 
     from app.domain.services.access_service import get_user_context
-    from app.db.repositories.users_repo import is_promo_used
+    from app.db.repositories.users_repo import is_promo_used, is_eligible_for_trial_3d
     ctx = await get_user_context(db, c.from_user.id)
     promo_used = await is_promo_used(db, c.from_user.id)
+    show_trial = await is_eligible_for_trial_3d(db, c.from_user.id)
 
     sent = await c.message.answer(
         _upgrade_message(lang, has_full_access=ctx.full_access, promo_used=promo_used),
         parse_mode="HTML",
-        reply_markup=upgrade_info_kb(lang, promo_used=promo_used),
+        reply_markup=upgrade_info_kb(lang, promo_used=promo_used, show_trial_btn=show_trial),
     )
 
     await state.update_data(
@@ -640,6 +644,72 @@ async def upgrade_info_callback(c: CallbackQuery, state: FSMContext, db: aiosqli
         lang=lang,
     )
 
+    await c.answer()
+
+
+@router.callback_query(F.data == "upgrade:trial_3d")
+async def upgrade_trial_3d(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    user_id = c.from_user.id
+    lang = await get_lang(db, user_id)
+
+    from app.domain.services.access_service import get_user_context
+    from app.db.repositories.users_repo import is_eligible_for_trial_3d, mark_trial_3d_claimed, grant_full_access
+    ctx = await get_user_context(db, user_id)
+    eligible = await is_eligible_for_trial_3d(db, user_id)
+
+    if ctx.full_access or not eligible:
+        msg = {
+            "ru": "⚠️ Вы не подходите под условия пробного периода или у вас уже активен Premium.",
+            "en": "⚠️ You do not qualify for the trial period or Premium is already active.",
+            "kk": "⚠️ Сіз сынақ мерзіміне сәйкес келмейсіз немесе сізде Premium белсенді."
+        }.get(lang, "⚠️ Вы не подходите под условия пробного периода или у вас уже активен Premium.")
+        await c.message.answer(msg)
+        await c.answer()
+        return
+
+    try:
+        await mark_trial_3d_claimed(db, user_id)
+        await grant_full_access(db, user_id, days=3)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        from loguru import logger
+        logger.exception("Failed to activate 3-day trial: {}", e)
+        error_msg = {
+            "ru": "⚠️ Ошибка при активации пробного периода. Попробуйте позже.",
+            "en": "⚠️ Error activating trial period. Please try again later.",
+            "kk": "⚠️ Сынақ мерзімін белсендіру қатесі. Кейінірек көріңіз."
+        }.get(lang, "⚠️ Ошибка при активации пробного периода. Попробуйте позже.")
+        await c.message.answer(error_msg)
+        await c.answer()
+        return
+
+    success_msg = {
+        "ru": (
+            "🎉 <b>Добро пожаловать в Premium!</b>\n\n"
+            "Вам бесплатно предоставлен пробный Premium-доступ на <b>3 дня</b>.\n"
+            "Попробуйте все функции: голосовой ввод, AI-консультант, переводы между счетами, лимиты и бюджеты!"
+        ),
+        "en": (
+            "🎉 <b>Welcome to Premium!</b>\n\n"
+            "You have been granted a free <b>3-day trial</b> of Premium.\n"
+            "Try all the features: voice input, AI consultant, transfers, limits and budgets!"
+        ),
+        "kk": (
+            "🎉 <b>Premium-ға қош келдіңіз!</b>\n\n"
+            "Сізге <b>3 күндік</b> тегін Premium сынақ мерзімі берілді.\n"
+            "Барлық мүмкіндіктерді байқап көріңіз: дауыстық енгізу, AI-кеңесші, аударымдар, лимиттер мен бюджеттер!"
+        )
+    }.get(lang, "🎉 <b>Добро пожаловать в Premium!</b>")
+
+    await state.clear()
+    await c.message.answer(success_msg, parse_mode="HTML")
+
+    from app.handlers.common import build_main_menu_markup
+    from app.domain.services.ai_consultant_service import build_main_menu_text
+    menu_text = await build_main_menu_text(db, user_id, lang)
+    await c.message.answer(menu_text, reply_markup=await build_main_menu_markup(db, user_id, lang), parse_mode="HTML")
     await c.answer()
 
 

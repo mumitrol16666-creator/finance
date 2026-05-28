@@ -172,3 +172,48 @@ async def mark_promo_used(db: aiosqlite.Connection, user_id: int) -> None:
     await db.execute("UPDATE users SET promo_used = 1 WHERE user_id = ?", (user_id,))
 
 
+async def is_eligible_for_trial_3d(db: aiosqlite.Connection, user_id: int) -> bool:
+    """
+    Проверяет, подходит ли пользователь под условия бесплатного 3-дневного триала:
+    1. Еще не активировал этот 3-дневный триал (trial_3d_claimed = 0).
+    2. Ни разу не имел премиум-доступа (full_access_until IS NULL).
+    3. Достиг серии активности >= 5 дней (current_streak >= 5 или max_streak >= 5).
+    """
+    cur = await db.execute(
+        """
+        SELECT 
+            COALESCE(trial_3d_claimed, 0) AS trial_claimed,
+            full_access_until,
+            COALESCE(current_streak, 0) AS cur_streak,
+            COALESCE(max_streak, 0) AS m_streak
+        FROM users 
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    row = await cur.fetchone()
+    if not row:
+        return False
+    
+    trial_claimed = int(row["trial_claimed"])
+    full_access_until = row["full_access_until"]
+    cur_streak = int(row["cur_streak"])
+    m_streak = int(row["m_streak"])
+    
+    if trial_claimed == 1:
+        return False
+    if full_access_until is not None:
+        return False
+    if cur_streak < 5 and m_streak < 5:
+        return False
+        
+    return True
+
+
+async def mark_trial_3d_claimed(db: aiosqlite.Connection, user_id: int) -> None:
+    """
+    Помечает бесплатный 3-дневный триал как активированный.
+    """
+    await db.execute("UPDATE users SET trial_3d_claimed = 1 WHERE user_id = ?", (user_id,))
+
+
