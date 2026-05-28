@@ -212,3 +212,182 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         BufferedInputFile(xlsx_bytes, filename="admin_global_stats.xlsx"),
         caption="📊 <b>Глобальная статистика пользователей и счетов</b>"
     )
+
+
+@router.message(Command("admin_user"))
+async def admin_user_info(m: Message, bot: Bot, db: aiosqlite.Connection):
+    """
+    Get detailed diagnostic information for a specific user ID.
+    """
+    if m.from_user.id not in settings.admin_ids:
+        return
+        
+    parts = m.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await m.reply("❌ Использование: <code>/admin_user &lt;user_id&gt;</code>", parse_mode="HTML")
+        return
+        
+    target_id = int(parts[1])
+    
+    cur = await db.execute("SELECT created_at FROM users WHERE user_id = ?", (target_id,))
+    row = await cur.fetchone()
+    if not row:
+        await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
+        return
+        
+    created_at = row[0]
+    
+    from app.domain.services.access_service import get_user_context, get_available_features
+    from app.db.repositories.settings_repo import get_lang
+    
+    ctx = await get_user_context(db, target_id)
+    lang = await get_lang(db, target_id)
+    features = await get_available_features(db, target_id)
+    
+    try:
+        chat = await bot.get_chat(target_id)
+        name = f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "—"
+        username = f"@{chat.username}" if chat.username else "—"
+    except Exception:
+        name = "—"
+        username = "—"
+        
+    days_left = "—"
+    if ctx.expiration_date:
+        from datetime import date as _date
+        try:
+            exp = _date.fromisoformat(ctx.expiration_date)
+            from app.domain.time_utils import today_in_user_tz
+            today = await today_in_user_tz(db, target_id)
+            days = (exp - today).days
+            days_left = f"{days} дней" if days >= 0 else "истёк"
+        except Exception:
+            pass
+            
+    info = (
+        f"👤 <b>Информация о пользователе {target_id}</b>\n\n"
+        f"• <b>Имя:</b> {name}\n"
+        f"• <b>Юзернейм:</b> {username}\n"
+        f"• <b>Регистрация:</b> <code>{created_at}</code>\n"
+        f"• <b>Язык:</b> <code>{lang.upper()}</code>\n"
+        f"• <b>Режим (mode):</b> <code>{ctx.mode}</code>\n"
+        f"• <b>Full Access:</b> <code>{ctx.full_access}</code>\n"
+        f"• <b>Истекает:</b> <code>{ctx.expiration_date or '—'}</code> ({days_left})\n"
+        f"• <b>Уровень прогресса:</b> <code>{ctx.progress_level}</code>\n"
+        f"• <b>Серия:</b> <code>{ctx.current_streak}</code> (макс. <code>{ctx.max_streak}</code>)\n"
+        f"• <b>Доступные функции:</b>\n"
+        f"<code>{', '.join(sorted(features))}</code>"
+    )
+    await m.reply(info, parse_mode="HTML")
+
+
+@router.message(Command("admin_grant"))
+async def admin_grant_access(m: Message, bot: Bot, db: aiosqlite.Connection):
+    """
+    Grant premium (full access) to a user for a specific number of days.
+    """
+    if m.from_user.id not in settings.admin_ids:
+        return
+        
+    parts = m.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await m.reply("❌ Использование: <code>/admin_grant &lt;user_id&gt; [кол-во_дней]</code>", parse_mode="HTML")
+        return
+        
+    target_id = int(parts[1])
+    days = 365
+    if len(parts) >= 3 and parts[2].isdigit():
+        days = int(parts[2])
+        
+    cur = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (target_id,))
+    row = await cur.fetchone()
+    if not row:
+        await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
+        return
+        
+    from app.db.repositories.users_repo import grant_full_access
+    from app.db.repositories.settings_repo import get_lang
+    from app.handlers.common import build_main_menu_markup
+    from datetime import datetime as _dt, timezone as _tz
+    
+    try:
+        await grant_full_access(db, target_id, days=days)
+        now_str = _dt.now(_tz.utc).isoformat()
+        await db.execute(
+            "UPDATE settings SET trial_reminder_sent = 0, updated_at = ? WHERE user_id = ?",
+            (now_str, target_id)
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        await m.reply(f"❌ Ошибка записи в базу данных: {e}")
+        return
+        
+    lang = await get_lang(db, target_id)
+    
+    await m.reply(f"✅ Успешно выдан Полный доступ (Premium) пользователю <code>{target_id}</code> на <b>{days}</b> дней.", parse_mode="HTML")
+    
+    user_msg = {
+        "ru": f"🎉 <b>Администратор активировал вам Полный режим на {days} дней!</b>\n\nТеперь вам доступны абсолютно все функции бота, включая AI-Консультанта, отчеты по категориям, учет долгов, лимиты и цели.",
+        "en": f"🎉 <b>The administrator has activated Full Mode for you for {days} days!</b>\n\nAll features of the bot are now available to you, including the AI Assistant, category reports, debts tracking, limits, and targets.",
+        "kk": f"🎉 <b>Әкімші сізге {days} күнге Толық режимді қосты!</b>\n\nЕнді сізге боттың барлық функциялары, соның ішінде AI-Кеңесші, санаттар бойынша есептер, қарыздарды есепке алу, лимиттер мен мақсаттар қолжетімді.",
+    }.get(lang, "ru")
+    
+    try:
+        markup = await build_main_menu_markup(db, target_id, lang)
+        await bot.send_message(target_id, user_msg, reply_markup=markup, parse_mode="HTML")
+    except Exception as e:
+        await m.reply(f"⚠️ Доступ выдан, но не удалось отправить сообщение пользователю: {e}")
+
+
+@router.message(Command("admin_revoke"))
+async def admin_revoke_access(m: Message, bot: Bot, db: aiosqlite.Connection):
+    """
+    Revoke premium (full access) from a user immediately.
+    """
+    if m.from_user.id not in settings.admin_ids:
+        return
+        
+    parts = m.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await m.reply("❌ Использование: <code>/admin_revoke &lt;user_id&gt;</code>", parse_mode="HTML")
+        return
+        
+    target_id = int(parts[1])
+    
+    cur = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (target_id,))
+    row = await cur.fetchone()
+    if not row:
+        await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
+        return
+        
+    from app.db.repositories.settings_repo import get_lang
+    from app.handlers.common import build_main_menu_markup
+    
+    try:
+        await db.execute(
+            "UPDATE users SET full_access = 0, mode = 'newbie' WHERE user_id = ?",
+            (target_id,)
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        await m.reply(f"❌ Ошибка записи в базу данных: {e}")
+        return
+        
+    lang = await get_lang(db, target_id)
+    
+    await m.reply(f"✅ Доступ (Premium) для пользователя <code>{target_id}</code> успешно аннулирован.", parse_mode="HTML")
+    
+    user_msg = {
+        "ru": "ℹ️ <b>Ваш Полный доступ был приостановлен или изменен администратором.</b>\n\nБот переведен в стандартный режим.",
+        "en": "ℹ️ <b>Your Full access has been suspended or modified by the administrator.</b>\n\nThe bot has been switched to standard mode.",
+        "kk": "ℹ️ <b>Сіздің Толық қолжетімділігіңіз әкімшімен тоқтатылды немесе өзгертілді.</b>\n\nБот стандартты режимге ауыстырылды.",
+    }.get(lang, "ru")
+    
+    try:
+        markup = await build_main_menu_markup(db, target_id, lang)
+        await bot.send_message(target_id, user_msg, reply_markup=markup, parse_mode="HTML")
+    except Exception as e:
+        await m.reply(f"⚠️ Доступ аннулирован, но не удалось отправить сообщение пользователю: {e}")
+
