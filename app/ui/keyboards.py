@@ -396,8 +396,16 @@ def reset_confirm_kb(lang: str = "ru"):
     kb.adjust(1, 1)
     return kb.as_markup()
 
-def upgrade_info_kb(lang: str, promo_used: bool = False) -> InlineKeyboardMarkup:
+def upgrade_info_kb(lang: str, promo_used: bool = False, show_trial_btn: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    if show_trial_btn:
+        trial_lbl = {
+            "ru": "🎁 Попробовать 3 дня бесплатно",
+            "en": "🎁 Try 3 days for free",
+            "kk": "🎁 3 күн тегін байқап көру"
+        }.get(lang, "🎁 Попробовать 3 дня бесплатно")
+        kb.button(text=trial_lbl, callback_data="upgrade:trial_3d")
+
     if not promo_used:
         lbl_1m = {
             "ru": "1 месяц (15 ⭐) — Скидка 80%!",
