@@ -391,3 +391,147 @@ async def admin_revoke_access(m: Message, bot: Bot, db: aiosqlite.Connection):
     except Exception as e:
         await m.reply(f"⚠️ Доступ аннулирован, но не удалось отправить сообщение пользователю: {e}")
 
+
+@router.message(Command("info"))
+async def admin_info_help(m: Message):
+    """
+    Cheat sheet for administrative commands.
+    """
+    if m.from_user.id not in settings.admin_ids:
+        return
+        
+    info_text = (
+        "🛠 <b>Панель администратора — Список команд</b>\n\n"
+        "Вы можете использовать следующие команды для управления пользователями:\n\n"
+        "📊 <b>Статистика и экспорт</b>\n"
+        "• <code>/admin_export</code> — Экспортировать глобальную статистику пользователей и их счетов в Excel-файл.\n"
+        "• <code>/admin_user &lt;user_id&gt;</code> — Получить подробную диагностическую информацию о пользователе.\n\n"
+        "👑 <b>Управление Premium (Полным доступом)</b>\n"
+        "• <code>/admin_grant &lt;user_id&gt; [кол-во_дней]</code> — Выдать пользователю Premium (Полный доступ) на указанное количество дней (по умолчанию 365).\n"
+        "• <code>/admin_revoke &lt;user_id&gt;</code> — Забрать Premium (Полный доступ) у пользователя и вернуть стандартный режим.\n\n"
+        "🔥 <b>Управление серией активности (Streak)</b>\n"
+        "• <code>/admin_streak &lt;user_id&gt; &lt;значение&gt;</code> — Установить текущую серию активности пользователя (в днях). Максимальная серия обновится автоматически, если новое значение больше старого.\n\n"
+        "🎁 <b>Начисление бесплатных AI-отчетов</b>\n"
+        "• <code>/admin_reports &lt;user_id&gt; &lt;количество&gt;</code> — Начислить пользователю дополнительные бесплатные AI-отчеты."
+    )
+    await m.reply(info_text, parse_mode="HTML")
+
+
+@router.message(Command("admin_streak"))
+async def admin_set_streak(m: Message, bot: Bot, db: aiosqlite.Connection):
+    """
+    Set user activity streak.
+    Usage: /admin_streak <user_id> <streak_value>
+    """
+    if m.from_user.id not in settings.admin_ids:
+        return
+
+    parts = m.text.split()
+    if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await m.reply("❌ Использование: <code>/admin_streak &lt;user_id&gt; &lt;значение&gt;</code>", parse_mode="HTML")
+        return
+
+    target_id = int(parts[1])
+    streak_value = int(parts[2])
+
+    cur = await db.execute("SELECT max_streak FROM users WHERE user_id = ?", (target_id,))
+    row = await cur.fetchone()
+    if not row:
+        await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
+        return
+
+    max_streak = int(row[0] or 0)
+    new_max = max(max_streak, streak_value)
+
+    from app.domain.time_utils import today_in_user_tz
+    try:
+        today = await today_in_user_tz(db, target_id)
+        today_str = today.isoformat()
+    except Exception:
+        from datetime import datetime as _dt, timezone as _tz
+        today_str = _dt.now(_tz.utc).date().isoformat()
+
+    try:
+        await db.execute(
+            "UPDATE users SET current_streak = ?, max_streak = ?, last_activity_date = ? WHERE user_id = ?",
+            (streak_value, new_max, today_str, target_id)
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        await m.reply(f"❌ Ошибка записи в базу данных: {e}")
+        return
+
+    await m.reply(
+        f"✅ Серия активности пользователя <code>{target_id}</code> успешно изменена на <b>{streak_value}</b> дней (макс. серия: <b>{new_max}</b>).",
+        parse_mode="HTML"
+    )
+
+    from app.db.repositories.settings_repo import get_lang
+    lang = await get_lang(db, target_id)
+
+    user_msg = {
+        "ru": f"🔥 <b>Администратор установил вашу серию активности: {streak_value} дн. подряд!</b>\n\nПродолжайте вести учёт каждый день, чтобы сохранить её!",
+        "en": f"🔥 <b>The administrator has set your activity streak to {streak_value} days!</b>\n\nKeep tracking your transactions daily to maintain it!",
+        "kk": f"🔥 <b>Әкімші сіздің белсенділік серияңызды {streak_value} күн етіп орнатты!</b>\n\nОны сақтап қалу үшін күнделікті шығындарды жазып тұрыңыз!",
+    }.get(lang, "ru")
+
+    try:
+        await bot.send_message(target_id, user_msg, parse_mode="HTML")
+    except Exception as e:
+        await m.reply(f"⚠️ Серия изменена, но не удалось отправить сообщение пользователю: {e}")
+
+
+@router.message(Command("admin_reports"))
+async def admin_grant_reports(m: Message, bot: Bot, db: aiosqlite.Connection):
+    """
+    Grant extra free AI reports/credits to a user.
+    Usage: /admin_reports <user_id> <count>
+    """
+    if m.from_user.id not in settings.admin_ids:
+        return
+
+    parts = m.text.split()
+    if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await m.reply("❌ Использование: <code>/admin_reports &lt;user_id&gt; &lt;количество&gt;</code>", parse_mode="HTML")
+        return
+
+    target_id = int(parts[1])
+    count = int(parts[2])
+
+    cur = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (target_id,))
+    row = await cur.fetchone()
+    if not row:
+        await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
+        return
+
+    from app.db.repositories.settings_repo import add_ai_reports_extra, get_lang
+    from datetime import datetime as _dt, timezone as _tz
+    now_str = _dt.now(_tz.utc).isoformat()
+
+    try:
+        await add_ai_reports_extra(db, target_id, count, now_str)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        await m.reply(f"❌ Ошибка записи в базу данных: {e}")
+        return
+
+    await m.reply(
+        f"✅ Пользователю <code>{target_id}</code> успешно начислено <b>{count}</b> бесплатных AI-отчетов.",
+        parse_mode="HTML"
+    )
+
+    lang = await get_lang(db, target_id)
+
+    user_msg = {
+        "ru": f"🎁 <b>Администратор начислил вам бесплатные AI-отчеты: +{count} шт.!</b>\n\nВы можете использовать их в разделе AI-Консультанта.",
+        "en": f"🎁 <b>The administrator has credited you with free AI reports: +{count}!</b>\n\nYou can use them in the AI Assistant section.",
+        "kk": f"🎁 <b>Әкімші сізге тегін AI-есептерді қосты: +{count} дана!</b>\n\nОларды AI-Кеңесші бөлімінде пайдалана аласыз.",
+    }.get(lang, "ru")
+
+    try:
+        await bot.send_message(target_id, user_msg, parse_mode="HTML")
+    except Exception as e:
+        await m.reply(f"⚠️ Отчеты начислены, но не удалось отправить сообщение пользователю: {e}")
+
