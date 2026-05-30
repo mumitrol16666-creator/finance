@@ -1839,6 +1839,12 @@ async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: st
     goal_text = await get_financial_goal(db, user_id)
     context = await build_ai_context(db, user_id, tz_name, "month", goal_text)
 
+    cur_exp = await db.execute("SELECT COUNT(*) FROM recurring_expenses WHERE user_id=? AND is_archived=0", (user_id,))
+    has_exp_templates = (await cur_exp.fetchone())[0] > 0
+
+    cur_inc = await db.execute("SELECT COUNT(*) FROM recurring_incomes WHERE user_id=? AND is_archived=0", (user_id,))
+    has_inc_templates = (await cur_inc.fetchone())[0] > 0
+
     recurring_snapshot = context.get("recurring_snapshot") or {}
     recurring_income_snapshot = context.get("recurring_income_snapshot") or {}
     planned_snapshot = context.get("planned_snapshot") or {}
@@ -1850,14 +1856,14 @@ async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: st
     currency = await _fetch_currency(db, user_id)
     body = ""
     if section == "recurring_expenses":
-        if not recurring_snapshot.get("count"):
+        if not has_exp_templates:
             body = _hint_text(lang, "no_recurring_expenses")
         elif recurring_snapshot.get("total"):
             body = _hint_text(lang, "recurring_expenses_due", count=int(recurring_snapshot.get("count") or 0), total=fmt_money(int(recurring_snapshot.get("total") or 0), currency))
         else:
             body = _hint_text(lang, "recurring_expenses_clear")
     elif section == "recurring_incomes":
-        if not recurring_income_snapshot.get("count"):
+        if not has_inc_templates:
             body = _hint_text(lang, "no_recurring_incomes")
         elif recurring_income_snapshot.get("total"):
             body = _hint_text(lang, "recurring_incomes_due", count=int(recurring_income_snapshot.get("count") or 0), total=fmt_money(int(recurring_income_snapshot.get("total") or 0), currency))
@@ -1888,7 +1894,7 @@ async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: st
             body = _hint_text(lang, "reports_warn", count=int(budget_snapshot.get("warn_count") or 0))
         elif projected_free_cash < max(15000, int((context.get("projected_month_expense") or 0) * 0.1)) and int((context.get("month") or {}).get("expense") or 0) > 0:
             body = _hint_text(lang, "reports_thin", amount=fmt_money(projected_free_cash, currency))
-        elif not (recurring_snapshot.get("count") or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
+        elif not (has_exp_templates or has_inc_templates or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
             body = _hint_text(lang, "reports_empty_suggest")
         else:
             body = _hint_text(lang, "reports_ok")
@@ -1902,7 +1908,7 @@ async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: st
             body = _hint_text(lang, "main_limits", count=int(budget_snapshot.get("over_count") or 0))
         elif due_total > 0:
             body = _hint_text(lang, "main_due", amount=fmt_money(due_total, currency))
-        elif not (recurring_snapshot.get("count") or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
+        elif not (has_exp_templates or has_inc_templates or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
             body = _hint_text(lang, "main_empty_suggest")
         else:
             body = _hint_text(lang, "main_ok")
