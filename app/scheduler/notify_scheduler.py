@@ -660,21 +660,49 @@ async def tick_notify(bot):
 
                     if should_send:
                         income, expense, cnt_today = await report_period(db, uid, start_utc, end_utc)
-                        nudge_body = _build_nudge_text(uid, local_now, cnt_today)
                         cur = str(currency or "KZT")
                         lng = str(lang or "ru")
-                        if int(local_now.hour) >= 11:
-                          snap = _today_snapshot_prefix(
-                              lng,
-                              cnt=cnt_today,
-                              income=income,
-                              expense_raw=expense,
-                              currency=cur,
-                          )
-                          nudge_text = snap + nudge_body
-                          await _send_safe(bot, uid, nudge_text, parse_mode="HTML", reply_markup=promo_kb)
+
+                        user_today = local_now.date()
+                        cur_month = f"{user_today.year:04d}-{user_today.month:02d}"
+
+                        # Check if category limits (budgets) are already set for this month
+                        cur_limits = await db.execute("SELECT COUNT(*) FROM budgets WHERE user_id=? AND month=?", (uid, cur_month))
+                        limits_count = (await cur_limits.fetchone())[0]
+
+                        # 33% chance to suggest setting limits if none exist yet
+                        send_limits_hint = (limits_count == 0) and ((uid + local_now.day + local_now.hour) % 3 == 0)
+
+                        if send_limits_hint:
+                            kb = InlineKeyboardBuilder()
+                            btn_txt = {
+                                "ru": "📌 Установить лимиты",
+                                "en": "📌 Set category limits",
+                                "kk": "📌 Лимиттерді орнату"
+                            }.get(lng, "📌 Установить лимиты")
+                            kb.button(text=btn_txt, callback_data="st:catlim:limits")
+
+                            nudge_text = {
+                                "ru": "🎯 Не хочешь задать лимиты на категории? Это займет всего 1-2 минуты, статистика станет чище, а расходы визуально понятнее!",
+                                "en": "🎯 Want to set category limits? It only takes 1-2 minutes, your statistics will be cleaner, and spending visually clearer!",
+                                "kk": "🎯 Санаттарға лимиттер қойғыңыз келе ме? Бұл 1-2 минут алады, статистика тазарады және шығыстар көрнекі түрде түсінікті болады!"
+                            }.get(lng, "🎯 Не хочешь задать лимиты на категории? Это займет всего 1-2 минуты, статистика станет чище, а расходы визуально понятнее!")
+
+                            await _send_safe(bot, uid, nudge_text, parse_mode="HTML", reply_markup=kb.as_markup())
                         else:
-                          await _send_safe(bot, uid, nudge_body, parse_mode="HTML", reply_markup=promo_kb)
+                            nudge_body = _build_nudge_text(uid, local_now, cnt_today)
+                            if int(local_now.hour) >= 11:
+                                snap = _today_snapshot_prefix(
+                                    lng,
+                                    cnt=cnt_today,
+                                    income=income,
+                                    expense_raw=expense,
+                                    currency=cur,
+                                )
+                                nudge_text = snap + nudge_body
+                                await _send_safe(bot, uid, nudge_text, parse_mode="HTML", reply_markup=promo_kb)
+                            else:
+                                await _send_safe(bot, uid, nudge_body, parse_mode="HTML", reply_markup=promo_kb)
 
                         await mark_nudge_sent(db, uid, _iso(now_utc))
 
