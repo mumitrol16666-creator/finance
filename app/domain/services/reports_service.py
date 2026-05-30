@@ -68,14 +68,20 @@ async def report_period(db: aiosqlite.Connection, user_id: int, start: datetime,
         "SELECT "
         "SUM(CASE WHEN type='income' THEN amount ELSE 0 END) as income, "
         "SUM(CASE WHEN type='expense' THEN -amount ELSE 0 END) as expense, "
-        "COUNT(*) as cnt "
+        "SUM(CASE WHEN type='income' THEN 1 ELSE 0 END) as cnt_income, "
+        "SUM(CASE WHEN type='expense' THEN 1 ELSE 0 END) as cnt_expense, "
+        "SUM(CASE WHEN type='transfer' AND amount < 0 THEN 1 ELSE 0 END) as cnt_transfer "
         "FROM transactions WHERE user_id=? AND ts>=? AND ts<? AND deleted_at IS NULL",
         (user_id, iso(start), iso(end)),
     )
     row = await cur.fetchone()
     income = int(row[0] or 0)
     expense = int(row[1] or 0)
-    cnt = int(row[2] or 0)
+    cnt_income = int(row[2] or 0)
+    cnt_expense = int(row[3] or 0)
+    cnt_transfer = int(row[4] or 0)
+    
+    cnt = cnt_income + cnt_expense + cnt_transfer
     return income, expense, cnt
 
 

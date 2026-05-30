@@ -28,6 +28,7 @@ from app.domain.services.reports_service import (
     report_period,
     week_bounds_utc,
     build_smart_suggestion,
+    iso,
 )
 from app.handlers.common import deny_feature_message, cancel_to_main_menu, build_main_menu_markup, _cleanup_ui, _ensure_minimized_menu, neutralize_keyboard
 from app.ui.formatters import fmt_money
@@ -856,7 +857,13 @@ async def _render_report(
     streak_cur, streak_best, _ = await get_streak(db, user_id)
 
     net = inc - exp
-    avg_exp = int(exp / cnt) if cnt > 0 and exp > 0 else 0
+    
+    cur_exp_cnt = await db.execute(
+        "SELECT COUNT(*) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<? AND deleted_at IS NULL",
+        (user_id, iso(start), iso(end))
+    )
+    cnt_expense = (await cur_exp_cnt.fetchone())[0] or 0
+    avg_exp = int(exp / cnt_expense) if cnt_expense > 0 and exp > 0 else 0
     d_inc = inc - p_inc
     d_exp = exp - p_exp
 

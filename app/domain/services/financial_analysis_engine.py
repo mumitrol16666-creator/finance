@@ -10,26 +10,59 @@ async def calculate_burn_rate(db: aiosqlite.Connection, user_id: int, tz_name: s
     """Calculate daily, weekly, monthly burn rates and trend compared to the previous period."""
     now_utc = datetime.now(timezone.utc)
     tz = _safe_tz(tz_name)
-    local_now = now_utc.astimezone(tz)
     
     start_cur = now_utc - timedelta(days=days)
     start_prev = now_utc - timedelta(days=days * 2)
     
+    from app.domain.money import get_user_currency, get_scale
+    base_currency = await get_user_currency(db, user_id)
+    base_scale = get_scale(base_currency)
+
     # Fetch expenses for current period
     cur = await db.execute(
-        "SELECT SUM(-amount) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<? AND deleted_at IS NULL",
+        "SELECT t.amount, a.currency FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id=? AND t.type='expense' AND t.ts>=? AND t.ts<? AND t.deleted_at IS NULL",
         (user_id, start_cur.isoformat(), now_utc.isoformat())
     )
-    row = await cur.fetchone()
-    cur_total = int(row[0] or 0)
+    rows_cur = await cur.fetchall()
+    cur_total = 0
+    for amount_neg, acc_currency in rows_cur:
+        amount = -amount_neg
+        if (acc_currency or base_currency).upper() == base_currency:
+            cur_total += amount
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted = int(round((amount / max(1, acc_scale)) * rate * base_scale))
+                cur_total += converted
+            except Exception:
+                cur_total += amount
     
     # Fetch expenses for previous period
     cur = await db.execute(
-        "SELECT SUM(-amount) FROM transactions WHERE user_id=? AND type='expense' AND ts>=? AND ts<? AND deleted_at IS NULL",
+        "SELECT t.amount, a.currency FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id=? AND t.type='expense' AND t.ts>=? AND t.ts<? AND t.deleted_at IS NULL",
         (user_id, start_prev.isoformat(), start_cur.isoformat())
     )
-    row = await cur.fetchone()
-    prev_total = int(row[0] or 0)
+    rows_prev = await cur.fetchall()
+    prev_total = 0
+    for amount_neg, acc_currency in rows_prev:
+        amount = -amount_neg
+        if (acc_currency or base_currency).upper() == base_currency:
+            prev_total += amount
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted = int(round((amount / max(1, acc_scale)) * rate * base_scale))
+                prev_total += converted
+            except Exception:
+                prev_total += amount
     
     daily_burn = cur_total / max(1, days)
     weekly_burn = daily_burn * 7
@@ -54,20 +87,40 @@ async def calculate_savings_rate(db: aiosqlite.Connection, user_id: int, days: i
     now_utc = datetime.now(timezone.utc)
     start_dt = now_utc - timedelta(days=days)
     
+    from app.domain.money import get_user_currency, get_scale
+    base_currency = await get_user_currency(db, user_id)
+    base_scale = get_scale(base_currency)
+
     cur = await db.execute(
-        """
-        SELECT 
-            SUM(CASE WHEN type='income' THEN amount ELSE 0 END),
-            SUM(CASE WHEN type='expense' THEN -amount ELSE 0 END)
-        FROM transactions 
-        WHERE user_id=? AND ts>=? AND ts<? AND deleted_at IS NULL
-        """,
+        "SELECT t.type, t.amount, a.currency FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id=? AND t.ts>=? AND t.ts<? AND t.deleted_at IS NULL",
         (user_id, start_dt.isoformat(), now_utc.isoformat())
     )
-    row = await cur.fetchone()
-    income = int(row[0] or 0)
-    expense = int(row[1] or 0)
-    
+    rows = await cur.fetchall()
+    income = 0
+    expense = 0
+    for ttype, amount, acc_currency in rows:
+        if ttype not in ("income", "expense"):
+            continue
+        
+        # Convert to base currency
+        if (acc_currency or base_currency).upper() == base_currency:
+            converted = amount
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted = int(round((amount / max(1, acc_scale)) * rate * base_scale))
+            except Exception:
+                converted = amount
+
+        if ttype == "income":
+            income += converted
+        elif ttype == "expense":
+            expense += -converted
+            
     saved = income - expense
     savings_rate = 0.0
     if income > 0:
@@ -87,22 +140,45 @@ async def calculate_debt_stress_index(db: aiosqlite.Connection, user_id: int) ->
     now_utc = datetime.now(timezone.utc)
     start_dt = now_utc - timedelta(days=90)
     
+    from app.domain.money import get_user_currency, get_scale
+    base_currency = await get_user_currency(db, user_id)
+    base_scale = get_scale(base_currency)
+
     cur = await db.execute(
-        "SELECT SUM(amount) FROM transactions WHERE user_id=? AND type='income' AND ts>=? AND ts<? AND deleted_at IS NULL",
+        "SELECT t.amount, a.currency FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id=? AND t.type='income' AND t.ts>=? AND t.ts<? AND t.deleted_at IS NULL",
         (user_id, start_dt.isoformat(), now_utc.isoformat())
     )
-    row = await cur.fetchone()
-    income_90 = int(row[0] or 0)
+    rows = await cur.fetchall()
+    income_90 = 0
+    for amount, acc_currency in rows:
+        if (acc_currency or base_currency).upper() == base_currency:
+            income_90 += amount
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted = int(round((amount / max(1, acc_scale)) * rate * base_scale))
+                income_90 += converted
+            except Exception:
+                income_90 += amount
+                
     monthly_income = (income_90 / 3) if income_90 > 0 else 0
     
     # Active debts monthly payments
     cur = await db.execute(
-        "SELECT SUM(payment_amount), SUM(remaining_amount) FROM debts WHERE user_id=? AND is_active=1",
+        "SELECT payment_amount, remaining_amount FROM debts WHERE user_id=? AND is_active=1",
         (user_id,)
     )
-    row = await cur.fetchone()
-    monthly_debt_payments = int(row[0] or 0)
-    total_remaining_debt = int(row[1] or 0)
+    rows_debts = await cur.fetchall()
+    monthly_debt_payments = 0
+    total_remaining_debt = 0
+    for pay_amt, rem_amt in rows_debts:
+        # Note: debts table does not have currency column, so it is assumed to be in base currency.
+        monthly_debt_payments += int(pay_amt or 0)
+        total_remaining_debt += int(rem_amt or 0)
     
     stress_index = 0.0
     if monthly_income > 0:
@@ -128,8 +204,14 @@ async def calculate_cashflow_stability(db: aiosqlite.Connection, user_id: int) -
     now_utc = datetime.now(timezone.utc)
     start_dt = now_utc - timedelta(days=90)
     
+    from app.domain.money import get_user_currency, get_scale
+    base_currency = await get_user_currency(db, user_id)
+    base_scale = get_scale(base_currency)
+
     cur = await db.execute(
-        "SELECT ts, amount FROM transactions WHERE user_id=? AND type='income' AND ts>=? AND ts<? AND deleted_at IS NULL",
+        "SELECT t.ts, t.amount, a.currency FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id=? AND t.type='income' AND t.ts>=? AND t.ts<? AND t.deleted_at IS NULL",
         (user_id, start_dt.isoformat(), now_utc.isoformat())
     )
     rows = await cur.fetchall()
@@ -140,9 +222,24 @@ async def calculate_cashflow_stability(db: aiosqlite.Connection, user_id: int) -
     # Group by week index (0 to 12)
     weekly_incomes = [0] * 13
     for row in rows:
-        ts = datetime.fromisoformat(row[0].replace("Z", "+00:00"))
+        ts_str, amount, acc_currency = row
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
         week_idx = min(12, int((now_utc - ts).days // 7))
-        weekly_incomes[week_idx] += int(row[1] or 0)
+        
+        amount_raw = int(amount or 0)
+        # Convert to base currency
+        if (acc_currency or base_currency).upper() == base_currency:
+            converted = amount_raw
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted = int(round((amount_raw / max(1, acc_scale)) * rate * base_scale))
+            except Exception:
+                converted = amount_raw
+
+        weekly_incomes[week_idx] += converted
         
     mean_income = mean(weekly_incomes)
     if mean_income <= 0:
@@ -174,12 +271,17 @@ async def calculate_impulse_spending_score(db: aiosqlite.Connection, user_id: in
     start_dt = now_utc - timedelta(days=30)
     tz = _safe_tz(tz_name)
     
+    from app.domain.money import get_user_currency, get_scale
+    base_currency = await get_user_currency(db, user_id)
+    base_scale = get_scale(base_currency)
+    
     # Fetch all expenses in the last 30 days
     cur = await db.execute(
         """
-        SELECT t.ts, t.amount, COALESCE(c.name, '') as cat_name
+        SELECT t.ts, t.amount, COALESCE(c.name, '') as cat_name, a.currency
         FROM transactions t
         LEFT JOIN categories c ON c.id = t.category_id
+        JOIN accounts a ON a.id = t.account_id
         WHERE t.user_id=? AND t.type='expense' AND t.ts>=? AND t.ts<? AND t.deleted_at IS NULL
         """,
         (user_id, start_dt.isoformat(), now_utc.isoformat())
@@ -199,13 +301,26 @@ async def calculate_impulse_spending_score(db: aiosqlite.Connection, user_id: in
     
     for row in rows:
         ts_str = row[0]
-        amount = int(-row[1])
+        amount_neg = row[1]
         cat = str(row[2]).lower()
+        acc_currency = row[3]
         
         try:
             dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).astimezone(tz)
         except Exception:
             dt = datetime.now(tz)
+            
+        amount_raw = -amount_neg
+        if (acc_currency or base_currency).upper() == base_currency:
+            amount = amount_raw
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                amount = int(round((amount_raw / max(1, acc_scale)) * rate * base_scale))
+            except Exception:
+                amount = amount_raw
             
         total_spend += amount
         
@@ -245,21 +360,55 @@ async def calculate_subscription_load(db: aiosqlite.Connection, user_id: int) ->
     now_utc = datetime.now(timezone.utc)
     start_dt = now_utc - timedelta(days=90)
     
+    from app.domain.money import get_user_currency, get_scale
+    base_currency = await get_user_currency(db, user_id)
+    base_scale = get_scale(base_currency)
+
+    # Convert monthly income from transactions
     cur = await db.execute(
-        "SELECT SUM(amount) FROM transactions WHERE user_id=? AND type='income' AND ts>=? AND ts<? AND deleted_at IS NULL",
+        "SELECT t.amount, a.currency FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id=? AND t.type='income' AND t.ts>=? AND t.ts<? AND t.deleted_at IS NULL",
         (user_id, start_dt.isoformat(), now_utc.isoformat())
     )
-    row = await cur.fetchone()
-    income_90 = int(row[0] or 0)
+    rows_inc = await cur.fetchall()
+    income_90 = 0
+    for amount, acc_currency in rows_inc:
+        if (acc_currency or base_currency).upper() == base_currency:
+            income_90 += amount
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted = int(round((amount / max(1, acc_scale)) * rate * base_scale))
+                income_90 += converted
+            except Exception:
+                income_90 += amount
+
     monthly_income = (income_90 / 3) if income_90 > 0 else 0
     
-    # Active recurring expenses (monthly sum)
+    # Active recurring expenses (monthly sum) converted to base currency
     cur = await db.execute(
-        "SELECT SUM(amount) FROM recurring_expenses WHERE user_id=? AND is_archived=0",
+        "SELECT r.amount, a.currency FROM recurring_expenses r "
+        "JOIN accounts a ON a.id = r.account_id "
+        "WHERE r.user_id=? AND r.is_archived=0",
         (user_id,)
     )
-    row = await cur.fetchone()
-    recurring_expenses_sum = int(row[0] or 0)
+    rows_rec = await cur.fetchall()
+    recurring_expenses_sum = 0
+    for amount, acc_currency in rows_rec:
+        if (acc_currency or base_currency).upper() == base_currency:
+            recurring_expenses_sum += amount
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted = int(round((amount / max(1, acc_scale)) * rate * base_scale))
+                recurring_expenses_sum += converted
+            except Exception:
+                recurring_expenses_sum += amount
     
     load_pct = 0.0
     if monthly_income > 0:
@@ -288,35 +437,43 @@ async def calculate_clean_daily_burn_rate(
     now_utc = datetime.now(timezone.utc)
     start_dt = now_utc - timedelta(days=days)
 
-    # Routine-only expenses (tier='routine')
-    cur = await db.execute(
-        "SELECT SUM(-amount) FROM transactions "
-        "WHERE user_id=? AND type='expense' AND tier='routine' "
-        "AND ts>=? AND ts<? AND deleted_at IS NULL",
-        (user_id, start_dt.isoformat(), now_utc.isoformat()),
-    )
-    row = await cur.fetchone()
-    routine_total = int(row[0] or 0)
+    from app.domain.money import get_user_currency, get_scale
+    base_currency = await get_user_currency(db, user_id)
+    base_scale = get_scale(base_currency)
 
-    # Total expenses (all tiers) for comparison
+    # Fetch all expenses with currency and tier
     cur = await db.execute(
-        "SELECT SUM(-amount) FROM transactions "
-        "WHERE user_id=? AND type='expense' "
-        "AND ts>=? AND ts<? AND deleted_at IS NULL",
-        (user_id, start_dt.isoformat(), now_utc.isoformat()),
+        "SELECT t.amount, t.tier, a.currency FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id=? AND t.type='expense' AND t.ts>=? AND t.ts<? AND t.deleted_at IS NULL",
+        (user_id, start_dt.isoformat(), now_utc.isoformat())
     )
-    row = await cur.fetchone()
-    all_total = int(row[0] or 0)
+    rows = await cur.fetchall()
 
-    # Obligation-only expenses
-    cur = await db.execute(
-        "SELECT SUM(-amount) FROM transactions "
-        "WHERE user_id=? AND type='expense' AND tier='obligation' "
-        "AND ts>=? AND ts<? AND deleted_at IS NULL",
-        (user_id, start_dt.isoformat(), now_utc.isoformat()),
-    )
-    row = await cur.fetchone()
-    obligation_total = int(row[0] or 0)
+    routine_total = 0
+    obligation_total = 0
+    all_total = 0
+
+    for amount_neg, tier, acc_currency in rows:
+        amount = -amount_neg
+        
+        # Convert to base currency
+        if (acc_currency or base_currency).upper() == base_currency:
+            converted = amount
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted = int(round((amount / max(1, acc_scale)) * rate * base_scale))
+            except Exception:
+                converted = amount
+
+        all_total += converted
+        if tier == 'routine':
+            routine_total += converted
+        elif tier == 'obligation':
+            obligation_total += converted
 
     cdbr = routine_total / max(1, days)
     legacy_daily = all_total / max(1, days)
@@ -529,21 +686,42 @@ async def get_robust_category_anomalies(
 
     Returns a list of detected anomalies.
     """
+    from app.domain.money import get_user_currency, get_scale
+    base_currency = await get_user_currency(db, user_id)
+    base_scale = get_scale(base_currency)
+
     cur = await db.execute(
-        "SELECT id, amount, note, ts, tier FROM transactions "
-        "WHERE user_id=? AND category_id=? AND type='expense' AND deleted_at IS NULL "
-        "ORDER BY ts DESC, id DESC LIMIT ?",
+        "SELECT t.id, t.amount, t.note, t.ts, t.tier, a.currency FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id=? AND t.category_id=? AND t.type='expense' AND t.deleted_at IS NULL "
+        "ORDER BY t.ts DESC, t.id DESC LIMIT ?",
         (user_id, category_id, limit),
     )
     rows = await cur.fetchall()
     if not rows or len(rows) < 3:
         return []
 
-    # Amounts are stored as negative numbers for expenses. Convert to positive.
-    vals = [-r[1] for r in rows]
+    # Convert amounts in base currency
+    converted_vals = []
+    for row in rows:
+        tx_id, amount, note, ts, tier, acc_currency = row
+        val = -amount
+        
+        # Convert to base currency
+        if (acc_currency or base_currency).upper() == base_currency:
+            converted_val = val
+        else:
+            try:
+                from app.services.currency import get_exchange_rate
+                rate = await get_exchange_rate(acc_currency, base_currency)
+                acc_scale = get_scale(acc_currency)
+                converted_val = int(round((val / max(1, acc_scale)) * rate * base_scale))
+            except Exception:
+                converted_val = val
+        converted_vals.append(converted_val)
 
     # Calculate median
-    sorted_vals = sorted(vals)
+    sorted_vals = sorted(converted_vals)
     n = len(sorted_vals)
     if n % 2 == 1:
         median_val = sorted_vals[n // 2]
@@ -551,7 +729,7 @@ async def get_robust_category_anomalies(
         median_val = (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2.0
 
     # Calculate Median Absolute Deviation (MAD)
-    devs = [abs(v - median_val) for v in vals]
+    devs = [abs(v - median_val) for v in converted_vals]
     sorted_devs = sorted(devs)
     if n % 2 == 1:
         median_dev = sorted_devs[n // 2]
@@ -559,9 +737,9 @@ async def get_robust_category_anomalies(
         median_dev = (sorted_devs[n // 2 - 1] + sorted_devs[n // 2]) / 2.0
 
     anomalies = []
-    for row in rows:
-        tx_id, amount, note, ts, tier = row
-        val = -amount
+    for idx, row in enumerate(rows):
+        tx_id, amount, note, ts, tier, acc_currency = row
+        val = converted_vals[idx]
         if val <= 0:
             continue
 
@@ -583,5 +761,3 @@ async def get_robust_category_anomalies(
             })
 
     return anomalies
-
-
