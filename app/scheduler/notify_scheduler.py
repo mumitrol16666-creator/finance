@@ -15,6 +15,7 @@ from app.db.repositories.settings_repo import (
     mark_daily_sent,
     mark_daily_pre_sent,
     mark_nudge_sent,
+    mark_limits_nudge_sent,
 )
 from app.db.repositories.users_repo import get_streak
 from app.domain.services.reports_service import report_period, report_by_category, build_smart_suggestion
@@ -667,28 +668,66 @@ async def tick_notify(bot):
                         cur_month = f"{user_today.year:04d}-{user_today.month:02d}"
 
                         # Check if category limits (budgets) are already set for this month
-                        cur_limits = await db.execute("SELECT COUNT(*) FROM budgets WHERE user_id=? AND month=?", (uid, cur_month))
-                        limits_count = (await cur_limits.fetchone())[0]
+                        cur_settings = await db.execute("SELECT limits_nudge_last_sent_date FROM settings WHERE user_id=?", (uid,))
+                        row_settings = await cur_settings.fetchone()
+                        limits_nudge_last_sent_date = row_settings[0] if row_settings else None
 
-                        # 33% chance to suggest setting limits if none exist yet
-                        send_limits_hint = (limits_count == 0) and ((uid + local_now.day + local_now.hour) % 3 == 0)
+                        from app.db.repositories.categories_repo import list_categories
+                        from app.db.repositories.budgets_repo import month_budgets_map
+
+                        cats = await list_categories(db, uid, "expense")
+                        budgets = await month_budgets_map(db, uid, cur_month)
+
+                        active_budget_cat_ids = [c[0] for c in cats if c[0] in budgets]
+                        set_cat_names = [f"{c[2]} {c[1]}" if c[2] else c[1] for c in cats if c[0] in budgets]
+
+                        send_limits_hint = False
+                        if limits_nudge_last_sent_date != local_date and len(cats) > 0 and len(active_budget_cat_ids) < len(cats):
+                            if (uid + local_now.day + local_now.hour) % 3 == 0:
+                                send_limits_hint = True
 
                         if send_limits_hint:
                             kb = InlineKeyboardBuilder()
-                            btn_txt = {
-                                "ru": "📌 Установить лимиты",
-                                "en": "📌 Set category limits",
-                                "kk": "📌 Лимиттерді орнату"
-                            }.get(lng, "📌 Установить лимиты")
-                            kb.button(text=btn_txt, callback_data="st:catlim:limits")
+                            if len(active_budget_cat_ids) == 0:
+                                # Scenario A: 0 limits set
+                                nudge_text = {
+                                    "ru": "🎯 Не хочешь задать лимиты на категории? Это займет всего 1-2 минуты, статистика станет чище, а расходы визуально понятнее!",
+                                    "en": "🎯 Want to set category limits? It only takes 1-2 minutes, your statistics will be cleaner, and spending visually clearer!",
+                                    "kk": "🎯 Санаттарға лимиттер қойғыңыз келе ме? Бұл 1-2 минут алады, статистика тазарады және шығыстар көрнекі түрде түсінікті болады!"
+                                }.get(lng, "🎯 Не хочешь задать лимиты на категории? Это займет всего 1-2 минуты, статистика станет чище, а расходы визуально понятнее!")
 
-                            nudge_text = {
-                                "ru": "🎯 Не хочешь задать лимиты на категории? Это займет всего 1-2 минуты, статистика станет чище, а расходы визуально понятнее!",
-                                "en": "🎯 Want to set category limits? It only takes 1-2 minutes, your statistics will be cleaner, and spending visually clearer!",
-                                "kk": "🎯 Санаттарға лимиттер қойғыңыз келе ме? Бұл 1-2 минут алады, статистика тазарады және шығыстар көрнекі түрде түсінікті болады!"
-                            }.get(lng, "🎯 Не хочешь задать лимиты на категории? Это займет всего 1-2 минуты, статистика станет чище, а расходы визуально понятнее!")
+                                btn_set_txt = {
+                                    "ru": "📌 Установить лимиты",
+                                    "en": "📌 Set limits",
+                                    "kk": "📌 Лимиттерді орнату"
+                                }.get(lng, "📌 Установить лимиты")
+                            else:
+                                # Scenario B: some limits set, but not all
+                                set_categories_str = ", ".join(set_cat_names)
+                                nudge_text = {
+                                    "ru": f"📊 У вас уже установлены лимиты на категории: <b>{set_categories_str}</b>.\n\nНе хотите установить лимиты на остальные категории, чтобы лучше контролировать бюджет?",
+                                    "en": f"📊 You have already set limits for: <b>{set_categories_str}</b>.\n\nWould you like to set limits for the remaining categories to better control your budget?",
+                                    "kk": f"📊 Сізде келесі санаттарға лимиттер орнатылған: <b>{set_categories_str}</b>.\n\nБюджетті жақсырақ бақылау үшін қалған санаттарға да лимиттер қойғыңыз келе ме?"
+                                }.get(lng, f"📊 У вас уже установлены лимиты на категории: <b>{set_categories_str}</b>.\n\nНе хотите установить лимиты на остальные категории, чтобы лучше контролировать бюджет?")
+
+                                btn_set_txt = {
+                                    "ru": "📌 Установить еще",
+                                    "en": "📌 Set more",
+                                    "kk": "📌 Тағы орнату"
+                                }.get(lng, "📌 Установить еще")
+
+                            btn_enough_txt = {
+                                "ru": "👌 Мне хватает",
+                                "en": "👌 I'm good",
+                                "kk": "👌 Маған жетеді"
+                            }.get(lng, "👌 Мне хватает")
+
+                            kb.button(text=btn_set_txt, callback_data="st:catlim:limits")
+                            kb.button(text=btn_enough_txt, callback_data="nudge:limits:enough")
+                            kb.adjust(2)
 
                             await _send_safe(bot, uid, nudge_text, parse_mode="HTML", reply_markup=kb.as_markup())
+                            await mark_limits_nudge_sent(db, uid, local_date, _iso(now_utc))
                         else:
                             nudge_body = _build_nudge_text(uid, local_now, cnt_today)
                             if int(local_now.hour) >= 11:
