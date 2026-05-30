@@ -4,7 +4,7 @@ from app.ui.i18n import t, t_category
 
 
 def newbie_menu(lang: str = "ru", days_left: int | None = None) -> ReplyKeyboardMarkup:
-    return main_menu(lang, show_reports=False, show_planning=False, show_settings=True, show_upgrade=True, days_left=days_left)
+    return main_menu(lang, show_reports=True, show_planning=False, show_settings=True, show_upgrade=True, days_left=days_left)
 
 
 def newbie_menu_level2(lang: str = "ru", days_left: int | None = None) -> ReplyKeyboardMarkup:
