@@ -79,6 +79,12 @@ async def mark_nudge_sent(db: aiosqlite.Connection, user_id: int, sent_at_utc: s
         (sent_at_utc, sent_at_utc, user_id),
     )
 
+async def mark_limits_nudge_sent(db: aiosqlite.Connection, user_id: int, local_date: str, updated_at: str):
+    await db.execute(
+        "UPDATE settings SET limits_nudge_last_sent_date=?, updated_at=? WHERE user_id=?",
+        (local_date, updated_at, user_id),
+    )
+
 async def list_daily_targets(db: aiosqlite.Connection):
     cur = await db.execute(
         "SELECT user_id, currency, timezone, daily_report_time, "

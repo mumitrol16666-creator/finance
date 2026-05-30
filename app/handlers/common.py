@@ -405,6 +405,24 @@ async def cancel_cb(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connectio
     await cancel_to_main_menu(c, state, db)
 
 
+@router.callback_query(F.data == "nudge:limits:enough")
+async def nudge_limits_enough(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
+    text = {
+        "ru": "👌 Хорошо! Если решите установить лимиты позже, вы всегда можете найти их в настройках бюджета (/budget).",
+        "en": "👌 Alright! If you decide to set limits later, you can always find them in settings (/budget).",
+        "kk": "👌 Жақсы! Егер кейінірек лимиттерді орнатқыңыз келсе, оларды кез келген уақытта баптаулардан таба аласыз (/budget)."
+    }.get(lang, "👌 Хорошо! Если решите установить лимиты позже, вы всегда можете найти их в настройках бюджета (/budget).")
+    try:
+        await c.message.edit_text(text)
+    except Exception:
+        try:
+            await c.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    await c.answer()
+
+
 async def require_onboarded(db: aiosqlite.Connection, user_id: int) -> bool:
     ob = await get_onboarded(db, user_id)
     return ob == 1
