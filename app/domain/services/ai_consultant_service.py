@@ -1807,20 +1807,13 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
                 streak_val = max(current_streak, max_streak)
                 progression_hint = None
                 
-                if progress_level < 2:
+                if mode == "newbie":
                     if lang == "en":
-                        progression_hint = f"💡 Log transactions <b>{streak_val}/3</b> days in a row to unlock <b>Reports & budgets</b>."
+                        progression_hint = "⭐ Reports & budgets are open. Enable <b>Full access</b> in settings ⚙️ for debts, planning, and AI."
                     elif lang == "kk":
-                        progression_hint = f"💡 <b>Есептер мен бюджеттер</b> бөлімін ашу үшін қатарынан <b>{streak_val}/3</b> күн жүргізіңіз."
+                        progression_hint = "⭐ Есептер мен бюджеттер ашық. Қарыздар, жоспарлау және AI үшін баптауларда ⚙️ <b>Толық қолжетімділік</b> қосыңыз."
                     else:
-                        progression_hint = f"💡 Веди учёт <b>{streak_val}/3</b> дн. подряд — откроются <b>отчёты и бюджеты</b>."
-                elif mode == "newbie":
-                    if lang == "en":
-                        progression_hint = "⭐ Reports are open. Enable <b>Full access</b> in settings ⚙️ for debts, planning, and AI."
-                    elif lang == "kk":
-                        progression_hint = "⭐ Есептер ашық. Қарыздар, жоспарлау және AI үшін баптауларда ⚙️ <b>Толық қолжетімділік</b> қосыңыз."
-                    else:
-                        progression_hint = "⭐ Отчёты открыты. В настройках ⚙️ можно оформить <b>полный доступ</b> — долги, планирование и AI."
+                        progression_hint = "⭐ Отчёты и бюджеты открыты. В настройках ⚙️ можно оформить <b>полный доступ</b> — долги, планирование и AI."
                 else:
                     # Full access user with no active moves
                     recurring_snapshot = context.get("recurring_snapshot") or {}
