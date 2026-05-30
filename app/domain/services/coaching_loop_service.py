@@ -95,16 +95,23 @@ async def evaluate_active_recommendations(bot: Bot) -> None:
                 
                 # Adjust discipline score in user profile
                 score_delta = 10 if achieved else -5
-                await db.execute(
-                    """
-                    INSERT INTO ai_profile (user_id, discipline_score, updated_at)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        discipline_score = MAX(20, MIN(100, discipline_score + excluded.discipline_score)),
-                        updated_at = excluded.updated_at
-                    """,
-                    (user_id, score_delta, now_utc.isoformat())
-                )
+                
+                cur_prof = await db.execute("SELECT discipline_score FROM ai_profile WHERE user_id=?", (user_id,))
+                row_prof = await cur_prof.fetchone()
+                if row_prof:
+                    old_score = row_prof[0] if row_prof[0] is not None else 100
+                    new_score = max(20, min(100, old_score + score_delta))
+                    await db.execute(
+                        "UPDATE ai_profile SET discipline_score=?, updated_at=? WHERE user_id=?",
+                        (new_score, now_utc.isoformat(), user_id)
+                    )
+                else:
+                    new_score = max(20, min(100, 100 + score_delta))
+                    await db.execute(
+                        "INSERT INTO ai_profile (user_id, user_stage, behavioral_summary, discipline_score, preferred_budgeting_type, updated_at) "
+                        "VALUES (?, 'chaotic', 'накапливаем статистику', ?, 'weekly', ?)",
+                        (user_id, new_score, now_utc.isoformat())
+                    )
                 
                 # Notify the user
                 try:
