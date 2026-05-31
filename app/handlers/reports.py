@@ -776,7 +776,7 @@ async def cats_month_cmd(m: Message, db: aiosqlite.Connection, state: FSMContext
     await _render_report(m, db, m.from_user.id, period="month", show_categories=True, prefer_edit=False, state=state)
 
 
-@router.callback_query(F.data.startswith("rp:"))
+@router.callback_query(F.data.startswith("rp:") & (F.data != "rp:export"))
 async def reports_cb(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext):
     await c.answer()
     user_id = c.from_user.id

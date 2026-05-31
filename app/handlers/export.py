@@ -1976,6 +1976,39 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
         await c.answer(empty_text, show_alert=True)
         return
 
+    # Check monthly limit (max 20 exports per calendar month)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS export_logs (
+            user_id INTEGER,
+            exported_at TEXT
+        )
+    """)
+    await db.commit()
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    month_start = f"{now.year:04d}-{now.month:02d}-01T00:00:00+00:00"
+    if now.month == 12:
+        month_end = f"{now.year + 1:04d}-01-01T00:00:00+00:00"
+    else:
+        month_end = f"{now.year:04d}-{now.month + 1:02d}-01T00:00:00+00:00"
+
+    cur_limit = await db.execute(
+        "SELECT COUNT(*) FROM export_logs WHERE user_id=? AND exported_at >= ? AND exported_at < ?",
+        (user_id, month_start, month_end)
+    )
+    (export_count,) = await cur_limit.fetchone()
+
+    MAX_MONTHLY_EXPORTS = 20
+    if export_count >= MAX_MONTHLY_EXPORTS:
+        limit_err_text = {
+            "ru": "⚠️ Вы превысили лимит экспорта в этом месяце (максимум 20 экспортов в месяц).",
+            "en": "⚠️ You have exceeded the export limit for this month (maximum 20 exports per month).",
+            "kk": "⚠️ Осы айдағы экспорт лимитінен асып кеттіңіз (айына максимум 20 экспорт)."
+        }.get(lang, "⚠️ Вы превысили лимит экспорта в этом месяце (максимум 20 экспортов в месяц).")
+        await c.answer(limit_err_text, show_alert=True)
+        return
+
     # Acknowledge immediately so the spinner clears while we build the file.
     try:
         await c.answer({"ru": "Готовлю файл…", "en": "Building…", "kk": "Файл әзірленуде…"}.get(lang, "Готовлю файл…"))
@@ -1997,6 +2030,10 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
 
     if use_premium_xlsx:
         await send_premium_xlsx_report(c.bot, db, user_id, period, lang, c.message.chat.id)
+        
+        await db.execute("INSERT INTO export_logs (user_id, exported_at) VALUES (?, ?)", (user_id, now.isoformat()))
+        await db.commit()
+
         if is_free_trial_now:
             # Mark as used
             await increment_free_export(db, user_id)
@@ -2028,6 +2065,9 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     payload_csv = _build_csv(rows, lang, currency)
     filename = f"finance_{label}.csv"
     await c.message.answer_document(BufferedInputFile(payload_csv, filename=filename))
+
+    await db.execute("INSERT INTO export_logs (user_id, exported_at) VALUES (?, ?)", (user_id, now.isoformat()))
+    await db.commit()
     
     # Generate the stunning preview dynamically in a separate thread (asyncio.to_thread) to avoid blocking event loop
     png_bytes = await asyncio.to_thread(_build_downgrade_preview_png, rows, lang, currency)
