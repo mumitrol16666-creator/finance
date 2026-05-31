@@ -535,3 +535,66 @@ async def admin_grant_reports(m: Message, bot: Bot, db: aiosqlite.Connection):
     except Exception as e:
         await m.reply(f"⚠️ Отчеты начислены, но не удалось отправить сообщение пользователю: {e}")
 
+
+@router.message(Command("admin_delete"))
+async def admin_delete_user(m: Message, db: aiosqlite.Connection):
+    """
+    Completely deletes a user and all their records from all database tables.
+    Usage: /admin_delete <user_id>
+    """
+    if m.from_user.id not in settings.admin_ids:
+        return
+
+    parts = m.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await m.reply("❌ Использование: <code>/admin_delete &lt;user_id&gt;</code>", parse_mode="HTML")
+        return
+
+    target_id = int(parts[1])
+
+    # 1. Verify user exists
+    cur = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (target_id,))
+    row = await cur.fetchone()
+    if not row:
+        await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
+        return
+
+    # Tables to clean up
+    tables_with_user_id = [
+        "users", "settings", "accounts", "categories", "transactions", "budgets",
+        "daily_stats", "debts", "debt_payments", "debt_reminder_log", "recurring_expenses",
+        "recurring_incomes", "planned_transactions", "ai_context_notes", "rules",
+        "expected_events", "full_access_payments", "tx_audit", "ai_profile",
+        "ai_insights", "ai_recommendations_log", "sent_keyboards", "export_logs"
+    ]
+
+    from loguru import logger
+
+    try:
+        # Delete dependent rows first (using subqueries if no direct user_id is present)
+        await db.execute(
+            "DELETE FROM debt_notify_log WHERE debt_id IN (SELECT id FROM debts WHERE user_id = ?)",
+            (target_id,)
+        )
+        
+        # Delete from all tables that have user_id
+        cleaned_tables = []
+        for table in tables_with_user_id:
+            try:
+                await db.execute(f"DELETE FROM {table} WHERE user_id = ?", (target_id,))
+                cleaned_tables.append(table)
+            except Exception as table_err:
+                logger.warning(f"Could not delete from table {table}: {table_err}")
+
+        await db.commit()
+        
+        tables_str = ", ".join(cleaned_tables)
+        await m.reply(
+            f"✅ Пользователь <code>{target_id}</code> успешно и полностью удален из базы данных.\n\n"
+            f"Очищено таблиц (всего {len(cleaned_tables)}): <code>{tables_str}</code>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await db.rollback()
+        await m.reply(f"❌ Ошибка при удалении пользователя: {e}")
+
