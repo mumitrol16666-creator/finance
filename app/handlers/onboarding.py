@@ -28,8 +28,7 @@ from app.handlers.onboarding_interview import start_interview
 router = Router()
 PARSE_MODE = "HTML"
 
-def dbg(txt: str) -> str:
-    return f"\n\n#DBG {txt}" if settings.debug else ""
+
 
 async def _try_delete(bot, chat_id: int, message_id: int | None) -> None:
     if not message_id:
@@ -102,7 +101,7 @@ async def ob_currency(c: CallbackQuery, state: FSMContext, db):
     cur = c.data.split(':')[2]
     await save_currency(db, c.from_user.id, cur)
     lang = await get_lang(db, c.from_user.id)
-    await edit_md(c.message, get_text(lang, 'CURRENCY_SAVED', cur=cur) + dbg(f' currency={cur}'), reply_markup=None)
+    await edit_md(c.message, get_text(lang, 'CURRENCY_SAVED', cur=cur), reply_markup=None)
     await state.set_state(Onboarding.acc_name)
     sent = await answer_md(c.message, get_text(lang, 'ASK_ACC_NAME'), reply_markup=cancel_kb(lang))
     await state.update_data(prompt_message_id=sent.message_id, ui_scope='onboarding')
@@ -197,7 +196,7 @@ async def ob_time_pick(c: CallbackQuery, state: FSMContext, db):
     if part[0] == 'other':
         await state.set_state(Onboarding.daily_time_custom)
         await state.update_data(flow_message_id=c.message.message_id, ui_scope='onboarding')
-        sent = await answer_md(c.message, get_text(lang, 'CUSTOM_TIME') + dbg(' time custom'), reply_markup=cancel_kb(lang))
+        sent = await answer_md(c.message, get_text(lang, 'CUSTOM_TIME'), reply_markup=cancel_kb(lang))
         await state.update_data(prompt_message_id=sent.message_id)
         await c.answer()
         return
