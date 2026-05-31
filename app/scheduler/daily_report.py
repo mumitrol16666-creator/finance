@@ -129,6 +129,57 @@ async def _send_safe(bot, user_id: int, text: str):
 
 
 
+async def _build_weekly_progress_bar(db: aiosqlite.Connection, user_id: int, tz_name: str, local_date_str: str, lang: str = "ru") -> str:
+    try:
+        from datetime import date, datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+        
+        local_today = date.fromisoformat(local_date_str)
+        monday = local_today - timedelta(days=local_today.weekday())
+        
+        user_tz = ZoneInfo(tz_name or "Asia/Aqtobe")
+        start_utc = datetime(monday.year, monday.month, monday.day, 0, 0, 0, tzinfo=user_tz).astimezone(timezone.utc).isoformat()
+        
+        cur = await db.execute(
+            "SELECT ts FROM transactions WHERE user_id=? AND ts>=? AND deleted_at IS NULL",
+            (user_id, start_utc)
+        )
+        rows = await cur.fetchall()
+        
+        active_days = set()
+        for (ts_str,) in rows:
+            try:
+                dt = datetime.fromisoformat(ts_str).astimezone(user_tz)
+                active_days.add(dt.date())
+            except Exception:
+                pass
+                
+        bar_items = []
+        filled_count = 0
+        for i in range(7):
+            day_date = monday + timedelta(days=i)
+            if day_date in active_days:
+                bar_items.append("🔥")
+                filled_count += 1
+            elif day_date > local_today:
+                bar_items.append("⬜")
+            else:
+                bar_items.append("⚪")
+                
+        bar_str = "|".join(bar_items)
+        
+        suffix = {
+            "ru": f"({filled_count} из 7 дней заполнено)",
+            "en": f"({filled_count} of 7 days tracked)",
+            "kk": f"({filled_count} күн толтырылды, 7-ден)"
+        }.get(lang, f"({filled_count} из 7 дней заполнено)")
+        
+        return f"[{bar_str}] {suffix}"
+    except Exception as e:
+        logger.warning(f"Failed to build weekly progress bar: {e}")
+        return ""
+
+
 async def _build_daily_text(
     db: aiosqlite.Connection,
     user_id: int,
@@ -155,17 +206,23 @@ async def _build_daily_text(
     if other > 0:
         top_lines.append(f"• Другое: -{_fmt_money(other)} {currency}")
 
+    cur_settings = await db.execute("SELECT lang FROM settings WHERE user_id=?", (user_id,))
+    row_settings = await cur_settings.fetchone()
+    lang = row_settings[0] if row_settings else "ru"
+    prog_bar = await _build_weekly_progress_bar(db, user_id, tz_name, local_date, lang)
+    streak_progress_line = f"\n{prog_bar}" if prog_bar else ""
+
     # серия
     cur_streak, best_streak, _ = await get_streak(db, user_id)
     if cnt == 0:
         streak_line = (
-            f"⚪ Серия: {cur_streak} дн. (лучшее: {best_streak})\n"
+            f"⚪ Серия: {cur_streak} дн. (лучшее: {best_streak}){streak_progress_line}\n"
             f"Сегодня 0 записей — добавь хотя бы одну, чтобы серия не оборвалась."
         )
     else:
         badge = "👑" if cur_streak >= 30 else ("🚀" if cur_streak >= 8 else "🔥")
         streak_line = (
-            f"{badge} Серия: {cur_streak} дн. (лучшее: {best_streak})\n"
+            f"{badge} Серия: {cur_streak} дн. (лучшее: {best_streak}){streak_progress_line}\n"
             f"Записи есть — серия сохранена."
         )
 
