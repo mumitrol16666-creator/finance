@@ -480,33 +480,9 @@ async def more_accounts(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conne
     await c.answer()
 
 
-@router.callback_query(F.data == "more:transfer")
-async def more_transfer(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
-    if not await can_use_feature(db, c.from_user.id, FEATURE_TRANSFER):
-        await deny_feature_message(c, db, c.from_user.id)
-        return
-    from app.handlers.transactions import _clear_flow_message, _tr_render_amount
-    from app.fsm.states import TransferFlow
-    lang = await get_lang(db, c.from_user.id)
-    await _clear_flow_message(c.bot, c.message.chat.id, state)
-    await state.clear()
-    await state.update_data(ui_scope="transfer", lang=lang)
-    await _ensure_minimized_menu(c, state, lang)
-    await state.set_state(TransferFlow.amount)
-    await _tr_render_amount(c, state)
-
-
-def _full_access_price() -> int:
-    return int(getattr(settings, "full_access_stars_price", 150))
-
-
-def _full_access_days() -> int:
-    return int(getattr(settings, "full_access_days", 90))
-
-
 def _upgrade_message(lang: str, has_full_access: bool = False, promo_used: bool = False) -> str:
     if lang == "en":
-        greeting = "🌟 <b>Full Access is active!</b>" if has_full_access else "You are currently using the free mode."
+        greeting = "🌟 <b>Full Access is active!</b>" if has_full_access else "You are currently using the free version."
         price_1m = "15 ⭐ (One-time offer)" if not promo_used else "70 ⭐"
         price_3m = "150 ⭐"
         return (
@@ -514,17 +490,21 @@ def _upgrade_message(lang: str, has_full_access: bool = False, promo_used: bool 
             f"{greeting}\n\n"
             "A Premium subscription pays for itself in the very first week through smart budget optimization powered by AI.\n\n"
             "<b>What Premium unlocks:</b>\n"
-            "🤖 <b>AI Assistant</b> — your pocket financial mentor. Analyzes habits, finds hidden leaks, and gives savings advice.\n"
+            "🤖 <b>AI Assistant & Mentor</b> — your pocket financial coach. Analyzes habits, finds hidden leaks, and gives savings advice.\n"
             "🎙 <b>AI Voice Input</b> — track expenses hands-free on the go. The AI automatically detects the amount, category, and account.\n"
-            "📊 <b>Visual Charts</b> — elegant, interactive category pie charts instead of boring text.\n"
-            "📌 <b>Smart Budgets</b> — set monthly limits on categories and keep track of overspending risks.\n"
-            "🤝 <b>Debt Tracking</b> — manage loans, debts, and partial settlements in one place.\n"
-            "🔄 <b>Recurring Bills & Plans</b> — auto-track subscriptions (iCloud, Netflix) and schedule upcoming large expenses.\n"
-            "📥 <b>Smart Excel Export</b> — beautiful multi-sheet financial sheets with dynamic charts and predictions.\n\n"
+            "⚡ <b>AI Quick-Add</b> — type transactions in one natural phrase, auto-categorization works instantly.\n"
+            "📊 <b>Interactive Charts</b> — elegant visual category pie charts for quick analysis instead of dry texts.\n"
+            "📌 <b>Smart Budgets & AI Balance</b> — set monthly limits on categories, receive risk notifications, and reallocate overruns in one tap.\n"
+            "🔄 <b>Recurring Bills & Templates</b> — auto-track subscriptions (iCloud, Netflix) and create templates from regular anomalies.\n"
+            "🤝 <b>Debt & Loan Tracking</b> — manage loans, debts, and partial settlements in one place with reminder notifications.\n"
+            "📥 <b>Smart Excel Export</b> — beautiful multi-sheet financial sheets with dynamic charts, formulas, and predictions.\n"
+            "🔥 <b>Streak Gamification</b> — interactive weekly progress tracker with personalized milestones from the AI.\n\n"
             "<b>The free version keeps only the basics:</b>\n"
-            "• Manual text transaction entries\n"
-            "• Account balances (cards, cash)\n"
-            "• Basic history list and simple text reports\n\n"
+            "• Manual step-by-step text transaction entries\n"
+            "• Account balances (cards, cash) without analytics\n"
+            "• Simple history list and text-only reports\n"
+            "❌ No AI Assistant, voice input, or quick phrase parsing\n"
+            "❌ No visual charts, budget limits, debt tracking, or Excel export\n\n"
             "<b>Subscription pricing:</b>\n"
             f"• <b>1 month</b> — {price_1m}\n"
             f"• <b>3 months</b> — {price_3m} <i>(save 30%)</i>\n\n"
@@ -533,7 +513,7 @@ def _upgrade_message(lang: str, has_full_access: bool = False, promo_used: bool 
         )
 
     if lang == "kk":
-        greeting = "🌟 <b>Толық қолжетімділік белсенді!</b>" if has_full_access else "Қазір сен тегін режимді қолданып отырсың."
+        greeting = "🌟 <b>Толық қолжетімділік белсенді!</b>" if has_full_access else "Қазір сен тегін нұсқаны қолданып отырсың."
         price_1m = "15 ⭐ (Бір реттік акция)" if not promo_used else "70 ⭐"
         price_3m = "150 ⭐"
         return (
@@ -541,21 +521,25 @@ def _upgrade_message(lang: str, has_full_access: bool = False, promo_used: bool 
             f"{greeting}\n\n"
             "Premium жазылымы жасанды интеллект арқылы шығындарды оңтайландыру есебінен алғашқы аптада-ақ өзін-өзі ақтайды.\n\n"
             "<b>Premium не береді:</b>\n"
-            "🤖 <b>AI-Кеңесші</b> — сіздің жеке қаржылық сарапшыңыз. Тұтыну әдеттеріңізді талдап, артық шығындарды табады және нақты кеңестер береді.\n"
-            "🎙 <b>Дауыстық AI-енгізу</b> — шығындарды дауысмен жылдам жазып алыңыз. Бот соманы, санатты және шотты өзі түсінеді.\n"
-            "📊 <b>Инфографика және графиктер</b> — санаттар бойынша шығыстардың көрнекі дөңгелек диаграммалары.\n"
-            "📌 <b>Ақылды лимиттер</b> — шығыстар санаттарына айлық бюджеттер белгілеп, артық жұмсауды бақылаңыз.\n"
-            "🤝 <b>Борыштар мен несиелер</b> — барлық өзара есеп айырысуларды бір ыңғайлы жерде сақтаңыз.\n"
-            "🔄 <b>Тұрақты төлемдер мен жоспарлар</b> — жазылымдарды (iCloud, Netflix) автоматты түрде есепке алу және ірі сатып алуларды жоспарлау.\n"
-            "📥 <b>Excel-ге Smart экспорт</b> — графиктері мен болжамдары бар әдемі көппарақты есептер.\n\n"
+            "🤖 <b>ИИ-Кеңесші мен Аналитик</b> — бюджеттегі артық шығындарды тауып, кірістің 20%-на дейін үнемдеуді үйрететін жеке коуч.\n"
+            "🎙 <b>Дауыстық AI-енгізу</b> — шығындарды жолда бара жатып дауыспен жылдам жазып алыңыз, бот бәрін өзі түсінеді.\n"
+            "⚡ <b>Жылдам ИИ-енгізу</b> — шығындарды бір сөйлеммен жазыңыз, бот санат пен шотты бірден анықтайды.\n"
+            "📊 <b>Интерактивті диаграммалар</b> — санаттар бойынша шығыстардың көрнекі және әдемі круговой диаграммалары.\n"
+            "📌 <b>Ақылды лимиттер мен теңестіру</b> — санаттарға айлық бюджет белгілеп, қажет кезде ИИ көмегімен қаражатты оңай қайта бөліңіз.\n"
+            "🔄 <b>Тұрақты төлемдер мен үлгілер</b> — iCloud, Netflix жазылымдарын автоматты түрде есепке алу және аномалиялардан үлгілер жасау.\n"
+            "🤝 <b>Борыштар мен несиелер</b> — барлық өзара есеп айырысуларды қайтару туралы ескертулермен бірге ыңғайлы жүргізу.\n"
+            "📥 <b>Excel-ге Smart экспорт</b> — графиктері, формулалары және болашақ шығындардың болжамы бар әдемі көппарақты есептер.\n"
+            "🔥 <b>Тәртіп трекері мен рекордтар</b> — жүйелілік үшін ИИ-ден құттықтаулар ала отырып бюджетті қызықты жүргізу.\n\n"
             "<b>Тегін нұсқада тек негізгі функциялар қалады:</b>\n"
-            "• Мәтін арқылы шығындарды қолмен жазу\n"
-            "• Шоттарды жүргізу (карталар, қолма-қол ақша)\n"
-            "• Қарапайым тарих және мәтіндік есептер\n\n"
+            "• Тек шығындар мен кірістерді қолмен, қадам бойынша енгізу\n"
+            "• Аналитикасыз шоттардың негізгі балансы (карталар, қолма-қол ақша)\n"
+            "• Қарапайым транзакциялар тарихы және мәтіндік есептер\n"
+            "❌ ИИ-көмекші, дауыспен енгізу және жылдам командалар қолжетімді емес\n"
+            "❌ Көрнекі диаграммалар, лимиттер, қарызды бақылау және Excel-экспорт жоқ\n\n"
             "<b>Жазылым құны:</b>\n"
             f"• <b>1 ай</b> — {price_1m}\n"
             f"• <b>3 ай</b> — {price_3m} <i>(30% үнемдеу)</i>\n\n"
-            "Бұл сіздің қаржылық тәртібіңізге салынған инвестиция.\n\n"
+            "Бұл сіздің қаржылық тәртібіңізге салынған ең жақсы инвестиция.\n\n"
             "👇 Барлық мүмкіндіктерді қазір ашу үшін төмендегі батырмалардың бірін басыңыз!"
         )
 
@@ -567,21 +551,25 @@ def _upgrade_message(lang: str, has_full_access: bool = False, promo_used: bool 
         f"{greeting}\n\n"
         "Подписка Premium окупается в первую же неделю за счёт умной оптимизации расходов с помощью ИИ.\n\n"
         "<b>Что даёт Premium:</b>\n"
-        "🤖 <b>ИИ-Консультант</b> — ваш личный финансовый аналитик. Проанализирует привычки, найдет «утечки» бюджета и даст точечные советы.\n"
+        "🤖 <b>ИИ-Консультант и Аналитик</b> — ваш личный финансовый коуч. Проанализирует привычки, найдет «утечки» бюджета и даст точечные советы.\n"
         "🎙 <b>Голосовой AI-ввод</b> — записывайте расходы на ходу голосом. Бот сам поймет сумму, категорию и кошелек.\n"
-        "📊 <b>Инфографика и диаграммы</b> — наглядные круговые диаграммы расходов по категориям вместо скучного текста.\n"
-        "📌 <b>Умные лимиты</b> — устанавливайте бюджеты на категории трат и контролируйте перерасходы.\n"
-        "🤝 <b>Учет долгов и кредитов</b> — помните обо всех взаиморасчетах в одном удобном месте.\n"
-        "🔄 <b>Регулярные платежи и планы</b> — автоматический учет подписок (iCloud, Netflix) и планирование крупных покупок.\n"
-        "📥 <b>Smart-экспорт в Excel</b> — красивые многостраничные отчеты с графиками и прогнозом.\n\n"
+        "⚡ <b>ИИ Быстрый ввод</b> — вводите операции одной фразой в чат, автоопределение категорий и счетов работает мгновенно.\n"
+        "📊 <b>Интерактивные диаграммы</b> — наглядные круговые диаграммы расходов по категориям вместо скучного текста.\n"
+        "📌 <b>Умные бюджеты и авто-балансировка</b> — устанавливайте лимиты на категории трат, получайте предупреждения и балансируйте бюджет в один клик.\n"
+        "🔄 <b>Регулярные платежи и шаблоны</b> — автоматический учет подписок (iCloud, Netflix) и быстрое создание шаблонов регулярных расходов из аномалий.\n"
+        "🤝 <b>Учет долгов и кредитов</b> — помните обо всех взаиморасчетах и частичных выплатах в одном удобном месте с напоминаниями.\n"
+        "📥 <b>Smart-экспорт в Excel</b> — красивые многостраничные отчеты с графиками, формулами и прогнозом будущих расходов.\n"
+        "🔥 <b>Трекер дисциплины (Streak)</b> — геймификация ведения бюджета с поздравлениями и разбором от ИИ на знаковых этапах.\n\n"
         "<b>В бесплатной версии остается только база:</b>\n"
-        "• Ручная запись трат текстом\n"
-        "• Ведение счетов (карты, наличные)\n"
-        "• Простая история и текстовые отчеты\n\n"
+        "• Ручная запись трат пошаговым текстом\n"
+        "• Простой баланс счетов (карты, наличные) без аналитики\n"
+        "• Базовая текстовая история и простые отчеты\n"
+        "❌ Без ИИ-помощника, голосового ввода и быстрых фраз\n"
+        "❌ Без диаграмм, бюджетов, контроля долгов и Excel-экспорта\n\n"
         "<b>Стоимость подписки:</b>\n"
         f"• <b>1 месяц</b> — {price_1m}\n"
         f"• <b>3 месяца</b> — {price_3m} <i>(выгода 30%)</i>\n\n"
-        "Это инвестиция в вашу финансовую дисциплину.\n\n"
+        "Это лучшая инвестиция в вашу финансовую дисциплину.\n\n"
         "👇 Нажми на одну из кнопок ниже, чтобы снять все лимиты прямо сейчас!"
     )
 

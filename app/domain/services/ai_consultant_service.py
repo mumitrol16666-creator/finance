@@ -1821,11 +1821,11 @@ async def build_main_menu_text(db: aiosqlite.Connection, user_id: int, lang: str
                     debt_snapshot = context.get("debt_snapshot") or {}
                     if not (recurring_snapshot.get("count") or planned_snapshot.get("count") or debt_snapshot.get("active_count")):
                         if lang == "en":
-                            progression_hint = "💡 Add rent, subscriptions, or salary in <b>Accounts & transfers</b> 🔄 for a month forecast."
+                            progression_hint = "💡 Add rent, subscriptions, or salary in <b>🗂 Planning</b> for a month forecast."
                         elif lang == "kk":
-                            progression_hint = "💡 Айлық болжам үшін <b>Шоттар мен аударымдар</b> 🔄 бөлімінде жалдау, жазылым немесе жалақыны қосыңыз."
+                            progression_hint = "💡 Айлық болжам үшін <b>🗂 Жоспарлау</b> бөлімінде жалдау, жазылым немесе жалақыны қосыңыз."
                         else:
-                            progression_hint = "💡 Добавь аренду, подписки или зарплату в <b>Счета и переводы</b> 🔄 — появится прогноз на месяц."
+                            progression_hint = "💡 Добавь аренду, подписки или зарплату в <b>🗂 Планирование</b> — появится прогноз на месяц."
                 
                 if progression_hint:
                     title = {"ru": "💡 <b>Подсказка</b>", "en": "💡 <b>Hint</b>", "kk": "💡 <b>Нұсқау</b>"}.get(lang, "💡 <b>Подсказка</b>")

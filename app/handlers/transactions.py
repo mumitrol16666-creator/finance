@@ -452,24 +452,20 @@ async def _flow_finish(
         # Поведение по умолчанию (например, при отмене) - отправляем только одно сообщение с reply-клавиатурой
         await bot.send_message(chat_id, text, reply_markup=menu_kb, parse_mode=PARSE_MODE)
 
-
 async def _check_and_send_streak_reward(ctx: Message | CallbackQuery, db, streak_before: int) -> None:
     if db is None:
         return
     user_id = ctx.from_user.id
-    
-    # 1. Check if user already has FEATURE_AI (Premium)
-    is_premium = await can_use_feature(db, user_id, FEATURE_AI)
-    if is_premium:
-        return
-        
-    # 2. Get current streak
     streak_after, _, _ = await get_streak(db, user_id)
     
-    # 3. Trigger only when streak reaches 7
-    if streak_before == 6 and streak_after == 7:
-        lang = await get_lang(db, user_id)
+    milestones = {3, 7, 15, 30, 100}
+    if streak_after not in milestones or streak_before != streak_after - 1:
+        return
         
+    lang = await get_lang(db, user_id)
+    is_premium = await can_use_feature(db, user_id, FEATURE_AI)
+    
+    if streak_after == 7 and not is_premium:
         if lang == "en":
             text = "🔥 <b>Incredible discipline!</b>\n" \
                    "You've been tracking your finances for 7 days in a row. Such financial focus is only seen in 5% of users.\n\n" \
@@ -491,15 +487,48 @@ async def _check_and_send_streak_reward(ctx: Message | CallbackQuery, db, streak
                 [InlineKeyboardButton(text=btn_text, callback_data="upgrade:activate")]
             ]
         )
-        
-        bot = ctx.bot
-        chat_id = ctx.chat.id if isinstance(ctx, Message) else ctx.message.chat.id
+    else:
+        msg_map = {
+            3: {
+                "ru": "🌱 <b>Начало хорошей привычки!</b>\n\nВы ведёте учёт уже <b>3 дня подряд</b>. Первый шаг сделан, продолжайте в том же духе!",
+                "en": "🌱 <b>A habit is born!</b>\n\nYou've tracked your finances for <b>3 days in a row</b>. The first step is taken, keep it up!",
+                "kk": "🌱 <b>Жақсы әдеттің басталуы!</b>\n\nСіз қатарынан <b>3 күн бойы</b> есеп жүргізіп келесіз. Алғашқы қадам жасалды, дәл осылай жалғастыра беріңіз!"
+            },
+            7: {
+                "ru": "🔥 <b>Неделя дисциплины!</b>\n\nВы ведёте учёт уже <b>7 дней подряд</b>. Финансовый фокус становится вашей привычкой. Отличный результат!",
+                "en": "🔥 <b>A week of discipline!</b>\n\nYou've tracked your finances for <b>7 days in a row</b>. Financial focus is becoming a habit. Great job!",
+                "kk": "🔥 <b>Бір апталық тәртіп!</b>\n\nСіз қатарынан <b>7 күн бойы</b> есеп жүргізіп келесіз. Қаржылық назар аудару сіздің әдетіңізге айналуда. Керемет нәтиже!"
+            },
+            15: {
+                "ru": "🚀 <b>Половина пути к автоматизму!</b>\n\nВы ведёте учёт уже <b>15 дней подряд</b>. Вы контролируее свои деньги лучше, чем 85% людей. Так держать!",
+                "en": "🚀 <b>Halfway to automatic habit!</b>\n\nYou've tracked your finances for <b>15 days in a row</b>. You control your money better than 85% of people. Keep going!",
+                "kk": "🚀 <b>Автоматизмге жарты жол!</b>\n\nСіз қатарынан <b>15 күн бойы</b> есеп жүргізіп келесіз. Сіз ақшаңызды адамдардың 85%-ынан жақсырақ бақылайсыз. Жарайсыз!"
+            },
+            30: {
+                "ru": "👑 <b>Месяц тотального контроля!</b>\n\nВы ведёте учёт уже <b>30 дней подряд</b>. Это полноценная привычка, которая сбережёт вам тысячи. Вы супер!",
+                "en": "👑 <b>A month of total control!</b>\n\nYou've tracked your finances for <b>30 days in a row</b>. This is a solid habit that will save you thousands. You are awesome!",
+                "kk": "👑 <b>Толық бақылау айы!</b>\n\nСіз қатарынан <b>30 күн бойы</b> есеп жүргізіп келесіз. Бұл сізге мыңдаған теңгені үнемдейтін толыққанды әдет. Сіз кереметсіз!"
+            },
+            100: {
+                "ru": "🏆 <b>Финансовый гроссмейстер!</b>\n\nВы ведёте учёт уже <b>100 дней подряд</b>! Вы абсолютно управляете своей финансовой жизнью. Легендарный уровень дисциплины!",
+                "en": "🏆 <b>Financial Grandmaster!</b>\n\nYou've tracked your finances for <b>100 days in a row</b>! You are in absolute control of your financial life. Legendary level of discipline!",
+                "kk": "🏆 <b>Қаржылық гроссмейстер!</b>\n\nСіз қатарынан <b>100 күн бойы</b> есеп жүргізіп келесіз! Сіз өзіңіздің қаржылық өміріңізді толық басқарасыз. Аңызға айналған тәртіп деңгейі!"
+            }
+        }
+        text = msg_map.get(streak_after, {}).get(lang, msg_map[streak_after]["ru"])
+        markup = None
+
+    bot = ctx.bot
+    chat_id = ctx.chat.id if isinstance(ctx, Message) else ctx.message.chat.id
+    try:
         await bot.send_message(
             chat_id=chat_id,
             text=text,
             reply_markup=markup,
             parse_mode=PARSE_MODE
         )
+    except Exception as e:
+        logger.warning(f"Failed to send streak celebration message: {e}")
 
 
 def _action_buttons_kb(
@@ -558,36 +587,70 @@ def _overdraft_kb(
     )
 
 
-def _exp_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
-    return _action_buttons_kb(
-        "expcfm:save",
-        edit1_text=_i18n_t(lang, "TX_EDIT_AMOUNT"),
-        edit1_cb="expcfm:amount",
-        edit2_text=_i18n_t(lang, "TX_EDIT_ACCOUNT"),
-        edit2_cb="expcfm:account",
-        edit3_text=_i18n_t(lang, "TX_EDIT_CAT"),
-        edit3_cb="expcfm:category",
-        edit4_text=_i18n_t(lang, "TX_EDIT_NOTE"),
-        edit4_cb="expcfm:note",
-        save_text=_i18n_t(lang, "BTN_SAVE"),
-        cancel_text=_i18n_t(lang, "BTN_CANCEL"),
-    )
+def _exp_confirm_kb(lang: str = "ru", prominent_cat: bool = False) -> InlineKeyboardMarkup:
+    if prominent_cat:
+        rows = [
+            [InlineKeyboardButton(text=_i18n_t(lang, "BTN_SAVE"), callback_data="expcfm:save")],
+            [InlineKeyboardButton(text=_i18n_t(lang, "TX_EDIT_CAT"), callback_data="expcfm:category")],
+            [
+                InlineKeyboardButton(text=_i18n_t(lang, "TX_EDIT_AMOUNT"), callback_data="expcfm:amount"),
+                InlineKeyboardButton(text=_i18n_t(lang, "TX_EDIT_ACCOUNT"), callback_data="expcfm:account"),
+            ],
+            [
+                InlineKeyboardButton(text=_i18n_t(lang, "TX_EDIT_NOTE"), callback_data="expcfm:note")
+            ],
+            [
+                InlineKeyboardButton(text=_i18n_t(lang, "BTN_CANCEL"), callback_data="expcfm:cancel")
+            ]
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+    else:
+        return _action_buttons_kb(
+            "expcfm:save",
+            edit1_text=_i18n_t(lang, "TX_EDIT_AMOUNT"),
+            edit1_cb="expcfm:amount",
+            edit2_text=_i18n_t(lang, "TX_EDIT_ACCOUNT"),
+            edit2_cb="expcfm:account",
+            edit3_text=_i18n_t(lang, "TX_EDIT_CAT"),
+            edit3_cb="expcfm:category",
+            edit4_text=_i18n_t(lang, "TX_EDIT_NOTE"),
+            edit4_cb="expcfm:note",
+            save_text=_i18n_t(lang, "BTN_SAVE"),
+            cancel_text=_i18n_t(lang, "BTN_CANCEL"),
+        )
 
 
-def _inc_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
-    return _action_buttons_kb(
-        "inccfm:save",
-        edit1_text=_i18n_t(lang, "TX_EDIT_AMOUNT"),
-        edit1_cb="inccfm:amount",
-        edit2_text=_i18n_t(lang, "TX_EDIT_ACCOUNT"),
-        edit2_cb="inccfm:account",
-        edit3_text=_i18n_t(lang, "TX_EDIT_CAT"),
-        edit3_cb="inccfm:category",
-        edit4_text=_i18n_t(lang, "TX_EDIT_NOTE"),
-        edit4_cb="inccfm:note",
-        save_text=_i18n_t(lang, "BTN_SAVE"),
-        cancel_text=_i18n_t(lang, "BTN_CANCEL"),
-    )
+def _inc_confirm_kb(lang: str = "ru", prominent_cat: bool = False) -> InlineKeyboardMarkup:
+    if prominent_cat:
+        rows = [
+            [InlineKeyboardButton(text=_i18n_t(lang, "BTN_SAVE"), callback_data="inccfm:save")],
+            [InlineKeyboardButton(text=_i18n_t(lang, "TX_EDIT_CAT"), callback_data="inccfm:category")],
+            [
+                InlineKeyboardButton(text=_i18n_t(lang, "TX_EDIT_AMOUNT"), callback_data="inccfm:amount"),
+                InlineKeyboardButton(text=_i18n_t(lang, "TX_EDIT_ACCOUNT"), callback_data="inccfm:account"),
+            ],
+            [
+                InlineKeyboardButton(text=_i18n_t(lang, "TX_EDIT_NOTE"), callback_data="inccfm:note")
+            ],
+            [
+                InlineKeyboardButton(text=_i18n_t(lang, "BTN_CANCEL"), callback_data="inccfm:cancel")
+            ]
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+    else:
+        return _action_buttons_kb(
+            "inccfm:save",
+            edit1_text=_i18n_t(lang, "TX_EDIT_AMOUNT"),
+            edit1_cb="inccfm:amount",
+            edit2_text=_i18n_t(lang, "TX_EDIT_ACCOUNT"),
+            edit2_cb="inccfm:account",
+            edit3_text=_i18n_t(lang, "TX_EDIT_CAT"),
+            edit3_cb="inccfm:category",
+            edit4_text=_i18n_t(lang, "TX_EDIT_NOTE"),
+            edit4_cb="inccfm:note",
+            save_text=_i18n_t(lang, "BTN_SAVE"),
+            cancel_text=_i18n_t(lang, "BTN_CANCEL"),
+        )
 
 
 def _tr_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
@@ -875,12 +938,24 @@ async def _exp_render_confirm(target: Message | CallbackQuery, state: FSMContext
     if data.get("note"):
         lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
 
+    category_name_raw = str(data.get("category_name") or "Прочее").strip().lower()
+    is_default_category = category_name_raw in ("прочее", "other", "басқа", "без категории")
+
+    if is_default_category:
+        warning_note = {
+            "ru": "⚠️ Категория определена как \"Прочее\". Вы можете быстро изменить её перед сохранением.",
+            "en": "⚠️ Category is set to \"Other\". You can quickly change it before saving.",
+            "kk": "⚠️ Санат «Басқа» ретінде анықталды. Сақтау алдында оны тез өзгерте аласыз."
+        }.get(lang, "⚠️ Категория определена как \"Прочее\". Вы можете быстро изменить её перед сохранением.")
+        lines.append("")
+        lines.append(warning_note)
+
     if int(bal_after) < 0:
         lines += ["", _i18n_t(lang, "TX_EXP_CONFIRM_MINUS")]
 
     lines += ["", f"{_i18n_t(lang, 'TX_EXP_STEP_5')}", f"{_i18n_t(lang, 'TX_EXP_CONFIRM_SAVE')}"]
 
-    await _flow_render(target, state, "\n".join(lines), reply_markup=_exp_confirm_kb(lang))
+    await _flow_render(target, state, "\n".join(lines), reply_markup=_exp_confirm_kb(lang, prominent_cat=is_default_category))
 
 
 # =========================================================
@@ -1280,7 +1355,8 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     cb = meta.get("cat_budget")
     st_cat = meta.get("cat_state")
     left_cat = meta.get("cat_left")
-    month = _format_month(meta.get("month"), lang)
+    raw_month = meta.get("month")
+    month = _format_month(raw_month, lang)
 
     is_over_limit = st_cat in ("over", "hard_over") and isinstance(cb, int) and cb > 0 and isinstance(month, str) and isinstance(left_cat, int)
 
@@ -1364,20 +1440,46 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
         from loguru import logger
         logger.exception(f"Error in anomaly detection for tx_id={tx_id}: {e}")
 
-    if is_over_limit and not has_premium:
+    if is_over_limit:
         bot = ctx.bot
         chat_id = ctx.chat.id if isinstance(ctx, Message) else ctx.message.chat.id
-        markup = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=btn_text, callback_data="upgrade:activate")]
-            ]
-        )
-        await bot.send_message(
-            chat_id=chat_id,
-            text=alert_text,
-            reply_markup=markup,
-            parse_mode=PARSE_MODE
-        )
+        if not has_premium:
+            markup = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=btn_text, callback_data="upgrade:activate")]
+                ]
+            )
+            await bot.send_message(
+                chat_id=chat_id,
+                text=alert_text,
+                reply_markup=markup,
+                parse_mode=PARSE_MODE
+            )
+        else:
+            if lang == "en":
+                premium_alert = f"🚨 <b>Category limit exceeded!</b> You've exceeded the budget for <b>{escape(month)}</b> in this category. Click below to let AI automatically balance your budget."
+                btn_realloc_text = "🤖 Balance with AI"
+            elif lang == "kk":
+                premium_alert = f"🚨 <b>Санат лимиті асып кетті!</b> Сіз бұл санаттағы <b>{escape(month)}</b> бюджетін асырдыңыз. Бюджетті автоматты түрде теңестіру үшін төмендегі батырманы басыңыз."
+                btn_realloc_text = "🤖 ИИ-мен теңестіру"
+            else:
+                premium_alert = f"🚨 <b>Превышен лимит категории!</b> Вы вышли за рамки бюджета на <b>{escape(month)}</b> в этой категории. Нажмите ниже, чтобы ИИ помог сбалансировать бюджет."
+                btn_realloc_text = "🤖 Сбалансировать ИИ"
+                
+            markup = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text=btn_realloc_text, 
+                        callback_data=f"budget:reallocate:suggest:{data['category_id']}:{raw_month}"
+                    )]
+                ]
+            )
+            await bot.send_message(
+                chat_id=chat_id,
+                text=premium_alert,
+                reply_markup=markup,
+                parse_mode=PARSE_MODE
+            )
 
 
 # =========================================================
@@ -1480,9 +1582,21 @@ async def _inc_render_confirm(target: Message | CallbackQuery, state: FSMContext
     if data.get("note"):
         lines.append(f"{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>")
 
+    category_name_raw = str(data.get("category_name") or "Прочее").strip().lower()
+    is_default_category = category_name_raw in ("прочее", "other", "басқа", "без категории")
+
+    if is_default_category:
+        warning_note = {
+            "ru": "⚠️ Категория определена как \"Прочее\". Вы можете быстро изменить её перед сохранением.",
+            "en": "⚠️ Category is set to \"Other\". You can quickly change it before saving.",
+            "kk": "⚠️ Санат «Басқа» ретінде анықталды. Сақтау алдында оны тез өзгерте аласыз."
+        }.get(lang, "⚠️ Категория определена как \"Прочее\". Вы можете быстро изменить её перед сохранением.")
+        lines.append("")
+        lines.append(warning_note)
+
     lines += ["", f"{_i18n_t(lang, 'TX_INC_CONFIRM_ASK')}"]
 
-    await _flow_render(target, state, "\n".join(lines), reply_markup=_inc_confirm_kb(lang))
+    await _flow_render(target, state, "\n".join(lines), reply_markup=_inc_confirm_kb(lang, prominent_cat=is_default_category))
 
 # =========================================================
 # Income handlers
@@ -2229,7 +2343,7 @@ async def _anomaly_callback(c: CallbackQuery, db):
 
     # 1. Fetch transaction details to populate the AI context notes
     cur = await db.execute(
-        "SELECT t.amount, t.note, t.ts, c.name, c.emoji "
+        "SELECT t.amount, t.note, t.ts, c.name, c.emoji, t.category_id, t.account_id "
         "FROM transactions t "
         "LEFT JOIN categories c ON t.category_id = c.id "
         "WHERE t.id=? AND t.user_id=?",
@@ -2240,7 +2354,7 @@ async def _anomaly_callback(c: CallbackQuery, db):
         await c.answer("Transaction not found", show_alert=True)
         return
 
-    amount_raw, tx_note, ts, cat_name, cat_emoji = row
+    amount_raw, tx_note, ts, cat_name, cat_emoji, category_id, account_id = row
     amount_val = abs(amount_raw)
     amount_str = fmt_money(amount_val)
     cat_label = f"{cat_emoji or ''} {cat_name or ''}".strip() or "Без категории"
@@ -2295,10 +2409,308 @@ async def _anomaly_callback(c: CallbackQuery, db):
 
     # 4. Remove inline buttons and edit message text
     try:
-        await c.message.edit_text(text=confirmation_text, reply_markup=None)
+        if kind == "regular" and category_id is not None and account_id is not None:
+            btn_rec_txt = {
+                "ru": "🔄 Создать шаблон",
+                "en": "🔄 Create template",
+                "kk": "🔄 Үлгіні жасау"
+            }.get(lang, "🔄 Создать шаблон")
+            btn_menu_txt = {
+                "ru": "🏠 В меню",
+                "en": "🏠 Menu",
+                "kk": "🏠 Мәзір"
+            }.get(lang, "🏠 В меню")
+            
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text=btn_rec_txt, callback_data=f"anom:createrec:{tx_id}"),
+                        InlineKeyboardButton(text=btn_menu_txt, callback_data="hub:main")
+                    ]
+                ]
+            )
+            prompt_rec = {
+                "ru": f"{confirmation_text}\n\nХотите автоматически создать шаблон в «Регулярных платежах»?",
+                "en": f"{confirmation_text}\n\nWould you like to automatically create a template in 'Recurring payments'?",
+                "kk": f"{confirmation_text}\n\n«Тұрақты төлемдер» бөлімінде автоматты түрде үлгі жасағыңыз келе ме?"
+            }.get(lang, f"{confirmation_text}\n\nХотите автоматически создать шаблон в «Регулярных платежах»?")
+            
+            await c.message.edit_text(text=prompt_rec, reply_markup=kb)
+        else:
+            await c.message.edit_text(text=confirmation_text, reply_markup=None)
     except Exception:
         await c.message.answer(confirmation_text)
     
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("anom:createrec:"))
+async def _anomaly_create_recurring_callback(c: CallbackQuery, db):
+    parts = c.data.split(":")
+    if len(parts) < 3:
+        await c.answer()
+        return
+
+    try:
+        tx_id = int(parts[2])
+    except ValueError:
+        await c.answer()
+        return
+
+    user_id = c.from_user.id
+    lang = await get_lang(db, user_id)
+
+    cur = await db.execute(
+        "SELECT t.amount, t.note, t.ts, c.name, c.emoji, t.category_id, t.account_id "
+        "FROM transactions t "
+        "LEFT JOIN categories c ON t.category_id = c.id "
+        "WHERE t.id=? AND t.user_id=?",
+        (tx_id, user_id),
+    )
+    row = await cur.fetchone()
+    if not row:
+        await c.answer("Transaction not found", show_alert=True)
+        return
+
+    amount_raw, tx_note, ts, cat_name, cat_emoji, category_id, account_id = row
+    amount_val = abs(amount_raw)
+    amount_str = fmt_money(amount_val)
+    note_str = (tx_note or "").strip()
+    title = note_str or cat_name or "Регулярный расход"
+
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(ts)
+        day_of_month = dt.day
+    except Exception:
+        day_of_month = 1
+
+    from app.db.repositories.recurring_repo import create_recurring_expense
+    from app.domain.services.accounting_service import utcnow_iso
+
+    try:
+        await create_recurring_expense(
+            db,
+            user_id,
+            title,
+            amount_val,
+            category_id,
+            account_id,
+            day_of_month,
+            None,
+            utcnow_iso()
+        )
+        await db.commit()
+
+        success_text = {
+            "ru": f"✅ Шаблон «{title}» на сумму {amount_str} успешно добавлен в регулярные расходы!",
+            "en": f"✅ Template '{title}' for {amount_str} has been successfully added to recurring expenses!",
+            "kk": f"✅ «{title}» жиі орындалатын төлем үлгісі ({amount_str}) тұрақты шығыстарға сәтті қосылды!"
+        }.get(lang, f"✅ Шаблон «{title}» на сумму {amount_str} успешно добавлен в регулярные расходы!")
+
+        await c.message.edit_text(text=success_text, reply_markup=None)
+    except Exception as e:
+        logger.exception(f"Failed to create recurring expense from anomaly: {e}")
+        await c.answer("Error creating template", show_alert=True)
+
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("budget:reallocate:suggest:"))
+async def _budget_reallocate_suggest_callback(c: CallbackQuery, db):
+    parts = c.data.split(":")
+    if len(parts) < 5:
+        await c.answer()
+        return
+    
+    cat_to_id = int(parts[3])
+    month = parts[4]
+    user_id = c.from_user.id
+    lang = await get_lang(db, user_id)
+    
+    from app.db.repositories.budgets_repo import month_budgets_map, month_spent_map
+    from app.db.repositories.categories_repo import get_category
+    from app.ui.i18n import t_category
+    
+    budgets = await month_budgets_map(db, user_id, month)
+    spent = await month_spent_map(db, user_id, month)
+    
+    limit_to = budgets.get(cat_to_id, 0)
+    spent_to = spent.get(cat_to_id, 0)
+    overrun = spent_to - limit_to
+    
+    if overrun <= 0:
+        overruns = {cid: (spent.get(cid, 0) - lim) for cid, lim in budgets.items() if spent.get(cid, 0) > lim}
+        if overruns:
+            cat_to_id = max(overruns, key=overruns.get)
+            overrun = overruns[cat_to_id]
+        else:
+            txt = {
+                "ru": "🤖 Перерасход бюджета не обнаружен.",
+                "en": "🤖 No budget overspend detected.",
+                "kk": "🤖 Бюджеттің асып кетуі анықталмады."
+            }.get(lang, "🤖 Перерасход бюджета не обнаружен.")
+            await c.answer(txt, show_alert=True)
+            return
+
+    surpluses = {cid: (lim - spent.get(cid, 0)) for cid, lim in budgets.items() if lim > spent.get(cid, 0)}
+    if not surpluses:
+        txt = {
+            "ru": "🤖 ИИ проанализировал ваши бюджеты, но не нашёл категорий с профицитом для покрытия дефицита.",
+            "en": "🤖 AI analyzed your budgets but found no categories with a surplus to cover the deficit.",
+            "kk": "🤖 ИИ бюджеттеріңізді талдады, бірақ тапшылықты жабу үшін профициті бар санаттарды таппады."
+        }.get(lang, "🤖 ИИ проанализировал ваши бюджеты, но не нашёл категорий с профицитом.")
+        await c.message.edit_text(text=txt, reply_markup=None)
+        await c.answer()
+        return
+
+    cat_from_id = max(surpluses, key=surpluses.get)
+    surplus = surpluses[cat_from_id]
+    
+    transfer_amount = min(overrun, surplus)
+    if transfer_amount <= 0:
+        txt = {
+            "ru": "🤖 Ошибка при расчете суммы перераспределения.",
+            "en": "🤖 Error calculating the reallocation amount.",
+            "kk": "🤖 Қайта бөлу сомасын есептеуде қате кетті."
+        }.get(lang, "🤖 Ошибка при расчете суммы перераспределения.")
+        await c.answer(txt, show_alert=True)
+        return
+
+    cat_from_row = await get_category(db, user_id, cat_from_id)
+    cat_to_row = await get_category(db, user_id, cat_to_id)
+    
+    if not cat_from_row or not cat_to_row:
+        await c.answer("Categories not found", show_alert=True)
+        return
+        
+    _, name_from, emoji_from, _, _ = cat_from_row
+    _, name_to, emoji_to, _, _ = cat_to_row
+    
+    cat_from_emoji = (emoji_from or "").strip()
+    cat_to_emoji = (emoji_to or "").strip()
+    
+    cat_from_display = f"{cat_from_emoji} {t_category(name_from, lang)}".strip()
+    cat_to_display = f"{cat_to_emoji} {t_category(name_to, lang)}".strip()
+    
+    amount_str = fmt_money(transfer_amount)
+    overrun_str = fmt_money(overrun)
+    
+    if lang == "en":
+        suggestion_text = (
+            f"🤖 <b>AI Budget Rebalancing</b>\n\n"
+            f"Budget limit for <b>{cat_to_display}</b> exceeded by {overrun_str}.\n"
+            f"Surplus budget is available in category <b>{cat_from_display}</b>.\n\n"
+            f"I suggest moving <b>{amount_str}</b> from the limit of <b>{cat_from_display}</b> to the limit of <b>{cat_to_display}</b>. Budgets will be adjusted automatically."
+        )
+        btn_yes = f"✅ Transfer {amount_str}"
+        btn_no = "❌ Decline"
+    elif lang == "kk":
+        suggestion_text = (
+            f"🤖 <b>Бюджетті ИИ-мен теңестіру</b>\n\n"
+            f"<b>{cat_to_display}</b> санатындағы лимит {overrun_str}-ға асып кетті.\n"
+            f"<b>{cat_from_display}</b> санатында бос бюджет бар.\n\n"
+            f"<b>{cat_from_display}</b> лимитінен <b>{cat_to_display}</b> лимитіне <b>{amount_str}</b> аударуды ұсынамын. Бюджеттер автоматты түрде түзетіледі."
+        )
+        btn_yes = f"✅ {amount_str} аудару"
+        btn_no = "❌ Бас тарту"
+    else:
+        suggestion_text = (
+            f"🤖 <b>ИИ-Балансировка бюджета</b>\n\n"
+            f"Превышение лимита в категории <b>{cat_to_display}</b> на {overrun_str}.\n"
+            f"Доступен свободный бюджет в категории <b>{cat_from_display}</b>.\n\n"
+            f"Предлагаю перенести <b>{amount_str}</b> из лимита <b>{cat_from_display}</b> в лимит <b>{cat_to_display}</b>. Бюджеты будут автоматически скорректированы."
+        )
+        btn_yes = f"✅ Перенести {amount_str}"
+        btn_no = "❌ Отклонить"
+
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=btn_yes, callback_data=f"budget:reallocate:apply:{cat_from_id}:{cat_to_id}:{transfer_amount}:{month}"),
+                InlineKeyboardButton(text=btn_no, callback_data="budget:reallocate:cancel")
+            ]
+        ]
+    )
+    
+    await c.message.edit_text(text=suggestion_text, reply_markup=markup, parse_mode=PARSE_MODE)
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("budget:reallocate:apply:"))
+async def _budget_reallocate_apply_callback(c: CallbackQuery, db):
+    parts = c.data.split(":")
+    if len(parts) < 7:
+        await c.answer()
+        return
+
+    cat_from_id = int(parts[3])
+    cat_to_id = int(parts[4])
+    transfer_amount = int(parts[5])
+    month = parts[6]
+    user_id = c.from_user.id
+    lang = await get_lang(db, user_id)
+
+    from app.db.repositories.budgets_repo import get_category_budget, upsert_budget
+    from app.db.repositories.categories_repo import get_category
+    from app.ui.i18n import t_category
+
+    lim_from = await get_category_budget(db, user_id, month, cat_from_id) or 0
+    lim_to = await get_category_budget(db, user_id, month, cat_to_id) or 0
+
+    new_lim_from = max(0, lim_from - transfer_amount)
+    new_lim_to = lim_to + transfer_amount
+
+    await upsert_budget(db, user_id, month, cat_from_id, new_lim_from)
+    await upsert_budget(db, user_id, month, cat_to_id, new_lim_to)
+    await db.commit()
+
+    cat_from_row = await get_category(db, user_id, cat_from_id)
+    cat_to_row = await get_category(db, user_id, cat_to_id)
+    
+    if cat_from_row and cat_to_row:
+        _, name_from, emoji_from, _, _ = cat_from_row
+        _, name_to, emoji_to, _, _ = cat_to_row
+        cat_from_display = f"{(emoji_from or '').strip()} {t_category(name_from, lang)}".strip()
+        cat_to_display = f"{(emoji_to or '').strip()} {t_category(name_to, lang)}".strip()
+    else:
+        cat_from_display = "Category From"
+        cat_to_display = "Category To"
+
+    amount_str = fmt_money(transfer_amount)
+
+    if lang == "en":
+        success_text = (
+            f"✅ <b>Budgets successfully rebalanced!</b>\n\n"
+            f"Limit for <b>{cat_from_display}</b> decreased by {amount_str}.\n"
+            f"Limit for <b>{cat_to_display}</b> increased by {amount_str}."
+        )
+    elif lang == "kk":
+        success_text = (
+            f"✅ <b>Бюджеттер сәтті теңестірілді!</b>\n\n"
+            f"<b>{cat_from_display}</b> лимиті {amount_str}-ға азайтылды.\n"
+            f"<b>{cat_to_display}</b> лимиті {amount_str}-ға көбейтілді."
+        )
+    else:
+        success_text = (
+            f"✅ <b>Бюджеты успешно сбалансированы!</b>\n\n"
+            f"Лимит <b>{cat_from_display}</b> уменьшен на {amount_str}.\n"
+            f"Лимит <b>{cat_to_display}</b> увеличен на {amount_str}."
+        )
+
+    await c.message.edit_text(text=success_text, reply_markup=None, parse_mode=PARSE_MODE)
+    await c.answer()
+
+
+@router.callback_query(F.data == "budget:reallocate:cancel")
+async def _budget_reallocate_cancel_callback(c: CallbackQuery):
+    try:
+        await c.message.delete()
+    except Exception:
+        try:
+            await c.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     await c.answer()
 
 
