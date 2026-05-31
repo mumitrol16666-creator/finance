@@ -1999,13 +1999,13 @@ async def export_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connect
     )
     (export_count,) = await cur_limit.fetchone()
 
-    MAX_MONTHLY_EXPORTS = 20
+    MAX_MONTHLY_EXPORTS = 100 if full_access else 20
     if export_count >= MAX_MONTHLY_EXPORTS:
         limit_err_text = {
-            "ru": "⚠️ Вы превысили лимит экспорта в этом месяце (максимум 20 экспортов в месяц).",
-            "en": "⚠️ You have exceeded the export limit for this month (maximum 20 exports per month).",
-            "kk": "⚠️ Осы айдағы экспорт лимитінен асып кеттіңіз (айына максимум 20 экспорт)."
-        }.get(lang, "⚠️ Вы превысили лимит экспорта в этом месяце (максимум 20 экспортов в месяц).")
+            "ru": f"⚠️ Вы превысили лимит экспорта в этом месяце (максимум {MAX_MONTHLY_EXPORTS} экспортов в месяц).",
+            "en": f"⚠️ You have exceeded the export limit for this month (maximum {MAX_MONTHLY_EXPORTS} exports per month).",
+            "kk": f"⚠️ Осы айдағы экспорт лимитінен асып кеттіңіз (айына максимум {MAX_MONTHLY_EXPORTS} экспорт)."
+        }.get(lang, f"⚠️ Вы превысили лимит экспорта в этом месяце (максимум {MAX_MONTHLY_EXPORTS} экспортов в месяц).")
         await c.answer(limit_err_text, show_alert=True)
         return
 
