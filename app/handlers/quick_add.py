@@ -265,9 +265,9 @@ async def _handoff_to_transactions(
 
 @router.message(F.text.regexp(r"\d{2,}") & ~F.text.startswith("/"))
 async def quick_autostart(m: Message, state: FSMContext, db):
-    current_state = await state.get_state()
-    if current_state is not None and current_state not in (IncomeFlow.amount.state, ExpenseFlow.amount.state):
-        return
+    # Отключаем автоматический парсинг текстовых сообщений во избежание ложных срабатываний.
+    # Ввод транзакций должен осуществляться строго через кнопки меню «Расход» / «Доход» или команду /q.
+    return
 
     # 1. Проверяем, стоит ли использовать AI (если есть ключ и текст сложный)
     # Сложный = много слов или есть намеки на несколько сумм
