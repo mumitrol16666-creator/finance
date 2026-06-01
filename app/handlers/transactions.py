@@ -1233,6 +1233,18 @@ async def exp_confirm(c: CallbackQuery, state: FSMContext, db):
         return
 
     if action == "account":
+        accs = await list_accounts(db, c.from_user.id)
+        active = [r for r in accs if int(r[3] or 0) == 0]
+        if len(active) <= 1:
+            lang = (await state.get_data()).get("lang", "ru")
+            msg = {
+                "ru": "⚠️ У вас только один активный счёт. Изменить его нельзя.",
+                "en": "⚠️ You have only one active account. You cannot change it.",
+                "kk": "⚠️ Сізде тек бір белсенді шот бар. Оны өзгерту мүмкін емес."
+            }.get(lang, "⚠️ У вас только один активный счёт. Изменить его нельзя.")
+            await c.answer(msg, show_alert=True)
+            return
+
         await state.update_data(editing_from_confirm=True)
         await state.set_state(ExpenseFlow.account)
         await _exp_render_account(c, state, db)
@@ -1770,6 +1782,18 @@ async def inc_confirm(c: CallbackQuery, state: FSMContext, db):
         return
 
     if action == "account":
+        accs = await list_accounts(db, c.from_user.id)
+        active = [r for r in accs if int(r[3] or 0) == 0]
+        if len(active) <= 1:
+            lang = (await state.get_data()).get("lang", "ru")
+            msg = {
+                "ru": "⚠️ У вас только один активный счёт. Изменить его нельзя.",
+                "en": "⚠️ You have only one active account. You cannot change it.",
+                "kk": "⚠️ Сізде тек бір белсенді шот бар. Оны өзгерту мүмкін емес."
+            }.get(lang, "⚠️ У вас только один активный счёт. Изменить его нельзя.")
+            await c.answer(msg, show_alert=True)
+            return
+
         await state.update_data(editing_from_confirm=True)
         await state.set_state(IncomeFlow.account)
         await _inc_render_account(c, state, db)
