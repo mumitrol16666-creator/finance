@@ -32,14 +32,14 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
   final List<Debt> _debts = [
     Debt(
       person: 'Алибек',
-      totalAmount: 1500000, // 15,000 KZT
-      paidAmount: 500000,
+      totalAmount: 15000, // 15,000 KZT
+      paidAmount: 5000,
       isIOwe: false, // he owes me
       dueDate: DateTime.now().add(const Duration(days: 5)),
     ),
     Debt(
       person: 'Марат',
-      totalAmount: 5000000, // 50,000 KZT
+      totalAmount: 50000, // 50,000 KZT
       paidAmount: 0,
       isIOwe: true, // I owe him
       dueDate: DateTime.now().add(const Duration(days: 12)),
@@ -60,7 +60,7 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
 
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor / 100);
+    return formatter.format(amountMinor);
   }
 
   @override

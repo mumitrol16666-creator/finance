@@ -30,19 +30,19 @@ class _RecurringScreenState extends State<RecurringScreen> {
   final List<RecurringTemplate> _templates = [
     RecurringTemplate(
       title: 'Netflix Premium',
-      amount: 450000, // 4,500 KZT
+      amount: 4500, // 4,500 KZT
       categoryEmoji: '🎬',
       dayOfMonth: 15,
     ),
     RecurringTemplate(
       title: 'Аренда квартиры',
-      amount: 15000000, // 150,000 KZT
+      amount: 150000, // 150,000 KZT
       categoryEmoji: '🏠',
       dayOfMonth: 1,
     ),
     RecurringTemplate(
       title: 'Абонемент в зал',
-      amount: 1200000, // 12,000 KZT
+      amount: 12000, // 12,000 KZT
       categoryEmoji: '💪',
       dayOfMonth: 28,
     ),
@@ -50,7 +50,7 @@ class _RecurringScreenState extends State<RecurringScreen> {
 
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor / 100);
+    return formatter.format(amountMinor);
   }
 
   @override

@@ -30,14 +30,14 @@ class _PlannedScreenState extends State<PlannedScreen> {
   final List<PlannedTx> _plannedEvents = [
     PlannedTx(
       title: 'Зарплата',
-      amount: 45000000, // 450,000 KZT
+      amount: 450000, // 450,000 KZT
       categoryEmoji: '💰',
       kind: 'income',
       expectedDate: DateTime.now().add(const Duration(days: 8)),
     ),
     PlannedTx(
       title: 'Плата за обучение',
-      amount: 8000000, // 80,000 KZT
+      amount: 80000, // 80,000 KZT
       categoryEmoji: '🎓',
       kind: 'expense',
       expectedDate: DateTime.now().add(const Duration(days: 15)),
@@ -46,7 +46,7 @@ class _PlannedScreenState extends State<PlannedScreen> {
 
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor / 100);
+    return formatter.format(amountMinor);
   }
 
   @override

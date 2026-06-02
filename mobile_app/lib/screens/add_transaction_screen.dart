@@ -73,7 +73,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
     // Save transaction in app state
     await appState.addTransaction(
-      amount: amountInt * 100, // into minor units
+      amount: amountInt, // raw whole units
       kind: _kind,
       categoryName: category.name,
       categoryEmoji: category.emoji,

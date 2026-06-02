@@ -9,7 +9,7 @@ class DashboardScreen extends StatelessWidget {
 
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor / 100);
+    return formatter.format(amountMinor);
   }
 
   @override

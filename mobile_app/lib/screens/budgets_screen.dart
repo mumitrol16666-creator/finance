@@ -14,12 +14,12 @@ class BudgetsScreen extends StatefulWidget {
 class _BudgetsScreenState extends State<BudgetsScreen> {
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor / 100);
+    return formatter.format(amountMinor);
   }
 
   void _showEditLimitDialog(BuildContext context, String categoryName, int? currentLimit) {
     final controller = TextEditingController(
-      text: currentLimit != null ? (currentLimit / 100).toStringAsFixed(0) : '',
+      text: currentLimit != null ? currentLimit.toString() : '',
     );
 
     showDialog(
@@ -51,7 +51,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('✅ Лимит категории "$categoryName" изменен на ${_formatKzt(amount * 100)}'),
+                    content: Text('✅ Лимит категории "$categoryName" изменен на ${_formatKzt(amount)}'),
                     backgroundColor: AppTheme.income,
                   ),
                 );
