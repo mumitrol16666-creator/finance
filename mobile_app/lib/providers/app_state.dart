@@ -125,6 +125,15 @@ class AppState extends ChangeNotifier {
         _token = data['token'] as String;
         _isAuthenticated = true;
         _isLoading = false;
+        
+        // Clear mock data before loading real data
+        _accounts = [];
+        _categories = [];
+        _transactions = [];
+        _debts = [];
+        _recurringTemplates = [];
+        _plannedEvents = [];
+        
         notifyListeners();
         await loadDashboardData();
         return true;
@@ -217,6 +226,24 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
+  Future<void> refreshAllData() async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      await Future.wait([
+        loadDashboardData(),
+        _fetchRecurringSilent(),
+        _fetchDebtsSilent(),
+        _fetchPlannedSilent(),
+      ]);
+    } catch (e) {
+      print('Error refreshing data: $e');
+    }
+    _isLoading = false;
+    notifyListeners();
+  }
+
   Future<void> _fetchPlannedSilent() async {
     try {
       final response = await http.get(
@@ -263,6 +290,13 @@ class AppState extends ChangeNotifier {
     _isPremium = false;
     _premiumExpirationDate = null;
     _availableFeatures = [];
+    _accounts = [];
+    _categories = [];
+    _transactions = [];
+    _debts = [];
+    _recurringTemplates = [];
+    _plannedEvents = [];
+    _weeklyStreak = [false, false, false, false, false, false, false];
     _chatHistory = [
       ChatMessage(
         text: 'Привет! Я твой финансовый ИИ-консультант. Чем я могу помочь тебе сегодня?',
@@ -470,6 +504,64 @@ class AppState extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> addCategory({
+    required String name,
+    String emoji = '📦',
+    String kind = 'expense',
+  }) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/categories'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+        body: json.encode({
+          'name': name,
+          'emoji': emoji,
+          'kind': kind,
+        }),
+      );
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      } else {
+        throw Exception('Ошибка при добавлении категории: ${response.body}');
+      }
+    } catch (e) {
+      _isLoading = false;
+      notifyListeners();
+      rethrow;
+    }
+    _isLoading = false;
+    notifyListeners();
+  }
+
+  Future<void> deleteCategory(int categoryId) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/api/categories/$categoryId'),
+        headers: {'Authorization': 'Bearer $_token'},
+      );
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      } else {
+        throw Exception('Ошибка при удалении категории: ${response.body}');
+      }
+    } catch (e) {
+      _isLoading = false;
+      notifyListeners();
+      rethrow;
+    }
+    _isLoading = false;
+    notifyListeners();
   }
 
   Future<void> addPlanned({
