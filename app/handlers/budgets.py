@@ -215,6 +215,11 @@ def _budget_picker_meta(
     return ordered, right_map, badge_map
 
 
+def _progress_bar(percent: float, length: int = 10) -> str:
+    filled = int((percent / 100) * length)
+    filled = max(0, min(length, filled))
+    return f"[{'█'*filled}{'░'*(length - filled)}]"
+
 def _limit_card_text(
     *,
     month: str,
@@ -241,7 +246,10 @@ def _limit_card_text(
         ]
         return "\n".join(lines)
 
+    percent = (spent / current_limit) * 100 if current_limit > 0 else 0
+    bar = _progress_bar(percent, 10)
     lines.append(f"📉 Текущий лимит: <b>{_fmt(current_limit)}</b>")
+    lines.append(f"📊 <code>{bar}</code> {percent:.0f}%")
 
     if left_now is not None:
         if left_now > 0:

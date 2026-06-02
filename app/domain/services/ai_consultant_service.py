@@ -1473,14 +1473,15 @@ def render_ai_report(context: dict) -> str:
             advice.append(f"Главные точки воздействия сейчас: {parts}. Вместе это около <b>{fmt_money(scenario_total_20)}</b> экономии.")
     if budget_snapshot.get("over_count"):
         advice.append("Сначала режь категории с уже пробитым лимитом — это самые быстрые утечки, которые влияют на конец месяца прямо сейчас.")
+    projected_end_balance = total_balance + projected_required_free_cash
     if projected_required_free_cash < 0:
-        advice.append("После обязательных будущих движений месяц уже выглядит криво: дефицит формируется не из хотелок, а из базы. Тут сначала надо выровнять обязательную часть.")
+        advice.append(f"Учитывая обязательные будущие платежи, образуется дефицит бюджета. Прогноз итогового капитала к концу месяца: около <b>{fmt_money(projected_end_balance)}</b>.")
     elif projected_free_cash < 0:
-        advice.append("По обязательной части всё ещё держится, но в минус тебя уводят уже гибкие планы и плавающие траты. Их как раз и стоит трогать первыми.")
+        advice.append(f"По обязательной части всё держится, но текущий темп трат создает дефицит. Прогноз итогового капитала к концу месяца: около <b>{fmt_money(projected_end_balance)}</b>.")
     elif projected_free_cash < max(20000, projected_month_expense * 0.1):
-        advice.append("Свободный остаток тонкий. Лучше заранее поставить жёсткий лимит на 1–2 плавающие категории и не трогать резерв на счёте.")
+        advice.append(f"Свободный поток тонкий. Прогноз итогового капитала к концу месяца: около <b>{fmt_money(projected_end_balance)}</b>.")
     else:
-        advice.append(f"При текущем темпе у тебя может остаться около <b>{fmt_money(projected_free_cash)}</b> свободных денег к концу месяца.")
+        advice.append(f"При текущем темпе к концу месяца итоговый капитал может составить около <b>{fmt_money(projected_end_balance)}</b> (рост на <b>{fmt_money(projected_free_cash)}</b>).")
     if debt_snapshot.get("monthly_out") and projected_free_cash > 0 and debt_snapshot["monthly_out"] > projected_free_cash:
         advice.append("Регулярные платежи по долгам выше прогнозного свободного остатка — лучше не брать на себя новые обязательства и синхронизировать график выплат.")
     if eta_current is not None:
@@ -1532,9 +1533,9 @@ def render_ai_report_download(context: dict) -> str:
         f"Текущий месяц MTD расход: {fmt_money(month['expense'])}",
         f"Прогноз доходов к концу месяца: {fmt_money(int(context.get('projected_month_income') or 0))}",
         f"Прогноз расхода к концу месяца: {fmt_money(int(context['projected_month_expense'] or 0))}",
-        f"Прогноз свободного остатка: {fmt_money(int(context['projected_free_cash'] or 0))}",
-        f"После обязательных будущих движений: {fmt_money(int(context.get('projected_required_free_cash') or 0))}",
-        f"Баланс на счетах: {fmt_money(int(context.get('total_balance') or 0))}",
+        f"Прогноз свободного остатка (cashflow): {fmt_money(int(context['projected_free_cash'] or 0))}",
+        f"Текущий баланс на счетах: {fmt_money(int(context.get('total_balance') or 0))}",
+        f"Прогноз ИТОГОВОГО БАЛАНСА: {fmt_money(int(context.get('total_balance') or 0) + int(context.get('projected_required_free_cash') or 0))}",
         f"Запас по дням: {context.get('runway_days') if context.get('runway_days') is not None else 'n/a'}",
         "",
         f"Лимиты: over={budget_snapshot.get('over_count', 0)}, warn={budget_snapshot.get('warn_count', 0)}",
@@ -1567,8 +1568,12 @@ def build_ai_scheduler_warning(context: dict) -> str:
     elif budget_snapshot.get("warn_count"):
         lines.append(f"Категории на грани лимита: <b>{budget_snapshot['warn_count']}</b>")
 
+    due_total = int(recurring_snapshot.get("total") or 0) + max(0, int(planned_snapshot.get("required_expense_total") or 0) - int(planned_snapshot.get("required_income_total") or 0))
     if projected_required_free_cash < 0:
-        lines.append(f"После обязательных будущих движений уже минус: <b>{fmt_money(projected_required_free_cash)}</b>")
+        if due_total > 0:
+            lines.append(f"С учётом обязательных будущих движений уже минус: <b>{fmt_money(projected_required_free_cash)}</b>")
+        else:
+            lines.append(f"При текущем темпе трат полный прогноз в минусе: <b>{fmt_money(projected_required_free_cash)}</b>")
     elif projected_free_cash < 0:
         lines.append(f"Обязательная часть ещё держится, но полный прогноз уже в минусе: <b>{fmt_money(projected_free_cash)}</b>")
     elif projected_free_cash < max(15000, int((context.get('projected_month_expense') or 0) * 0.1)) and month.get('expense'):
@@ -1617,11 +1622,13 @@ _SECTION_HINTS = {
         "debt_empty": "Активных долгов нет. Этот раздел пока чистый.",
         "reports_over": "Лимиты уже пробиты: <b>{count}</b>. Отчёт уже горит красным.",
         "reports_warn": "Категорий на грани лимита: <b>{count}</b>.",
-        "reports_minus": "После обязательных будущих движений месяц уже в минусе: <b>{amount}</b>.",
+        "reports_minus_due": "С учётом обязательных будущих движений месяц уходит в минус: <b>{amount}</b>.",
+        "reports_minus": "При текущем темпе трат месяц уходит в минус: <b>{amount}</b>.",
         "reports_thin": "Свободный остаток к концу месяца тонкий: около <b>{amount}</b>.",
         "reports_empty_suggest": "Пока критичных сигналов нет. Но для точного прогноза остатка к концу месяца добавь <b>Планирование</b>.",
         "reports_ok": "Критичных сигналов по месяцу сейчас нет.",
-        "main_minus": "После обязательных движений месяц уже уходит в минус: <b>{amount}</b>.",
+        "main_minus_due": "С учётом обязательных движений месяц уходит в минус: <b>{amount}</b>.",
+        "main_minus": "При текущем темпе трат месяц уходит в минус: <b>{amount}</b>.",
         "main_overdue": "Просроченные долги: <b>{count}</b>. Не делай вид, что их нет.",
         "main_limits": "Лимиты уже пробиты в <b>{count}</b> категориях.",
         "main_due": "До конца месяца ещё висят обязательные движения на <b>{amount}</b>.",
@@ -1645,11 +1652,13 @@ _SECTION_HINTS = {
         "debt_empty": "No active debts. This section is clean for now.",
         "reports_over": "Budget limits are already broken in <b>{count}</b> categories.",
         "reports_warn": "Categories close to the limit: <b>{count}</b>.",
-        "reports_minus": "After required future moves, the month is already negative: <b>{amount}</b>.",
+        "reports_minus_due": "Considering required future moves, the month is negative: <b>{amount}</b>.",
+        "reports_minus": "At the current spending rate, the month is negative: <b>{amount}</b>.",
         "reports_thin": "Free cash by month end looks thin: around <b>{amount}</b>.",
         "reports_empty_suggest": "No critical signals yet. But for an accurate month-end forecast, add <b>Planning</b> data.",
         "reports_ok": "No critical month signals right now.",
-        "main_minus": "After required moves, the month is already negative: <b>{amount}</b>.",
+        "main_minus_due": "Considering required moves, the month is negative: <b>{amount}</b>.",
+        "main_minus": "At the current spending rate, the month is negative: <b>{amount}</b>.",
         "main_overdue": "Overdue debts: <b>{count}</b>. Stop pretending they are not there.",
         "main_limits": "Budget limits are already broken in <b>{count}</b> categories.",
         "main_due": "Required moves still hanging until month end: <b>{amount}</b>.",
@@ -1673,11 +1682,13 @@ _SECTION_HINTS = {
         "debt_empty": "Белсенді қарыздар жоқ. Бұл бөлім әзірге таза.",
         "reports_over": "Лимиттер бұзылған санаттар: <b>{count}</b>.",
         "reports_warn": "Лимитке жақын санаттар: <b>{count}</b>.",
-        "reports_minus": "Міндетті болашақ қозғалыстардан кейін ай қазірдің өзінде минуста: <b>{amount}</b>.",
+        "reports_minus_due": "Міндетті болашақ қозғалыстармен ай минусқа кетіп тұр: <b>{amount}</b>.",
+        "reports_minus": "Ағымдағы шығын қарқынымен ай минусқа кетіп тұр: <b>{amount}</b>.",
         "reports_thin": "Ай соңындағы бос қалдық жұқа: шамамен <b>{amount}</b>.",
         "reports_empty_suggest": "Әзірге сыни сигналдар жоқ. Бірақ ай соңындағы болжам дәл болуы үшін <b>Жоспарлауды</b> қосыңыз.",
         "reports_ok": "Қазір ай бойынша сыни сигналдар жоқ.",
-        "main_minus": "Міндетті қозғалыстардан кейін ай минусқа кетіп тұр: <b>{amount}</b>.",
+        "main_minus_due": "Міндетті қозғалыстарды ескергенде ай минусқа кетіп тұр: <b>{amount}</b>.",
+        "main_minus": "Ағымдағы шығын қарқынымен ай минусқа кетіп тұр: <b>{amount}</b>.",
         "main_overdue": "Мерзімі өткен қарыздар: <b>{count}</b>.",
         "main_limits": "Лимиттер <b>{count}</b> санатта бұзылған.",
         "main_due": "Ай соңына дейін міндетті қозғалыстар әлі бар: <b>{amount}</b>.",
@@ -1886,10 +1897,14 @@ async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: st
         else:
             body = _hint_text(lang, "debt_empty")
     elif section == "reports":
+        due_total = int(recurring_snapshot.get("total") or 0) + max(0, int(planned_snapshot.get("required_expense_total") or 0) - int(planned_snapshot.get("required_income_total") or 0))
         if int(budget_snapshot.get("over_count") or 0) > 0:
             body = _hint_text(lang, "reports_over", count=int(budget_snapshot.get("over_count") or 0))
         elif projected_required_free_cash < 0:
-            body = _hint_text(lang, "reports_minus", amount=fmt_money(projected_required_free_cash, currency))
+            if due_total > 0:
+                body = _hint_text(lang, "reports_minus_due", amount=fmt_money(projected_required_free_cash, currency))
+            else:
+                body = _hint_text(lang, "reports_minus", amount=fmt_money(projected_required_free_cash, currency))
         elif int(budget_snapshot.get("warn_count") or 0) > 0:
             body = _hint_text(lang, "reports_warn", count=int(budget_snapshot.get("warn_count") or 0))
         elif projected_free_cash < max(15000, int((context.get("projected_month_expense") or 0) * 0.1)) and int((context.get("month") or {}).get("expense") or 0) > 0:
@@ -1901,7 +1916,10 @@ async def build_section_hint(db: aiosqlite.Connection, user_id: int, section: st
     elif section == "main_menu":
         due_total = int(recurring_snapshot.get("total") or 0) + max(0, int(planned_snapshot.get("required_expense_total") or 0) - int(planned_snapshot.get("required_income_total") or 0))
         if projected_required_free_cash < 0:
-            body = _hint_text(lang, "main_minus", amount=fmt_money(projected_required_free_cash, currency))
+            if due_total > 0:
+                body = _hint_text(lang, "main_minus_due", amount=fmt_money(projected_required_free_cash, currency))
+            else:
+                body = _hint_text(lang, "main_minus", amount=fmt_money(projected_required_free_cash, currency))
         elif int(debt_snapshot.get("overdue_count") or 0) > 0:
             body = _hint_text(lang, "main_overdue", count=int(debt_snapshot.get("overdue_count") or 0))
         elif int(budget_snapshot.get("over_count") or 0) > 0:
