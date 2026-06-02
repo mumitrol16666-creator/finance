@@ -75,6 +75,27 @@ jobs:
             .venv/bin/pip install --upgrade pip
             .venv/bin/pip install -r requirements.txt
 
+            # ── Migration & Systemd Service Update ──────────────────────────
+            # 1. Copy environment file if missing in /opt/finance-bot
+            if [ ! -f "$APP_DIR/.env" ] && [ -f "/root/Finance_bot/.env" ]; then
+              echo "▸ Migrating .env from /root/Finance_bot to $APP_DIR …"
+              cp /root/Finance_bot/.env "$APP_DIR/.env"
+            fi
+
+            # 2. Copy database if it exists in /root/Finance_bot and is newer/missing in /opt/finance-bot
+            if [ -f "/root/Finance_bot/data/bot.db" ]; then
+              mkdir -p "$APP_DIR/data"
+              if [ ! -f "$APP_DIR/data/bot.db" ] || [ "/root/Finance_bot/data/bot.db" -nt "$APP_DIR/data/bot.db" ]; then
+                echo "▸ Syncing database from /root/Finance_bot/data/bot.db to $APP_DIR/data/bot.db …"
+                cp /root/Finance_bot/data/bot.db "$APP_DIR/data/bot.db"
+              fi
+            fi
+
+            # 3. Copy service file and reload systemd to switch to /opt/finance-bot
+            echo "▸ Updating systemd service file …"
+            sudo cp "$APP_DIR/finance-bot.service" /etc/systemd/system/finance-bot.service
+            sudo systemctl daemon-reload
+
             # Restart the bot (systemd service)
             echo "=== SYSTEMD SERVICE INFO ==="
             sudo systemctl cat finance-bot || true
