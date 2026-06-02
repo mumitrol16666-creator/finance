@@ -74,6 +74,12 @@ class AppTheme {
         surface: surface,
         error: expense,
       ),
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        },
+      ),
       useMaterial3: true,
     );
   }

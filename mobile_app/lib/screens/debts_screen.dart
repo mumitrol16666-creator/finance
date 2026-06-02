@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 class DebtsScreen extends StatefulWidget {
   const DebtsScreen({super.key});
@@ -426,7 +427,7 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
               ),
             ],
           ),
-        );
+        ).animate().fade(delay: Duration(milliseconds: 100 + (index * 50))).slideY(begin: 0.1);
       },
     );
   }
