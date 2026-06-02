@@ -66,12 +66,39 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
 
   Widget _buildTabItem(int index, IconData icon, String label) {
     final isSelected = _currentIndex == index;
+    final appState = Provider.of<AppState>(context);
+    final isLocked = index == 2 && !appState.hasFeature('ai');
+
     return GestureDetector(
-      onTap: () => setState(() => _currentIndex = index),
+      onTap: () {
+        if (isLocked) {
+          AppTheme.showPremiumBlockDialog(context);
+          return;
+        }
+        setState(() => _currentIndex = index);
+      },
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: isSelected ? AppTheme.primary : AppTheme.textSecondary, size: 22),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(icon, color: isSelected ? AppTheme.primary : AppTheme.textSecondary, size: 22),
+              if (isLocked)
+                Positioned(
+                  right: -4,
+                  top: -4,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: const BoxDecoration(
+                      color: AppTheme.secondary,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.lock, color: Colors.white, size: 8),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 4),
           Text(
             label,

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../core/theme.dart';
+import '../providers/app_state.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -231,6 +233,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showDeleteWarningDialog(BuildContext context) {
+    final appState = Provider.of<AppState>(context, listen: false);
     showDialog(
       context: context,
       builder: (context) {
@@ -247,8 +250,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 Navigator.pop(context);
+                await appState.wipeUserData();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Данные очищены. Вы вышли из аккаунта.'),

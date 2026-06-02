@@ -12,6 +12,110 @@ class AccountsScreen extends StatelessWidget {
     return formatter.format(amountMinor);
   }
 
+  void _showAddAccountDialog(BuildContext context, AppState appState) {
+    final nameController = TextEditingController();
+    final balanceController = TextEditingController();
+    bool isSaving = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.border),
+              ),
+              title: const Text('Новый счёт', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    style: const TextStyle(color: AppTheme.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Название счёта',
+                      labelStyle: TextStyle(color: AppTheme.textSecondary),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: balanceController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: AppTheme.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Стартовый баланс',
+                      labelStyle: TextStyle(color: AppTheme.textSecondary),
+                      suffixText: '₸',
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Накопительный счёт', style: TextStyle(color: AppTheme.textPrimary)),
+                      Switch(
+                        value: isSaving,
+                        activeColor: AppTheme.primary,
+                        onChanged: (val) {
+                          setState(() {
+                            isSaving = val;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final name = nameController.text.trim();
+                    final balance = int.tryParse(balanceController.text) ?? 0;
+                    if (name.isEmpty) return;
+
+                    try {
+                      Navigator.pop(context);
+                      await appState.addAccount(
+                        name: name,
+                        balance: balance,
+                        isSaving: isSaving ? 1 : 0,
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('✅ Счёт "$name" успешно создан!'),
+                          backgroundColor: AppTheme.income,
+                        ),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('❌ Ошибка: ${e.toString().replaceAll("Exception: ", "")}'),
+                          backgroundColor: AppTheme.expense,
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Создать', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
@@ -93,11 +197,7 @@ class AccountsScreen extends StatelessWidget {
               ),
 
               ElevatedButton(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Добавление счетов будет подключено в следующем релизе!')),
-                  );
-                },
+                onPressed: () => _showAddAccountDialog(context, appState),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   backgroundColor: AppTheme.surfaceCard,

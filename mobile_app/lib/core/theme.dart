@@ -77,6 +77,38 @@ class AppTheme {
       useMaterial3: true,
     );
   }
+
+  static void showPremiumBlockDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: border),
+          ),
+          title: Row(
+            children: const [
+              Icon(Icons.star_rounded, color: secondary, size: 28),
+              SizedBox(width: 8),
+              Text('FinTrack Premium', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+            ],
+          ),
+          content: const Text(
+            'Данная функция доступна только в Premium-версии.\n\nАктивируйте Premium в нашем Telegram боте с помощью команды /upgrade или получите пробный период!',
+            style: TextStyle(color: textPrimary, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Хорошо', style: TextStyle(color: primary, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 // Reusable premium Glassmorphic Card widget
