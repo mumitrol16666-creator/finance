@@ -42,6 +42,19 @@ class AppTheme {
   static const Color expense = Color(0xFFF43F5E);
   static const Color textPrimary = Color(0xFFF9FAFB);
   static const Color textSecondary = Color(0xFF9CA3AF);
+  static const Color accentBlue = Color(0xFF3B82F6);
+
+  // Glassmorphic Card decoration helper
+  static BoxDecoration glassCardDecoration({double radius = 20, double borderOpacity = 0.08, Color? color}) {
+    return BoxDecoration(
+      color: color ?? Colors.white.withOpacity(0.035),
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(
+        color: Colors.white.withOpacity(borderOpacity),
+        width: 1.2,
+      ),
+    );
+  }
 
   // Theme Builder
   static ThemeData get darkTheme {
@@ -132,7 +145,6 @@ class BackgroundGlowBlob extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: color.withOpacity(opacity),
-        physics: const NeverScrollableScrollPhysics(), // Prevent layout bounds triggers
         boxShadow: [
           BoxShadow(
             color: color.withOpacity(opacity),

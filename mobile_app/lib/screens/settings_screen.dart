@@ -60,7 +60,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         icon: Icons.monetization_on_rounded,
                         title: 'Основная валюта',
                         value: _currency,
-                        items: ['KZT (₸)', 'RUB (₽)', 'USD ($)', 'EUR (€)'],
+                        items: ['KZT (₸)', 'RUB (₽)', 'USD (\$)', 'EUR (€)'],
                         onChanged: (val) {
                           if (val != null) setState(() => _currency = val);
                         },
@@ -156,11 +156,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildSectionHeader(String title) {
     return Padding(
       padding: const EdgeInsets.only(left: 4.0),
-      style: const TextStyle(
-        color: AppTheme.textSecondary,
-        fontSize: 11,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 1.0,
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: AppTheme.textSecondary,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 1.0,
+        ),
       ),
     );
   }
