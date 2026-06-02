@@ -84,7 +84,7 @@ class AppState extends ChangeNotifier {
   int get monthlyExpenses => _categories.fold(0, (sum, cat) => sum + cat.spentAmount);
 
   String? _token;
-  final String _baseUrl = 'http://localhost:8000';
+  final String _baseUrl = 'http://178.105.162.123:8000';
 
   // Authentication
   Future<bool> verifyLoginCode(String code) async {
