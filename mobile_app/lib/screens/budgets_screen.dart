@@ -17,7 +17,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     return formatter.format(amountMinor);
   }
 
-  void _showEditLimitDialog(BuildContext context, String categoryName, int? currentLimit) {
+  void _showEditLimitDialog(BuildContext context, AppState appState, int categoryId, String categoryName, int? currentLimit) {
     final controller = TextEditingController(
       text: currentLimit != null ? currentLimit.toString() : '',
     );
@@ -27,7 +27,11 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       builder: (context) {
         return AlertDialog(
           backgroundColor: AppTheme.surface,
-          title: Text('Лимит для "$categoryName"', style: const TextStyle(fontWeight: FontWeight.bold)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppTheme.border),
+          ),
+          title: Text('Лимит для "$categoryName"', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
           content: TextField(
             controller: controller,
             keyboardType: TextInputType.number,
@@ -36,6 +40,8 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
               hintText: 'Сумма лимита в тенге',
               hintStyle: TextStyle(color: Colors.white24),
               suffixText: '₸',
+              enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+              focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
             ),
           ),
           actions: [
@@ -44,17 +50,25 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
               child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 final amount = int.tryParse(controller.text) ?? 0;
-                // Logically update the limit in State Provider
-                // For mock, we just show a snackbar and pop
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('✅ Лимит категории "$categoryName" изменен на ${_formatKzt(amount)}'),
-                    backgroundColor: AppTheme.income,
-                  ),
-                );
+                try {
+                  await appState.saveBudget(categoryId: categoryId, amount: amount);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('✅ Лимит категории "$categoryName" изменен на ${_formatKzt(amount)}'),
+                      backgroundColor: AppTheme.income,
+                    ),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('❌ Не удалось сохранить лимит: $e'),
+                      backgroundColor: AppTheme.expense,
+                    ),
+                  );
+                }
               },
               child: const Text('Сохранить', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
             ),
@@ -120,7 +134,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                               ),
                               IconButton(
                                 icon: const Icon(Icons.edit_note_rounded, color: AppTheme.primary),
-                                onPressed: () => _showEditLimitDialog(context, cat.name, cat.limitAmount),
+                                onPressed: () => _showEditLimitDialog(context, appState, cat.id, cat.name, cat.limitAmount),
                               ),
                             ],
                           ),

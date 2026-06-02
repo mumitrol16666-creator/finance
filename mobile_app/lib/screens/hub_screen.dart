@@ -31,6 +31,7 @@ class HubScreen extends StatelessWidget {
         'icon': Icons.handshake_rounded,
         'color': AppTheme.secondary,
         'target': const DebtsScreen(),
+        'feature': 'debts',
       },
       {
         'title': 'Регулярные',
@@ -38,6 +39,7 @@ class HubScreen extends StatelessWidget {
         'icon': Icons.loop_rounded,
         'color': AppTheme.primary,
         'target': const RecurringScreen(),
+        'feature': 'recurring',
       },
       {
         'title': 'Бюджеты',
@@ -52,6 +54,7 @@ class HubScreen extends StatelessWidget {
         'icon': Icons.schedule_rounded,
         'color': Colors.orangeAccent,
         'target': const PlannedScreen(),
+        'feature': 'planned',
       },
       {
         'title': 'Настройки',
@@ -81,25 +84,38 @@ class HubScreen extends StatelessWidget {
                   children: [
                     Container(
                       padding: const EdgeInsets.all(12),
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: AppTheme.primaryGradient,
+                        gradient: appState.isPremium ? AppTheme.primaryGradient : null,
+                        color: appState.isPremium ? null : AppTheme.surfaceCard,
                       ),
-                      child: const Icon(Icons.star_rounded, color: Colors.white, size: 24),
+                      child: Icon(
+                        appState.isPremium ? Icons.star_rounded : Icons.star_border_rounded,
+                        color: appState.isPremium ? Colors.white : AppTheme.textSecondary,
+                        size: 24,
+                      ),
                     ),
                     const SizedBox(width: 14),
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'FinTrack Premium',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
+                            appState.isPremium ? 'FinTrack Premium' : 'FinTrack Free',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
                           ),
-                          SizedBox(height: 2),
+                          const SizedBox(height: 2),
                           Text(
-                            'Подписка активна до 30 июня',
-                            style: TextStyle(color: AppTheme.income, fontSize: 11, fontWeight: FontWeight.w600),
+                            appState.isPremium
+                                ? (appState.premiumExpirationDate != null
+                                    ? 'Подписка активна до ${appState.premiumExpirationDate}'
+                                    : 'Подписка активна')
+                                : 'Активируйте Premium в боте (/upgrade)',
+                            style: TextStyle(
+                              color: appState.isPremium ? AppTheme.income : AppTheme.textSecondary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ],
                       ),
@@ -128,8 +144,14 @@ class HubScreen extends StatelessWidget {
                   itemCount: tools.length,
                   itemBuilder: (context, index) {
                     final item = tools[index];
+                    final isLocked = item['feature'] != null && !appState.hasFeature(item['feature'] as String);
+
                     return GestureDetector(
                       onTap: () {
+                        if (isLocked) {
+                          AppTheme.showPremiumBlockDialog(context);
+                          return;
+                        }
                         if (item['target'] != null) {
                           Navigator.push(
                             context,
@@ -155,12 +177,12 @@ class HubScreen extends StatelessWidget {
                               children: [
                                 Icon(
                                   item['icon'] as IconData,
-                                  color: item['color'] as Color,
+                                  color: isLocked ? AppTheme.textSecondary : item['color'] as Color,
                                   size: 26,
                                 ),
                                 Icon(
-                                  Icons.chevron_right_rounded,
-                                  color: AppTheme.textSecondary.withOpacity(0.5),
+                                  isLocked ? Icons.lock_outline_rounded : Icons.chevron_right_rounded,
+                                  color: isLocked ? AppTheme.secondary : AppTheme.textSecondary.withOpacity(0.5),
                                   size: 16,
                                 ),
                               ],

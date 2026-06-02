@@ -1,22 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../core/theme.dart';
-
-class Debt {
-  final String person;
-  final int totalAmount; // minor units
-  final int paidAmount;
-  final bool isIOwe;
-  final DateTime dueDate;
-
-  Debt({
-    required this.person,
-    required this.totalAmount,
-    required this.paidAmount,
-    required this.isIOwe,
-    required this.dueDate,
-  });
-}
+import '../providers/app_state.dart';
+import '../models/models.dart';
 
 class DebtsScreen extends StatefulWidget {
   const DebtsScreen({super.key});
@@ -28,28 +15,13 @@ class DebtsScreen extends StatefulWidget {
 class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // Mock debts
-  final List<Debt> _debts = [
-    Debt(
-      person: 'Алибек',
-      totalAmount: 15000, // 15,000 KZT
-      paidAmount: 5000,
-      isIOwe: false, // he owes me
-      dueDate: DateTime.now().add(const Duration(days: 5)),
-    ),
-    Debt(
-      person: 'Марат',
-      totalAmount: 50000, // 50,000 KZT
-      paidAmount: 0,
-      isIOwe: true, // I owe him
-      dueDate: DateTime.now().add(const Duration(days: 12)),
-    ),
-  ];
-
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<AppState>(context, listen: false).loadDebts();
+    });
   }
 
   @override
@@ -63,8 +35,256 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
     return formatter.format(amountMinor);
   }
 
+  void _showPayDebtDialog(BuildContext context, AppState appState, Debt debt) {
+    final amountController = TextEditingController(
+      text: debt.paymentAmount > 0 ? debt.paymentAmount.toString() : debt.remainingAmount.toString(),
+    );
+    final dateController = TextEditingController(text: debt.nextPaymentDate ?? '');
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppTheme.border),
+          ),
+          title: Text('Оплата долга: ${debt.title}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: AppTheme.textPrimary),
+                decoration: const InputDecoration(
+                  labelText: 'Сумма платежа',
+                  labelStyle: TextStyle(color: AppTheme.textSecondary),
+                  suffixText: '₸',
+                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: dateController,
+                style: const TextStyle(color: AppTheme.textPrimary),
+                decoration: const InputDecoration(
+                  labelText: 'Следующий платёж (ГГГГ-ММ-ДД)',
+                  labelStyle: TextStyle(color: AppTheme.textSecondary),
+                  hintText: 'Необязательно',
+                  hintStyle: TextStyle(color: Colors.white24),
+                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                ),
+                onTap: () async {
+                  FocusScope.of(context).requestFocus(FocusNode());
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: DateTime.now(),
+                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                    lastDate: DateTime.now().add(const Duration(days: 3650)),
+                  );
+                  if (date != null) {
+                    dateController.text = DateFormat('yyyy-MM-dd').format(date);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+            ),
+            TextButton(
+              onPressed: () async {
+                final amt = int.tryParse(amountController.text) ?? 0;
+                if (amt <= 0) return;
+                Navigator.pop(context);
+                await appState.payDebt(
+                  debt.id,
+                  amount: amt,
+                  nextPaymentDate: dateController.text.trim().isEmpty ? null : dateController.text.trim(),
+                );
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('✅ Платеж успешно внесен!'),
+                    backgroundColor: AppTheme.income,
+                  ),
+                );
+              },
+              child: const Text('Оплатить', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showAddDebtDialog(BuildContext context, AppState appState) {
+    final titleController = TextEditingController();
+    final amountController = TextEditingController();
+    final paymentController = TextEditingController();
+    final dateController = TextEditingController();
+    String direction = 'out'; // I owe
+    String dtype = 'private'; // Private person
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.border),
+              ),
+              title: const Text('Новый долг / заём', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: direction,
+                      dropdownColor: AppTheme.surface,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Тип обязательства',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'out', child: Text('Я должен (Долг)')),
+                        DropdownMenuItem(value: 'in', child: Text('Мне должны (Заём)')),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) setState(() => direction = val);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: dtype,
+                      dropdownColor: AppTheme.surface,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Кредитор / Дебитор',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'private', child: Text('Физ. лицо')),
+                        DropdownMenuItem(value: 'bank', child: Text('Банк / Организация')),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) setState(() => dtype = val);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: titleController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Имя / Название',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: amountController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Общая сумма',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        suffixText: '₸',
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: paymentController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Сумма платежа',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        hintText: 'Необязательно',
+                        suffixText: '₸',
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: dateController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Дата платежа (ГГГГ-ММ-ДД)',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        hintText: 'Необязательно',
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                      onTap: () async {
+                        FocusScope.of(context).requestFocus(FocusNode());
+                        final date = await showDatePicker(
+                          context: context,
+                          initialDate: DateTime.now(),
+                          firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                          lastDate: DateTime.now().add(const Duration(days: 3650)),
+                        );
+                        if (date != null) {
+                          dateController.text = DateFormat('yyyy-MM-dd').format(date);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final title = titleController.text.trim();
+                    final amount = int.tryParse(amountController.text) ?? 0;
+                    if (title.isEmpty || amount <= 0) return;
+                    Navigator.pop(context);
+                    await appState.addDebt(
+                      title: title,
+                      remainingAmount: amount,
+                      direction: direction,
+                      dtype: dtype,
+                      paymentAmount: int.tryParse(paymentController.text),
+                      nextPaymentDate: dateController.text.trim().isEmpty ? null : dateController.text.trim(),
+                    );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('✅ Долг/заём "$title" успешно добавлен!'),
+                        backgroundColor: AppTheme.income,
+                      ),
+                    );
+                  },
+                  child: const Text('Добавить', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
@@ -91,16 +311,21 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
         child: TabBarView(
           controller: _tabController,
           children: [
-            _buildDebtList(isIOwe: false),
-            _buildDebtList(isIOwe: true),
+            _buildDebtList(appState, isIOwe: false),
+            _buildDebtList(appState, isIOwe: true),
           ],
         ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showAddDebtDialog(context, appState),
+        backgroundColor: AppTheme.primary,
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
 
-  Widget _buildDebtList({required bool isIOwe}) {
-    final filtered = _debts.where((d) => d.isIOwe == isIOwe).toList();
+  Widget _buildDebtList(AppState appState, {required bool isIOwe}) {
+    final filtered = appState.debts.where((d) => (d.direction == 'out') == isIOwe).toList();
 
     if (filtered.isEmpty) {
       return const Center(
@@ -117,8 +342,10 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
       itemCount: filtered.length,
       itemBuilder: (context, index) {
         final debt = filtered[index];
-        final remaining = debt.totalAmount - debt.paidAmount;
-        final progress = debt.totalAmount > 0 ? debt.paidAmount / debt.totalAmount : 0.0;
+        final paid = debt.totalAmount - debt.remainingAmount;
+        final progress = debt.totalAmount > 0 ? paid / debt.totalAmount : 0.0;
+        final dueDate = debt.nextPaymentDate != null ? DateTime.tryParse(debt.nextPaymentDate!) : null;
+        final dueDateStr = dueDate != null ? DateFormat('dd.MM.yyyy').format(dueDate) : 'Не задана';
 
         return Container(
           margin: const EdgeInsets.only(bottom: 16),
@@ -131,11 +358,11 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    debt.person,
+                    debt.title,
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.textPrimary),
                   ),
                   Text(
-                    _formatKzt(remaining),
+                    _formatKzt(debt.remainingAmount),
                     style: TextStyle(
                       color: isIOwe ? AppTheme.expense : AppTheme.income,
                       fontSize: 18,
@@ -153,7 +380,7 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
                     style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                   ),
                   Text(
-                    'Вернуть до: ${DateFormat('dd.MM.yyyy').format(debt.dueDate)}',
+                    'Вернуть до: $dueDateStr',
                     style: const TextStyle(color: Colors.white24, fontSize: 11),
                   ),
                 ],
@@ -178,11 +405,7 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton.icon(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Внесение частичной оплаты будет добавлено в следующем релизе!')),
-                      );
-                    },
+                    onPressed: () => _showPayDebtDialog(context, appState, debt),
                     icon: const Icon(Icons.payment_rounded, size: 16, color: AppTheme.primary),
                     label: const Text('Оплатить', style: TextStyle(color: AppTheme.primary, fontSize: 13)),
                   ),
@@ -191,7 +414,7 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
                     onPressed: () {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('🔔 Напоминание отправлено пользователю ${debt.person} в бот!'),
+                          content: Text('🔔 Напоминание отправлено пользователю ${debt.title} в бот!'),
                           backgroundColor: AppTheme.income,
                         ),
                       );

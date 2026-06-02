@@ -93,6 +93,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
         backgroundColor: AppTheme.income,
       ),
     );
+
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
   }
 
   @override
