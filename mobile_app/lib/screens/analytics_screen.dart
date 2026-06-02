@@ -1,7 +1,8 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
@@ -16,6 +17,7 @@ class AnalyticsScreen extends StatefulWidget {
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
   int _activeTimeframe = 1; // 0: Week, 1: Month, 2: Year
   bool _isExporting = false;
+  int touchedIndex = -1;
 
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
@@ -43,12 +45,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final categories = appState.categories;
     final totalSpent = appState.monthlyExpenses;
 
-    // Define colors for chart segments
     final List<Color> segmentColors = [
       AppTheme.expense,
       AppTheme.accentBlue,
       AppTheme.primary,
       Colors.yellowAccent,
+      Colors.cyan,
+      Colors.purpleAccent,
     ];
 
     return Scaffold(
@@ -67,7 +70,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         fontWeight: FontWeight.bold,
                         color: AppTheme.textPrimary,
                       ),
-                ),
+                ).animate().fade(duration: 400.ms).slideY(begin: -0.2),
                 const SizedBox(height: 18),
 
                 // Timeframe Selector Row
@@ -79,33 +82,40 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     const SizedBox(width: 8),
                     _buildTimeframeTab(2, 'ГОД'),
                   ],
-                ),
+                ).animate().fade(delay: 100.ms).slideY(begin: 0.2),
                 const SizedBox(height: 24),
 
-                // Donut Chart Card
+                // Donut Chart Card (using fl_chart)
                 GlassCard(
                   radius: 16,
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     children: [
-                      // Render Custom Donut Chart
                       SizedBox(
-                        height: 180,
+                        height: 200,
                         child: Stack(
                           children: [
-                            Center(
-                              child: SizedBox(
-                                width: 140,
-                                height: 140,
-                                child: CustomPaint(
-                                  painter: DonutChartPainter(
-                                    categories: categories,
-                                    totalSpent: totalSpent,
-                                    colors: segmentColors,
-                                  ),
+                            PieChart(
+                              PieChartData(
+                                pieTouchData: PieTouchData(
+                                  touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                                    setState(() {
+                                      if (!event.isInterestedForInteractions ||
+                                          pieTouchResponse == null ||
+                                          pieTouchResponse.touchedSection == null) {
+                                        touchedIndex = -1;
+                                        return;
+                                      }
+                                      touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
+                                    });
+                                  },
                                 ),
+                                borderData: FlBorderData(show: false),
+                                sectionsSpace: 2,
+                                centerSpaceRadius: 60,
+                                sections: showingSections(categories, totalSpent, segmentColors),
                               ),
-                            ),
+                            ).animate().scale(duration: 600.ms, curve: Curves.easeOutBack),
                             Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -129,13 +139,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                   ),
                                 ],
                               ),
-                            ),
+                            ).animate().fade(delay: 300.ms),
                           ],
                         ),
                       ),
                     ],
                   ),
-                ),
+                ).animate().fade(delay: 200.ms).slideY(begin: 0.2),
                 const SizedBox(height: 20),
 
                 // Export to Excel Button Card
@@ -186,14 +196,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       ],
                     ),
                   ),
-                ),
+                ).animate().fade(delay: 300.ms).slideY(begin: 0.2),
                 const SizedBox(height: 24),
 
-                // Percent Breakdown category list
                 const Text(
                   'Детализация трат',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-                ),
+                ).animate().fade(delay: 400.ms),
                 const SizedBox(height: 12),
 
                 ListView.builder(
@@ -211,42 +220,42 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         radius: 12,
                         padding: const EdgeInsets.all(12),
                         child: Row(
-                        children: [
-                          Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(cat.emoji, style: const TextStyle(fontSize: 16)),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              cat.name,
-                              style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
-                            ),
-                          ),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                _formatKzt(cat.spentAmount),
-                                style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                          children: [
+                            Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: color,
+                                shape: BoxShape.circle,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${percent.toStringAsFixed(1)}%',
-                                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(cat.emoji, style: const TextStyle(fontSize: 16)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                cat.name,
+                                style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
                               ),
-                            ],
-                          ),
-                        ],
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  _formatKzt(cat.spentAmount),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${percent.toStringAsFixed(1)}%',
+                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  );
+                    ).animate().fade(delay: Duration(milliseconds: 400 + (index * 100))).slideX(begin: 0.1);
                   },
                 ),
               ],
@@ -255,6 +264,40 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         ),
       ),
     );
+  }
+
+  List<PieChartSectionData> showingSections(List<Category> categories, int totalSpent, List<Color> colors) {
+    if (totalSpent <= 0 || categories.isEmpty) {
+      return [
+        PieChartSectionData(
+          color: AppTheme.border,
+          value: 100,
+          title: '',
+          radius: 30,
+        )
+      ];
+    }
+    
+    return List.generate(categories.length, (i) {
+      final isTouched = i == touchedIndex;
+      final fontSize = isTouched ? 16.0 : 0.0;
+      final radius = isTouched ? 35.0 : 25.0;
+      final cat = categories[i];
+      final color = colors[i % colors.length];
+      
+      return PieChartSectionData(
+        color: color,
+        value: cat.spentAmount.toDouble(),
+        title: isTouched ? '${((cat.spentAmount / totalSpent) * 100).toStringAsFixed(0)}%' : '',
+        radius: radius,
+        titleStyle: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+          shadows: [Shadow(color: Colors.black, blurRadius: 2)],
+        ),
+      );
+    });
   }
 
   Widget _buildTimeframeTab(int index, String label) {
@@ -285,47 +328,4 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       ),
     );
   }
-}
-
-// Custom Painter to draw Donut Chart segments
-class DonutChartPainter extends CustomPainter {
-  final List<Category> categories;
-  final int totalSpent;
-  final List<Color> colors;
-
-  DonutChartPainter({
-    required this.categories,
-    required this.totalSpent,
-    required this.colors,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (totalSpent <= 0) return;
-
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = min(size.width / 2, size.height / 2);
-    final rect = Rect.fromCircle(center: center, radius: radius);
-
-    double startAngle = -pi / 2;
-
-    for (int i = 0; i < categories.length; i++) {
-      final cat = categories[i];
-      final color = colors[i % colors.length];
-      
-      final sweepAngle = (cat.spentAmount / totalSpent) * 2 * pi;
-
-      final paint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 24
-        ..color = color
-        ..strokeCap = StrokeCap.butt;
-
-      canvas.drawArc(rect, startAngle, sweepAngle, false, paint);
-      startAngle += sweepAngle;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

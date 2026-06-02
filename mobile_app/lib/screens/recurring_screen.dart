@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 class RecurringScreen extends StatefulWidget {
   const RecurringScreen({super.key});
@@ -284,7 +285,7 @@ class _RecurringScreenState extends State<RecurringScreen> {
                                 ),
                               ],
                             ),
-                          );
+                          ).animate().fade(delay: Duration(milliseconds: 100 + (index * 50))).slideX(begin: 0.1);
                         },
                       ),
               ),
