@@ -1234,70 +1234,78 @@ async def _build_daily_text(
     start_utc, end_utc, local_date, _ = _day_bounds_utc(now_utc, tz_name)
 
     income, expense, cnt = await report_period(db, user_id, start_utc, end_utc)
-    cats = await report_by_category(db, user_id, start_utc, end_utc, "expense", 5)
+    cats = await report_by_category(db, user_id, start_utc, end_utc, "expense", 3)
 
     # балансы счетов
     accounts = await list_accounts(db, user_id)
     balances = [(name, int(bal or 0)) for _, name, bal, arch, *_ in accounts if not int(arch or 0)]
     total_balance = sum(bal for _, bal in balances)
 
-    # топ категорий расходов
-    top_lines = []
-    shown = 0
-    for name, emoji, total in cats:
-        if not name:
-            continue
-        value = int(total or 0)
-        shown += value
-        prefix = f"{emoji} " if emoji else ""
-        top_lines.append(f"• {prefix}{name}: -{_fmt_money(value)} {currency}")
-
-    other = int(expense - shown)
-    if other > 0:
-        top_lines.append(f"• Другое: -{_fmt_money(other)} {currency}")
-
-    # серия
+    # Gamification
     cur_streak, best_streak, _ = await get_streak(db, user_id)
+    def _progress_bar(percent: float, length: int = 10) -> str:
+        filled = int((percent / 100) * length)
+        filled = max(0, min(length, filled))
+        return f"[{'█'*filled}{'░'*(length - filled)}]"
+        
+    week_pct = min(100, (cur_streak / 7) * 100)
+    streak_bar = _progress_bar(week_pct, 7)
 
     net = int(income - expense)
     net_text = f"+{_fmt_money(net)}" if net >= 0 else f"-{_fmt_money(abs(net))}"
 
+    top_lines = []
+    for name, emoji, total in cats:
+        if name:
+            top_lines.append(f"  • {emoji} {name}: -{_fmt_money(int(total))} {currency}")
+
+    if lang == "en":
+        title = "📈 <b>DAILY PULSE</b>\n━━━━━━━━━━━━━━"
+        cf_title = "📊 <b>CASHFLOW</b>"
+        cf_text = f"• In: +{_fmt_money(income)} / Out: -{_fmt_money(expense)}\n• Net: <b>{net_text} {currency}</b>"
+        if top_lines:
+            cf_text += "\n" + "\n".join(top_lines)
+        bal_title = "🏦 <b>NET WORTH</b>"
+        bal_text = f"• Total: <b>{_fmt_money(total_balance)} {currency}</b>"
+        gam_title = "🔥 <b>DISCIPLINE</b>"
+        gam_text = f"• <code>{streak_bar}</code> <b>{cur_streak}</b> days"
+    elif lang == "kk":
+        title = "📈 <b>КҮНДІК ПУЛЬС</b>\n━━━━━━━━━━━━━━"
+        cf_title = "📊 <b>АЙНАЛЫМ</b>"
+        cf_text = f"• Кіріс: +{_fmt_money(income)} / Шығыс: -{_fmt_money(expense)}\n• Таза: <b>{net_text} {currency}</b>"
+        if top_lines:
+            cf_text += "\n" + "\n".join(top_lines)
+        bal_title = "🏦 <b>ЖАЛПЫ ЖАҒДАЙ</b>"
+        bal_text = f"• Барлығы: <b>{_fmt_money(total_balance)} {currency}</b>"
+        gam_title = "🔥 <b>ДИСЦИПЛИНА</b>"
+        gam_text = f"• <code>{streak_bar}</code> <b>{cur_streak}</b> күн"
+    else:
+        title = "📈 <b>ДНЕВНОЙ ПУЛЬС</b>\n━━━━━━━━━━━━━━"
+        cf_title = "📊 <b>ДЕНЕЖНЫЙ ПОТОК</b>"
+        cf_text = f"• Пришло: +{_fmt_money(income)} / Ушло: -{_fmt_money(expense)}\n• Итог: <b>{net_text} {currency}</b>"
+        if top_lines:
+            cf_text += "\n  🔻 Куда ушло:\n" + "\n".join(top_lines)
+        bal_title = "🏦 <b>СОСТОЯНИЕ</b>"
+        bal_text = f"• Всего на счетах: <b>{_fmt_money(total_balance)} {currency}</b>"
+        gam_title = "🔥 <b>ДИСЦИПЛИНА</b>"
+        gam_text = f"• <code>{streak_bar}</code> <b>{cur_streak}</b> дн."
+
     lines = [
+        title,
         f"📅 {_fmt_human_date(local_date)}",
         "",
-        "🧾 Итог за день",
-        f"{net_text} {currency}",
-        f"Доход: +{_fmt_money(income)} {currency}",
-        f"Расход: -{_fmt_money(expense)} {currency}",
+        cf_title,
+        cf_text,
         "",
-        "🔻 Куда ушло",
-    ]
-
-    if top_lines:
-        lines.extend(top_lines)
-    else:
-        lines.append("• нет расходов")
-
-    lines += ["", "💰 Счета"]
-
-    if balances:
-        for name, bal in balances:
-            lines.append(f"• {name}: {_fmt_money(bal)} {currency}")
-    else:
-        lines.append("• нет счетов")
-
-    prog_bar = await _build_weekly_progress_bar(db, user_id, tz_name, local_date, lang)
-    streak_progress_line = f"\n{prog_bar}" if prog_bar else ""
-
-    lines += [
-        f"Итого на счетах: {_fmt_money(total_balance)} {currency}",
+        bal_title,
+        bal_text,
         "",
-        f"{'⚪' if cnt == 0 else '🔥'} Операций: {cnt}",
-        f"Серия: {cur_streak} дн. (лучшее {best_streak}){streak_progress_line}",
+        gam_title,
+        gam_text,
         "",
         await build_smart_suggestion(db, user_id, lang)
     ]
-
     return "\n".join(lines)
+
 
 

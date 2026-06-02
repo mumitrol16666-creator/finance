@@ -13,6 +13,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKey
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.db.repositories.accounts_repo import list_accounts
+from app.db.repositories.tx_repo import list_last
+from app.db.repositories.budgets_repo import month_limits_status_map
 from app.db.repositories.planned_repo import planned_before_month_end
 from app.db.repositories.recurring_repo import (
     recurring_due_before_month_end,
@@ -573,77 +575,141 @@ async def _open_reports_scope(m: Message, state: FSMContext, db: aiosqlite.Conne
     return lang
 
 
+def _progress_bar(percent: float, length: int = 10) -> str:
+    filled = int((percent / 100) * length)
+    filled = max(0, min(length, filled))
+    return f"[{'█'*filled}{'░'*(length - filled)}]"
+
 async def _reports_hub_text(db: aiosqlite.Connection, user_id: int, lang: str) -> str:
     tz_name = await get_timezone(db, user_id)
     now_utc = datetime.now(timezone.utc)
     meta = _period_meta(lang, tz_name, "month", now_utc)
+    day_meta = _period_meta(lang, tz_name, "day", now_utc)
     
-    # 1. Cashflow
+    # 1. Cashflow (Month & Day)
     income, expense, cnt = await report_period(db, user_id, meta["start"], meta["end"])
     net = income - expense
+    day_inc, day_exp, day_cnt = await report_period(db, user_id, day_meta["start"], day_meta["end"])
     
     # 2. Net Worth (Total Balance)
     accounts = await list_accounts(db, user_id)
     total_balance = sum(int(row[2] or 0) for row in accounts if len(row) >= 4 and not int(row[3] or 0))
     
-    # 3. Streak & Activity
-    streak_cur, _, _ = await get_streak(db, user_id)
+    # 3. Gamification / Streak
+    streak_cur, streak_best, _ = await get_streak(db, user_id)
+    week_pct = min(100, (streak_cur / 7) * 100)
+    streak_bar = _progress_bar(week_pct, 7)
     
-    # 4. Smart Suggestion
+    # 4. Recent Activity
+    recent_txs = await list_last(db, user_id, limit=3)
+    
+    # 5. Budgets / Projections
+    tz_obj, _ = _safe_tz(tz_name)
+    current_month_key = f"{now_utc.astimezone(tz_obj).year:04d}-{now_utc.astimezone(tz_obj).month:02d}"
+    limits = await month_limits_status_map(db, user_id, current_month_key)
+    
+    total_limit = sum(int(cat["limit"]) for cat in limits.values()) if limits else 0
+    total_spent_limit = sum(int(cat["spent"]) for cat in limits.values()) if limits else 0
+    budget_pct = (total_spent_limit / total_limit * 100) if total_limit > 0 else 0
+    budget_bar = _progress_bar(budget_pct, 10)
+    
+    # 6. Smart Suggestion
     suggestion = await build_smart_suggestion(db, user_id, lang)
     
     from app.domain.money import get_user_currency, get_symbol
-    currency_code = await get_user_currency(db, user_id)
-    currency = get_symbol(currency_code)
     
-    # Let's check i18n
     if lang == "en":
-        title = "📊 <b>Financial Dashboard</b>"
-        nw_title = "💰 <b>Net Worth</b>"
-        nw_text = f"• Total on accounts: <b>{_fmt_money(total_balance)}</b>"
-        cf_title = "📈 <b>Cashflow (Month)</b>"
-        cf_inc = f"• 🟢 In: +<b>{_fmt_money(income)}</b>"
-        cf_exp = f"• 🔴 Out: -<b>{_fmt_money(expense)}</b>"
-        cf_net = f"• 📐 Net: <b>{_delta_str(net)}</b>"
-        act_title = "🔥 <b>Activity</b>"
-        act_text = f"• Operations: {cnt} | Streak: {streak_cur} days"
+        title = "📈 <b>FINANCIAL PULSE</b>\n━━━━━━━━━━━━━━"
+        nw_text = f"🏦 Net Worth: <b>{_fmt_money(total_balance)}</b>"
+        cf_title = "📊 <b>CASHFLOW</b>"
+        cf_day = f"• Today: +{_fmt_money(day_inc)} / -{_fmt_money(day_exp)}"
+        cf_month = f"• Month: +{_fmt_money(income)} / -{_fmt_money(expense)}\n• Net: <b>{_delta_str(net)}</b>"
+        
+        act_title = "⚡ <b>RECENT ACTIVITY</b>"
+        act_lines = []
+        for tx in recent_txs:
+            amt = int(tx[4])
+            sign = "+" if tx[3] == "income" else "-"
+            act_lines.append(f"• {sign}{_fmt_money(amt)} {tx[7] or 'Ops'}")
+        if not act_lines:
+            act_lines.append("• No recent transactions")
+            
+        bud_title = "🎯 <b>MONTHLY PROJECTIONS</b>"
+        if total_limit > 0:
+            bud_text = f"• Budget: <code>{budget_bar}</code> {budget_pct:.0f}%\n• Left: <b>{_fmt_money(total_limit - total_spent_limit)}</b>"
+        else:
+            bud_text = "• No limits set. Add budgets to see projections."
+            
+        gam_title = "🔥 <b>DISCIPLINE STREAK</b>"
+        gam_text = f"• <code>{streak_bar}</code> <b>{streak_cur}</b> days (Best: {streak_best})"
     elif lang == "kk":
-        title = "📊 <b>Қаржылық Дашборд</b>"
-        nw_title = "💰 <b>Жалпы жағдай</b>"
-        nw_text = f"• Шоттарда барлығы: <b>{_fmt_money(total_balance)}</b>"
-        cf_title = "📈 <b>Айлық айналым</b>"
-        cf_inc = f"• 🟢 Кіріс: +<b>{_fmt_money(income)}</b>"
-        cf_exp = f"• 🔴 Шығыс: -<b>{_fmt_money(expense)}</b>"
-        cf_net = f"• 📐 Қалдық: <b>{_delta_str(net)}</b>"
-        act_title = "🔥 <b>Белсенділік</b>"
-        act_text = f"• Операциялар: {cnt} | Серия: {streak_cur} күн"
+        title = "📈 <b>ҚАРЖЫЛЫҚ ПУЛЬС</b>\n━━━━━━━━━━━━━━"
+        nw_text = f"🏦 Жалпы жағдай: <b>{_fmt_money(total_balance)}</b>"
+        cf_title = "📊 <b>АЙНАЛЫМ</b>"
+        cf_day = f"• Бүгін: +{_fmt_money(day_inc)} / -{_fmt_money(day_exp)}"
+        cf_month = f"• Осы ай: +{_fmt_money(income)} / -{_fmt_money(expense)}\n• Таза: <b>{_delta_str(net)}</b>"
+        
+        act_title = "⚡ <b>СОҢҒЫ ОПЕРАЦИЯЛАР</b>"
+        act_lines = []
+        for tx in recent_txs:
+            amt = int(tx[4])
+            sign = "+" if tx[3] == "income" else "-"
+            act_lines.append(f"• {sign}{_fmt_money(amt)} {tx[7] or 'Операция'}")
+        if not act_lines:
+            act_lines.append("• Операциялар жоқ")
+            
+        bud_title = "🎯 <b>БЮДЖЕТ БОЛЖАМЫ</b>"
+        if total_limit > 0:
+            bud_text = f"• Бюджет: <code>{budget_bar}</code> {budget_pct:.0f}%\n• Қалдық: <b>{_fmt_money(total_limit - total_spent_limit)}</b>"
+        else:
+            bud_text = "• Лимиттер орнатылмаған."
+            
+        gam_title = "🔥 <b>ДИСЦИПЛИНА</b>"
+        gam_text = f"• <code>{streak_bar}</code> <b>{streak_cur}</b> күн (Үздік: {streak_best})"
     else:
-        title = "📊 <b>Финансовый Дашборд</b>"
-        nw_title = "💰 <b>Состояние</b>"
-        nw_text = f"• Всего на счетах: <b>{_fmt_money(total_balance)}</b>"
-        cf_title = "📈 <b>Денежный поток (Месяц)</b>"
-        cf_inc = f"• 🟢 Пришло: +<b>{_fmt_money(income)}</b>"
-        cf_exp = f"• 🔴 Ушло: -<b>{_fmt_money(expense)}</b>"
-        cf_net = f"• 📐 Итог: <b>{_delta_str(net)}</b>"
-        act_title = "🔥 <b>Активность</b>"
-        act_text = f"• Операций: {cnt} | Дисциплина: {streak_cur} дн."
+        title = "📈 <b>ФИНАНСОВЫЙ ПУЛЬС</b>\n━━━━━━━━━━━━━━"
+        nw_text = f"🏦 Капитал: <b>{_fmt_money(total_balance)}</b>"
+        cf_title = "📊 <b>ДЕНЕЖНЫЙ ПОТОК</b>"
+        cf_day = f"• Сегодня: +{_fmt_money(day_inc)} / -{_fmt_money(day_exp)}"
+        cf_month = f"• За месяц: +{_fmt_money(income)} / -{_fmt_money(expense)}\n• Итог: <b>{_delta_str(net)}</b>"
+        
+        act_title = "⚡ <b>ПОСЛЕДНЯЯ АКТИВНОСТЬ</b>"
+        act_lines = []
+        for tx in recent_txs:
+            amt = int(tx[4])
+            sign = "+" if tx[3] == "income" else "-"
+            act_lines.append(f"• {sign}{_fmt_money(amt)} {tx[7] or 'Операция'}")
+        if not act_lines:
+            act_lines.append("• Нет недавних операций")
+            
+        bud_title = "🎯 <b>ПРОГНОЗЫ И БЮДЖЕТ</b>"
+        if total_limit > 0:
+            bud_text = f"• Бюджет: <code>{budget_bar}</code> {budget_pct:.0f}%\n• Остаток: <b>{_fmt_money(total_limit - total_spent_limit)}</b>"
+        else:
+            bud_text = "• Бюджеты не заданы. Добавьте лимиты для прогноза."
+            
+        gam_title = "🔥 <b>ДИСЦИПЛИНА</b>"
+        gam_text = f"• <code>{streak_bar}</code> <b>{streak_cur}</b> дн. (Лучшая: {streak_best})"
 
     lines = [
         title,
-        "",
-        nw_title,
         nw_text,
         "",
         cf_title,
-        cf_inc,
-        cf_exp,
-        cf_net,
+        cf_day,
+        cf_month,
         "",
         act_title,
-        act_text,
+        *act_lines,
         "",
-        suggestion,
+        bud_title,
+        bud_text,
+        "",
+        gam_title,
+        gam_text,
     ]
+    if suggestion:
+        lines.extend(["", suggestion])
 
     return "\n".join(lines)
 

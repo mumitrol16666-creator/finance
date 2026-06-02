@@ -1,0 +1,80 @@
+97: def build_period_meta(kind: str, tz_name: str, now_utc: datetime | None = None) -> PeriodMeta:
+98:     now_utc = now_utc or datetime.now(timezone.utc)
+99:     tz = _safe_tz(tz_name)
+100: 
+101:     if kind == "day":
+102:         start, end, _label, _ = day_bounds_utc(tz_name, now_utc)
+103:         prev_start = start - timedelta(days=1)
+104:         prev_end = start
+105:     elif kind == "week":
+106:         start, end, _label, _ = week_bounds_utc(tz_name, now_utc)
+107:         prev_start = start - timedelta(days=7)
+108:         prev_end = start
+109:     else:
+110:         local_now = now_utc.astimezone(tz)
+111:         if local_now.day < 15:
+112:             # First half of the month: use rolling 30 days to avoid empty reports
+113:             start = now_utc - timedelta(days=30)
+114:             end = now_utc
+115:             prev_start = now_utc - timedelta(days=60)
+116:             prev_end = now_utc - timedelta(days=30)
+117:         else:
+118:             # Second half of the month: use calendar month
+119:             start, end, _label, _ = month_bounds_utc(tz_name, now_utc)
+120:             local_start = start.astimezone(tz)
+121:             py, pm = (local_start.year - 1, 12) if local_start.month == 1 else (local_start.year, local_start.month - 1)
+122:             prev_local_start = datetime(py, pm, 1, 0, 0, 0, tzinfo=tz)
+123:             if pm == 12:
+124:                 prev_local_end = datetime(py + 1, 1, 1, 0, 0, 0, tzinfo=tz)
+125:             else:
+126:                 prev_local_end = datetime(py, pm + 1, 1, 0, 0, 0, tzinfo=tz)
+127:             prev_start = prev_local_start.astimezone(timezone.utc)
+128:             prev_end = prev_local_end.astimezone(timezone.utc)
+129: 
+130:     month_start, month_end, _month_label, _ = month_bounds_utc(tz_name, now_utc)
+131:     local_now = now_utc.astimezone(tz)
+132:     
+133:     if kind == "month" and local_now.day < 15:
+134:         month_days_elapsed = 30
+135:         month_days_total = 30
+136:         title = "за последние 30 дней"
+137:     else:
+138:         month_days_elapsed = max(1, local_now.day)
+139:         month_days_total = calendar.monthrange(local_now.year, local_now.month)[1]
+140:         title = _kind_title(kind)
+141: 
+142:     return PeriodMeta(
+143:         kind=kind,
+144:         title=title,
+145:         start=start,
+146:         end=end,
+147:         prev_start=prev_start,
+148:         prev_end=prev_end,
+149:         month_start=month_start,
+150:         month_end=month_end,
+151:         month_days_elapsed=month_days_elapsed,
+152:         month_days_total=month_days_total,
+153:     )
+154: 
+155: 
+156: async def _fetch_rows(db: aiosqlite.Connection, user_id: int, start: datetime, end: datetime) -> list[aiosqlite.Row]:
+157:     cur = await db.execute(
+158:         """
+159:         SELECT t.id, t.ts, t.type, t.amount, COALESCE(c.name, 'Без категории') AS category_name,
+160:                COALESCE(c.emoji, '') AS category_emoji, COALESCE(t.note, '') AS note
+161:         FROM transactions t
+162:         LEFT JOIN categories c ON c.id = t.category_id
+163:         WHERE t.user_id = ? AND t.ts >= ? AND t.ts < ? AND t.deleted_at IS NULL
+164:         ORDER BY t.ts ASC, t.id ASC
+165:         """,
+166:         (user_id, _iso(start), _iso(end)),
+167:     )
+168:     return await cur.fetchall()
+169: 
+170: 
+171: async def _fetch_expense_category_sums(db: aiosqlite.Connection, user_id: int, start: datetime, end: datetime) -> dict[str, int]:
+172:     cur = await db.execute(
+173:         """
+174:         SELECT COALESCE(c.name, 'Без категории') AS category_name, SUM(-t.amount) AS total
+175:         FROM transactions t
+176:         LEFT JOIN categories c ON c.id = t.category_id
