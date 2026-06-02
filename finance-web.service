@@ -1,0 +1,30 @@
+# =============================================================================
+# systemd service — FinanceWeb
+# =============================================================================
+# Скопируйте этот файл на сервер:
+#   sudo cp finance-web.service /etc/systemd/system/finance-web.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable finance-web
+#   sudo systemctl start finance-web
+#
+# Логи:  journalctl -u finance-web -f
+# =============================================================================
+
+[Unit]
+Description=Finance Web Application Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Finance_bot/mobile_app/build/web
+ExecStart=/usr/bin/python3 -m http.server 8080 --bind 0.0.0.0
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
