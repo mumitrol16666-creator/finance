@@ -1,0 +1,31 @@
+# =============================================================================
+# systemd service — FinanceAPI
+# =============================================================================
+# Скопируйте этот файл на сервер:
+#   sudo cp finance-api.service /etc/systemd/system/finance-api.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable finance-api
+#   sudo systemctl start finance-api
+#
+# Логи:  journalctl -u finance-api -f
+# =============================================================================
+
+[Unit]
+Description=FinanceAPI FastAPI Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Finance_bot
+EnvironmentFile=/root/Finance_bot/.env
+ExecStart=/root/Finance_bot/.venv/bin/uvicorn app.api.api_server:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
