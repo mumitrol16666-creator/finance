@@ -5,6 +5,9 @@ import '../providers/app_state.dart';
 import 'accounts_screen.dart';
 import 'debts_screen.dart';
 import 'recurring_screen.dart';
+import 'budgets_screen.dart';
+import 'settings_screen.dart';
+import 'planned_screen.dart';
 
 class HubScreen extends StatelessWidget {
   const HubScreen({super.key});
@@ -41,21 +44,21 @@ class HubScreen extends StatelessWidget {
         'subtitle': 'Лимиты категорий',
         'icon': Icons.pie_chart_rounded,
         'color': AppTheme.income,
-        'target': null, // Managed inline
+        'target': const BudgetsScreen(),
       },
       {
-        'title': 'Экспорт',
-        'subtitle': 'Скачать отчет Excel',
-        'icon': Icons.file_download_rounded,
+        'title': 'Запланировано',
+        'subtitle': 'Ожидаемые транзакции',
+        'icon': Icons.schedule_rounded,
         'color': Colors.orangeAccent,
-        'target': null,
+        'target': const PlannedScreen(),
       },
       {
         'title': 'Настройки',
         'subtitle': 'Язык, валюта, тишина',
         'icon': Icons.settings_rounded,
         'color': AppTheme.textSecondary,
-        'target': null,
+        'target': const SettingsScreen(),
       },
     ];
 
