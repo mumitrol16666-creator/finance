@@ -42,7 +42,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    f    return Scaffold(
+    final appState = Provider.of<AppState>(context);
+    final isLoading = appState.isLoading;
+    return Scaffold(
       body: Stack(
         children: [
           // Background Glowing Blobs

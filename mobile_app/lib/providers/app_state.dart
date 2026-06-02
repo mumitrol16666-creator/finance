@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import '../models/models.dart';
 
 class ChatMessage {
@@ -81,19 +83,32 @@ class AppState extends ChangeNotifier {
   int get totalBalance => _accounts.fold(0, (sum, acc) => sum + acc.balance);
   int get monthlyExpenses => _categories.fold(0, (sum, cat) => sum + cat.spentAmount);
 
+  String? _token;
+  final String _baseUrl = 'http://localhost:8000';
+
   // Authentication
   Future<bool> verifyLoginCode(String code) async {
     _isLoading = true;
     notifyListeners();
 
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 1500 ~/ 1000));
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/auth/verify'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'code': code}),
+      );
 
-    if (code == '123456' || code.length == 6) {
-      _isAuthenticated = true;
-      _isLoading = false;
-      notifyListeners();
-      return true;
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        _token = data['token'] as String;
+        _isAuthenticated = true;
+        _isLoading = false;
+        notifyListeners();
+        await loadDashboardData();
+        return true;
+      }
+    } catch (e) {
+      print('Verification error: $e');
     }
 
     _isLoading = false;
@@ -101,7 +116,50 @@ class AppState extends ChangeNotifier {
     return false;
   }
 
+  Future<void> loadDashboardData() async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/dashboard'),
+        headers: {
+          'Authorization': 'Bearer $_token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        
+        // Parse accounts
+        _accounts = (data['accounts'] as List)
+            .map((a) => Account.fromJson(a as Map<String, dynamic>))
+            .toList();
+            
+        // Parse categories
+        _categories = (data['categories'] as List)
+            .map((c) => Category.fromJson(c as Map<String, dynamic>))
+            .toList();
+            
+        // Parse transactions
+        _transactions = (data['recentTransactions'] as List)
+            .map((t) => Transaction.fromJson(t as Map<String, dynamic>))
+            .toList();
+            
+        // Parse weekly streak
+        _weeklyStreak = List<bool>.from(data['weeklyStreak'] as List);
+      }
+    } catch (e) {
+      print('Load dashboard error: $e');
+    }
+
+    _isLoading = false;
+    notifyListeners();
+  }
+
   void logout() {
+    _token = null;
     _isAuthenticated = false;
     _chatHistory = [
       ChatMessage(
@@ -122,49 +180,49 @@ class AppState extends ChangeNotifier {
     required String accountName,
     String? note,
   }) async {
+    if (_token == null) return;
     _isLoading = true;
     notifyListeners();
 
-    await Future.delayed(const Duration(milliseconds: 500));
+    try {
+      // Find category_id and account_id
+      int? accountId;
+      try {
+        final acc = _accounts.firstWhere((a) => a.name == accountName);
+        accountId = acc.id;
+      } catch (_) {}
 
-    final newTx = Transaction(
-      id: DateTime.now().millisecondsSinceEpoch,
-      amount: amount,
-      kind: kind,
-      categoryName: categoryName,
-      categoryEmoji: categoryEmoji,
-      accountName: accountName,
-      note: note,
-      timestamp: DateTime.now(),
-    );
-
-    _transactions.insert(0, newTx);
-
-    // Update account balances
-    final accIndex = _accounts.indexWhere((a) => a.name == accountName);
-    if (accIndex != -1) {
-      final acc = _accounts[accIndex];
-      final delta = kind == 'expense' ? -amount : amount;
-      _accounts[accIndex] = Account(id: acc.id, name: acc.name, balance: acc.balance + delta);
-    }
-
-    // Update category spent
-    if (kind == 'expense') {
-      final catIndex = _categories.indexWhere((c) => c.name == categoryName);
-      if (catIndex != -1) {
-        final cat = _categories[catIndex];
-        _categories[catIndex] = Category(
-          id: cat.id,
-          name: cat.name,
-          emoji: cat.emoji,
-          limitAmount: cat.limitAmount,
-          spentAmount: cat.spentAmount + amount,
-        );
+      if (accountId == null) {
+        throw Exception("Account not found");
       }
-    }
 
-    // Fill streak for today (mock Tuesday)
-    _weeklyStreak[2] = true;
+      int? categoryId;
+      try {
+        final cat = _categories.firstWhere((c) => c.name == categoryName);
+        categoryId = cat.id;
+      } catch (_) {}
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/transactions'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+        body: json.encode({
+          'amount': amount,
+          'kind': kind,
+          'account_id': accountId,
+          'category_id': categoryId,
+          'note': note,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      }
+    } catch (e) {
+      print('Add transaction error: $e');
+    }
 
     _isLoading = false;
     notifyListeners();
@@ -173,6 +231,7 @@ class AppState extends ChangeNotifier {
   // AI Chat
   Future<void> sendAiMessage(String text) async {
     if (text.trim().isEmpty) return;
+    if (_token == null) return;
 
     _chatHistory.add(ChatMessage(text: text, isUser: true, timestamp: DateTime.now()));
     notifyListeners();
@@ -180,19 +239,36 @@ class AppState extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
-    // Simulate AI response stream delay
-    await Future.delayed(const Duration(seconds: 1));
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/chat'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+        body: json.encode({'text': text}),
+      );
 
-    String aiResponse = 'Я проанализировал ваш запрос. ';
-    if (text.toLowerCase().contains('баланс') || text.toLowerCase().contains('счет')) {
-      aiResponse += 'Ваш текущий баланс по счетам составляет ${(totalBalance / 100).toStringAsFixed(2)} тг. Больше всего средств находится на счёте Kaspi Gold.';
-    } else if (text.toLowerCase().contains('расход') || text.toLowerCase().contains('трат')) {
-      aiResponse += 'В этом месяце вы потратили ${(monthlyExpenses / 100).toStringAsFixed(2)} тг. Основная статья расходов — Категория "Еда" (${(_categories[0].spentAmount / 100).toStringAsFixed(2)} тг).';
-    } else {
-      aiResponse += 'Вы отлично справляетесь со своим бюджетом! Ваша текущая серия заполнения составляет 2 дня на этой неделе 🔥. Продолжайте фиксировать расходы для поддержания финансовой дисциплины.';
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final reply = data['text'] as String;
+        _chatHistory.add(ChatMessage(text: reply, isUser: false, timestamp: DateTime.now()));
+      } else {
+        _chatHistory.add(ChatMessage(
+          text: 'Ошибка связи с сервером. Пожалуйста, попробуйте позже.',
+          isUser: false,
+          timestamp: DateTime.now(),
+        ));
+      }
+    } catch (e) {
+      print('Chat error: $e');
+      _chatHistory.add(ChatMessage(
+        text: 'Ошибка сети. Проверьте подключение.',
+        isUser: false,
+        timestamp: DateTime.now(),
+      ));
     }
 
-    _chatHistory.add(ChatMessage(text: aiResponse, isUser: false, timestamp: DateTime.now()));
     _isLoading = false;
     notifyListeners();
   }

@@ -44,8 +44,8 @@ class Category {
       id: json['id'] as int,
       name: json['name'] as String,
       emoji: json['emoji'] as String? ?? '📂',
-      limitAmount: json['limit_amount'] as int?,
-      spentAmount: json['spent_amount'] as int? ?? 0,
+      limitAmount: json['limitAmount'] as int? ?? json['limit_amount'] as int?,
+      spentAmount: json['spentAmount'] as int? ?? json['spent_amount'] as int? ?? 0,
     );
   }
 
@@ -84,11 +84,11 @@ class Transaction {
       id: json['id'] as int,
       amount: json['amount'] as int,
       kind: json['kind'] as String,
-      categoryName: json['category_name'] as String? ?? 'Other',
-      categoryEmoji: json['category_emoji'] as String? ?? '💸',
-      accountName: json['account_name'] as String? ?? 'Default',
+      categoryName: json['categoryName'] as String? ?? json['category_name'] as String? ?? 'Other',
+      categoryEmoji: json['categoryEmoji'] as String? ?? json['category_emoji'] as String? ?? '💸',
+      accountName: json['accountName'] as String? ?? json['account_name'] as String? ?? 'Default',
       note: json['note'] as String?,
-      timestamp: DateTime.parse(json['timestamp'] as String),
+      timestamp: DateTime.parse(json['timestamp'] as String? ?? json['ts'] as String),
     );
   }
 
