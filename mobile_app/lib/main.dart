@@ -6,6 +6,8 @@ import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/add_transaction_screen.dart';
 import 'screens/ai_consultant_screen.dart';
+import 'screens/analytics_screen.dart';
+import 'screens/hub_screen.dart';
 
 void main() {
   runApp(
@@ -57,9 +59,32 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
 
   final List<Widget> _screens = [
     const DashboardScreen(),
-    const AddTransactionScreen(),
+    const AnalyticsScreen(),
     const AiConsultantScreen(),
+    const HubScreen(),
   ];
+
+  Widget _buildTabItem(int index, IconData icon, String label) {
+    final isSelected = _currentIndex == index;
+    return GestureDetector(
+      onTap: () => setState(() => _currentIndex = index),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: isSelected ? AppTheme.primary : AppTheme.textSecondary, size: 22),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? AppTheme.primary : AppTheme.textSecondary,
+              fontSize: 10,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -70,43 +95,56 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
           children: _screens,
         ),
       ),
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          border: Border(
-            top: BorderSide(color: AppTheme.border, width: 0.5),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: AppTheme.background,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            builder: (context) => SizedBox(
+              height: MediaQuery.of(context).size.height * 0.85,
+              child: const ClipRRect(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                child: Scaffold(
+                  backgroundColor: AppTheme.background,
+                  body: SafeArea(child: AddTransactionScreen()),
+                ),
+              ),
+            ),
+          );
+        },
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        child: Container(
+          width: 56,
+          height: 56,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: AppTheme.primaryGradient,
           ),
+          child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
         ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) {
-            setState(() {
-              _currentIndex = index;
-            });
-          },
-          backgroundColor: AppTheme.surface,
-          selectedItemColor: AppTheme.primary,
-          unselectedItemColor: AppTheme.textSecondary,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
-          unselectedLabelStyle: const TextStyle(fontSize: 11),
-          type: BottomNavigationBarType.fixed,
-          elevation: 8,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.grid_view_rounded),
-              activeIcon: Icon(Icons.grid_view_rounded, color: AppTheme.primary),
-              label: 'Обзор',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.add_circle_outline_rounded),
-              activeIcon: Icon(Icons.add_circle_rounded, color: AppTheme.primary),
-              label: 'Операция',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.android_outlined),
-              activeIcon: Icon(Icons.android_rounded, color: AppTheme.primary),
-              label: 'Консультант',
-            ),
-          ],
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      bottomNavigationBar: BottomAppBar(
+        color: AppTheme.surface,
+        shape: const CircularNotchedRectangle(),
+        notchMargin: 8.0,
+        child: SizedBox(
+          height: 60,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildTabItem(0, Icons.grid_view_rounded, 'Обзор'),
+              _buildTabItem(1, Icons.analytics_rounded, 'Аналитика'),
+              const SizedBox(width: 48), // Placeholder for FAB
+              _buildTabItem(2, Icons.android_rounded, 'ИИ Чат'),
+              _buildTabItem(3, Icons.explore_rounded, 'Сервисы'),
+            ],
+          ),
         ),
       ),
     );
