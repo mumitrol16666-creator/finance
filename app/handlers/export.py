@@ -1581,6 +1581,8 @@ def _build_xlsx(
         ws_tx.row_dimensions[tx_row_idx].height = 20
         tx_row_idx += 1
 
+    ws_tx.auto_filter.ref = f"A1:H{tx_row_idx - 1}"
+    
     widths_tx = [10, 26, 14, 15, 10, 18, 22, 40]
     for col_idx, width in enumerate(widths_tx, start=1):
         ws_tx.column_dimensions[chr(ord("A") + col_idx - 1)].width = width
