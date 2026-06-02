@@ -42,166 +42,166 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isLoading = Provider.of<AppState>(context).isLoading;
-
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          color: AppTheme.background,
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Spacer(),
-                
-                // App Logo/Icon
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: AppTheme.primaryGradient,
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppTheme.primary.withOpacity(0.4),
-                          blurRadius: 20,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.account_balance_wallet_rounded,
-                      size: 48,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                
-                // Welcome text
-                Center(
-                  child: Text(
-                    'Finance Tracker',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.textPrimary,
-                        ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Center(
-                  child: Text(
-                    'Введите код из Telegram бота для синхронизации',
-                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                
-                const Spacer(),
-
-                // OTP Code input field
-                Container(
-                  decoration: AppTheme.glassCardDecoration(
-                    borderOpacity: 0.15,
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: TextField(
-                    controller: _codeController,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 8,
-                      color: AppTheme.textPrimary,
-                    ),
-                    decoration: const InputDecoration(
-                      hintText: '000000',
-                      hintStyle: TextStyle(
-                        color: Colors.white24,
-                        letterSpacing: 8,
+    f    return Scaffold(
+      body: Stack(
+        children: [
+          // Background Glowing Blobs
+          const Positioned(
+            top: -120,
+            left: -120,
+            child: BackgroundGlowBlob(size: 300, color: AppTheme.primary, opacity: 0.12),
+          ),
+          const Positioned(
+            bottom: -150,
+            right: -100,
+            child: BackgroundGlowBlob(size: 350, color: AppTheme.secondary, opacity: 0.12),
+          ),
+          
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Spacer(),
+                  
+                  // App Logo/Icon
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(22),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: AppTheme.primaryGradient,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.primary.withOpacity(0.35),
+                            blurRadius: 24,
+                            spreadRadius: 2,
+                          ),
+                        ],
                       ),
-                      border: InputBorder.none,
-                      counterText: '',
+                      child: const Icon(
+                        Icons.account_balance_wallet_rounded,
+                        size: 44,
+                        color: Colors.white,
+                      ),
                     ),
-                    onSubmitted: (_) => _submitCode(),
                   ),
-                ),
-                const SizedBox(height: 12),
-
-                // Error message display
-                if (_errorMessage.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12.0),
+                  const SizedBox(height: 28),
+                  
+                  // Welcome text
+                  Center(
                     child: Text(
-                      _errorMessage,
-                      style: const TextStyle(color: AppTheme.expense, fontSize: 13),
+                      'Finance Tracker',
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.textPrimary,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Center(
+                    child: Text(
+                      'Введите код из Telegram бота для синхронизации',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
                       textAlign: TextAlign.center,
                     ),
                   ),
+                  
+                  const Spacer(),
 
-                // Action buttons
-                ElevatedButton(
-                  onPressed: isLoading ? null : _submitCode,
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    backgroundColor: Colors.transparent,
-                    shadowColor: Colors.transparent,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                  // OTP Code input field - wrapped in GlassCard
+                  GlassCard(
+                    borderOpacity: 0.15,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: TextField(
+                      controller: _codeController,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 8,
+                        color: AppTheme.textPrimary,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: '000000',
+                        hintStyle: TextStyle(
+                          color: Colors.white24,
+                          letterSpacing: 8,
+                        ),
+                        border: InputBorder.none,
+                        counterText: '',
+                      ),
+                      onSubmitted: (_) => _submitCode(),
                     ),
-                  ).copyWith(
-                    backgroundColor: WidgetStateProperty.resolveWith((states) {
-                      if (states.contains(WidgetState.disabled)) {
-                        return AppTheme.primary.withOpacity(0.3);
-                      }
-                      return null; // Uses wrapper gradient decoration
-                    }),
                   ),
-                  child: Ink(
-                    decoration: BoxDecoration(
-                      gradient: AppTheme.primaryGradient,
-                      borderRadius: BorderRadius.circular(12),
+                  const SizedBox(height: 16),
+
+                  // Error message display
+                  if (_errorMessage.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12.0),
+                      child: Text(
+                        _errorMessage,
+                        style: const TextStyle(color: AppTheme.expense, fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
-                    child: Container(
-                      alignment: Alignment.center,
-                      constraints: const BoxConstraints(minHeight: 50),
-                      child: isLoading
-                          ? const SpinKitThreeBounce(
-                              color: Colors.white,
-                              size: 24,
-                            )
-                          : const Text(
-                              'Войти в аккаунт',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+
+                  // Action buttons
+                  ElevatedButton(
+                    onPressed: isLoading ? null : _submitCode,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        gradient: AppTheme.primaryGradient,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Container(
+                        alignment: Alignment.center,
+                        constraints: const BoxConstraints(minHeight: 52),
+                        child: isLoading
+                            ? const SpinKitThreeBounce(
                                 color: Colors.white,
+                                size: 24,
+                              )
+                            : const Text(
+                                'Войти в аккаунт',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
                               ),
-                            ),
+                      ),
                     ),
                   ),
-                ),
-                
-                const Spacer(flex: 2),
-                
-                // Small note
-                const Center(
-                  child: Text(
-                    'Чтобы получить код, отправьте команду /login в бота',
-                    style: TextStyle(color: Colors.white30, fontSize: 12),
+                  
+                  const Spacer(flex: 2),
+                  
+                  // Small note
+                  const Center(
+                    child: Text(
+                      'Чтобы получить код, отправьте команду /login в бота',
+                      style: TextStyle(color: Colors.white30, fontSize: 12),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-              ],
+                  const SizedBox(height: 8),
+                ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
