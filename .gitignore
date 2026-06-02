@@ -84,9 +84,12 @@ Desktop.ini
 # Distribution / packaging
 # ============================================================
 dist/
-build/
+build/*
 *.egg-info/
 *.egg
+
+!mobile_app/build/web/
+!mobile_app/build/app/outputs/flutter-apk/app-release.apk
 
 # ============================================================
 # Misc
