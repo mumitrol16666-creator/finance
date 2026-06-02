@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/theme.dart';
+import 'categories_screen.dart';
 import '../providers/app_state.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -107,8 +108,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 GestureDetector(
                   onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Управление списком категорий будет доступно в следующем релизе!')),
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const CategoriesScreen()),
                     );
                   },
                   child: Container(

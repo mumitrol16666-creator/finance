@@ -106,13 +106,19 @@ class RecurringCreateRequest(BaseModel):
     comment: Optional[str] = None
 
 class PlannedCreateRequest(BaseModel):
-    kind: str
     title: str
     amount: int
     category_id: int
     account_id: int
     planned_date: str
+    kind: str
     comment: Optional[str] = None
+
+class CategoryCreateRequest(BaseModel):
+    name: str
+    emoji: Optional[str] = "📦"
+    kind: Optional[str] = "expense"
+
     is_required: Optional[int] = 1
 
 class BudgetUpsertRequest(BaseModel):
@@ -213,8 +219,8 @@ async def get_dashboard(user_id: int = Depends(get_current_user)):
                 "type": row["type"],
                 "amount": abs(row["amount"]),
                 "accountName": row["account_name"],
-                "categoryName": row["category_name"] or "Перевод" if row["type"] == "transfer" else "Прочее",
-                "categoryEmoji": row["category_emoji"] or "🔁" if row["type"] == "transfer" else "📦",
+                "categoryName": row["category_name"] or ("Перевод" if row["type"] == "transfer" else "Прочее"),
+                "categoryEmoji": row["category_emoji"] or ("🔁" if row["type"] == "transfer" else "📦"),
                 "note": row["note"]
             })
             
@@ -280,6 +286,27 @@ async def get_categories(kind: str = "expense", user_id: int = Depends(get_curre
             "name": cat["name"],
             "emoji": cat["emoji"]
         } for cat in categories]
+
+@app.post("/api/categories")
+async def add_category(req: CategoryCreateRequest, user_id: int = Depends(get_current_user)):
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        from app.db.repositories.categories_repo import create_category, name_exists_any_kind
+        if await name_exists_any_kind(db, user_id, req.name):
+            raise HTTPException(status_code=400, detail="Категория с таким именем уже существует")
+        cat_id = await create_category(db, user_id, req.name, req.emoji, req.kind, now_str)
+        await db.commit()
+        return {"status": "created", "id": cat_id}
+
+@app.delete("/api/categories/{category_id}")
+async def delete_category(category_id: int, user_id: int = Depends(get_current_user)):
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        from app.db.repositories.categories_repo import archive_category
+        await archive_category(db, user_id, category_id, now_str)
+        await db.commit()
+        return {"status": "deleted"}
+
 
 @app.post("/api/transactions")
 async def add_transaction(req: TransactionCreateRequest, user_id: int = Depends(get_current_user)):
