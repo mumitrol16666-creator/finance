@@ -387,6 +387,41 @@ async def menu_any(m: Message, state: FSMContext, db: aiosqlite.Connection):
     await m.answer(menu_text, reply_markup=await build_main_menu_markup(db, m.from_user.id, lang), parse_mode="HTML")
 
 
+@router.message(Command("login"))
+async def login_command(m: Message, db: aiosqlite.Connection):
+    import random
+    from datetime import datetime, timedelta, timezone
+    
+    user_id = m.from_user.id
+    onboarded = await get_onboarded(db, user_id)
+    if not onboarded:
+        await m.answer("⚠️ Пожалуйста, пройдите сначала онбординг (команда /start)")
+        return
+        
+    lang = await get_lang(db, user_id)
+    
+    # Generate 6-digit code
+    code = f"{random.randint(100000, 999999)}"
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    
+    # Save to db
+    await db.execute(
+        "INSERT OR REPLACE INTO login_codes (code, user_id, expires_at) VALUES (?, ?, ?)",
+        (code, user_id, expires_at),
+    )
+    await db.commit()
+    
+    # Localized message
+    if lang == "kk":
+        text = f"🔑 Қосымшаға кіру кодыңыз: <code>{code}</code>\nКод 5 минут бойы жарамды."
+    elif lang == "en":
+        text = f"🔑 Your app login code: <code>{code}</code>\nValid for 5 minutes."
+    else:
+        text = f"🔑 Ваш код для входа в приложение: <code>{code}</code>\nКод действителен 5 минут."
+        
+    await m.answer(text, parse_mode="HTML")
+
+
 @router.message(Command("cancel"))
 async def cancel_command(m: Message, state: FSMContext, db: aiosqlite.Connection):
     """Global /cancel — works over any FSM state."""
