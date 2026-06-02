@@ -82,8 +82,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 const SizedBox(height: 24),
 
                 // Donut Chart Card
-                Container(
-                  decoration: AppTheme.glassCardDecoration(radius: 16),
+                GlassCard(
+                  radius: 16,
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     children: [
@@ -140,11 +140,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 // Export to Excel Button Card
                 GestureDetector(
                   onTap: _isExporting ? null : _exportExcel,
-                  child: Container(
-                    decoration: AppTheme.glassCardDecoration(
-                      color: AppTheme.surfaceCard.withOpacity(0.5),
-                      radius: 14,
-                    ),
+                  child: GlassCard(
+                    color: AppTheme.surfaceCard.withOpacity(0.4),
+                    radius: 14,
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                     child: Row(
                       children: [
@@ -208,9 +206,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(12),
-                      decoration: AppTheme.glassCardDecoration(radius: 12, borderOpacity: 0.03),
-                      child: Row(
+                      child: GlassCard(
+                        radius: 12,
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
                         children: [
                           Container(
                             width: 12,
@@ -245,7 +244,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           ),
                         ],
                       ),
-                    );
+                    ),
+                  );
                   },
                 ),
               ],

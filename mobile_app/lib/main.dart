@@ -89,11 +89,27 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: IndexedStack(
-          index: _currentIndex,
-          children: _screens,
-        ),
+      body: Stack(
+        children: [
+          // Background Glowing Blobs for Space Aesthetic
+          const Positioned(
+            top: -120,
+            left: -120,
+            child: BackgroundGlowBlob(size: 320, color: AppTheme.primary, opacity: 0.1),
+          ),
+          const Positioned(
+            bottom: -150,
+            right: -100,
+            child: BackgroundGlowBlob(size: 350, color: AppTheme.secondary, opacity: 0.1),
+          ),
+          
+          SafeArea(
+            child: IndexedStack(
+              index: _currentIndex,
+              children: _screens,
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {

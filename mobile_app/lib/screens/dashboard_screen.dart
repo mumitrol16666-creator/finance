@@ -59,11 +59,9 @@ class DashboardScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             // Glassmorphic Balance Card
-            Container(
-              decoration: AppTheme.glassCardDecoration(
-                color: AppTheme.surface.withOpacity(0.9),
-                radius: 20,
-              ),
+            GlassCard(
+              color: AppTheme.surfaceCard.withOpacity(0.4),
+              radius: 24,
               padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,8 +106,8 @@ class DashboardScreen extends StatelessWidget {
             const SizedBox(height: 20),
 
             // Streak tracker visual bar
-            Container(
-              decoration: AppTheme.glassCardDecoration(radius: 16),
+            GlassCard(
+              radius: 16,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(
                 children: [
@@ -171,12 +169,13 @@ class DashboardScreen extends StatelessWidget {
                   return Container(
                     width: 160,
                     margin: const EdgeInsets.only(right: 12),
-                    decoration: AppTheme.glassCardDecoration(radius: 12),
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
+                    child: GlassCard(
+                      radius: 14,
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
                         Row(
                           children: [
                             Text(cat.emoji, style: const TextStyle(fontSize: 18)),
@@ -210,7 +209,8 @@ class DashboardScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                  );
+                  ),
+                );
                 },
               ),
             ),
@@ -243,10 +243,11 @@ class DashboardScreen extends StatelessWidget {
                 
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
-                  decoration: AppTheme.glassCardDecoration(radius: 12, borderOpacity: 0.05),
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
-                    children: [
+                  child: GlassCard(
+                    radius: 14,
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      children: [
                       // Category Emoji icon
                       Container(
                         padding: const EdgeInsets.all(10),
@@ -299,7 +300,8 @@ class DashboardScreen extends StatelessWidget {
                       ),
                     ],
                   ),
-                );
+                ),
+              );
               },
             ),
           ],

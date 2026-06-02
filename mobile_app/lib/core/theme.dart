@@ -1,61 +1,49 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
-  // Brand colors
-  static const Color background = Color(0xFF0D0F12);
-  static const Color surface = Color(0xFF161A22);
-  static const Color surfaceCard = Color(0xFF1E232E);
-  static const Color border = Color(0xFF2E3545);
+  // Ultra-premium space color palette
+  static const Color background = Color(0xFF07090E); // Very deep slate/black
+  static const Color surface = Color(0xFF0E131E); // Translucent slate
+  static const Color surfaceCard = Color(0xFF161C2A); // Carbon card
+  static const Color border = Color(0xFF242C3E);
 
-  // Accents
+  // High-fidelity Neon Gradients
   static const Color primary = Color(0xFF6366F1); // Indigo
-  static const Color secondary = Color(0xFFEC4899); // Rose Pink
-  static const Color accentBlue = Color(0xFF3B82F6); // Electric Blue
+  static const Color secondary = Color(0xFFD946EF); // Fuchsia Neon
 
-  // Semantic
-  static const Color income = Color(0xFF10B981); // Emerald
-  static const Color expense = Color(0xFFF43F5E); // Rose Red
-  static const Color textPrimary = Color(0xFFF3F4F6);
+  static const Gradient primaryGradient = LinearGradient(
+    colors: [Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFD946EF)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  static const Gradient incomeGradient = LinearGradient(
+    colors: [Color(0xFF059669), Color(0xFF10B981), Color(0xFF34D399)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  static const Gradient expenseGradient = LinearGradient(
+    colors: [Color(0xFFE11D48), Color(0xFFF43F5E), Color(0xFFFB7185)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  static const Gradient accentBlueGradient = LinearGradient(
+    colors: [Color(0xFF2563EB), Color(0xFF3B82F6), Color(0xFF60A5FA)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  // Semantic solid colors for simple chips
+  static const Color income = Color(0xFF10B981);
+  static const Color expense = Color(0xFFF43F5E);
+  static const Color textPrimary = Color(0xFFF9FAFB);
   static const Color textSecondary = Color(0xFF9CA3AF);
 
-  // Gradients
-  static const Gradient primaryGradient = LinearGradient(
-    colors: [primary, Color(0xFF8B5CF6)],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
-
-  static const Gradient accentGradient = LinearGradient(
-    colors: [accentBlue, primary],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
-
-  // Custom Glassmorphic decoration helper
-  static BoxDecoration glassCardDecoration({
-    Color? color,
-    double radius = 16,
-    double borderOpacity = 0.1,
-  }) {
-    return BoxDecoration(
-      color: color ?? surface.withOpacity(0.85),
-      borderRadius: BorderRadius.circular(radius),
-      border: Border.all(
-        color: Colors.white.withOpacity(borderOpacity),
-        width: 1.0,
-      ),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.2),
-          blurRadius: 10,
-          offset: const Offset(0, 4),
-        ),
-      ],
-    );
-  }
-
-  // Theme Data Builder
+  // Theme Builder
   static ThemeData get darkTheme {
     return ThemeData(
       brightness: Brightness.dark,
@@ -64,8 +52,8 @@ class AppTheme {
       cardColor: surfaceCard,
       dividerColor: border,
       textTheme: GoogleFonts.outfitTextTheme(ThemeData.dark().textTheme).copyWith(
-        bodyLarge: TextStyle(color: textPrimary, fontSize: 16),
-        bodyMedium: TextStyle(color: textSecondary, fontSize: 14),
+        bodyLarge: const TextStyle(color: textPrimary, fontSize: 16, letterSpacing: 0.2),
+        bodyMedium: const TextStyle(color: textSecondary, fontSize: 14, letterSpacing: 0.1),
       ),
       colorScheme: const ColorScheme.dark(
         primary: primary,
@@ -74,6 +62,85 @@ class AppTheme {
         error: expense,
       ),
       useMaterial3: true,
+    );
+  }
+}
+
+// Reusable premium Glassmorphic Card widget
+class GlassCard extends StatelessWidget {
+  final Widget child;
+  final double radius;
+  final double borderOpacity;
+  final double blur;
+  final Color? color;
+  final Gradient? gradient;
+  final EdgeInsetsGeometry? padding;
+
+  const GlassCard({
+    super.key,
+    required this.child,
+    this.radius = 20,
+    this.borderOpacity = 0.08,
+    this.blur = 18,
+    this.color,
+    this.gradient,
+    this.padding,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+        child: Container(
+          padding: padding ?? const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            gradient: gradient,
+            color: color ?? Colors.white.withOpacity(0.035),
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(
+              color: Colors.white.withOpacity(borderOpacity),
+              width: 1.2,
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+// Glowing background blur decoration blobs for the "Nebula" look
+class BackgroundGlowBlob extends StatelessWidget {
+  final double size;
+  final Color color;
+  final double opacity;
+
+  const BackgroundGlowBlob({
+    super.key,
+    required this.size,
+    required this.color,
+    this.opacity = 0.15,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withOpacity(opacity),
+        physics: const NeverScrollableScrollPhysics(), // Prevent layout bounds triggers
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(opacity),
+            blurRadius: size * 0.7,
+            spreadRadius: size * 0.2,
+          )
+        ],
+      ),
     );
   }
 }
