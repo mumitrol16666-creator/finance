@@ -43505,7 +43505,7 @@ var $async$wi=A.T(function(b,c){if(b===1){o.push(c)
 s=p}for(;;)switch(s){case 0:n.b=!0
 n.a_()
 p=4
-j=A.fb("http://178.105.162.123:8000/api/auth/verify",0,null)
+j=A.fb("http://178.105.162.123/api/auth/verify",0,null)
 i=t.N
 h=A.ak(["Content-Type","application/json"],i,i)
 s=7
@@ -43551,7 +43551,7 @@ n.a_()
 p=4
 j=t.N
 s=7
-return A.O(A.aVm(A.fb("http://178.105.162.123:8000/api/dashboard",0,null),A.ak(["Authorization","Bearer "+A.j(n.w)],j,j)),$async$vD)
+return A.O(A.aVm(A.fb("http://178.105.162.123/api/dashboard",0,null),A.ak(["Authorization","Bearer "+A.j(n.w)],j,j)),$async$vD)
 case 7:m=b
 if(m.b===200){j=m
 l=B.bN.er(A.azl(A.ayW(j.e)).er(j.w))
@@ -43593,7 +43593,7 @@ try{l=B.b.qZ(n.c,new A.a_L(a))
 m=l.a}catch(a4){}if(m==null){f=A.cU("Account not found")
 throw A.i(f)}k=null
 try{j=B.b.qZ(n.d,new A.a_M(a1))
-k=j.a}catch(a4){}f=A.fb("http://178.105.162.123:8000/api/transactions",0,null)
+k=j.a}catch(a4){}f=A.fb("http://178.105.162.123/api/transactions",0,null)
 e=t.N
 d=A.ak(["Content-Type","application/json","Authorization","Bearer "+A.j(n.w)],e,e)
 s=7
@@ -43631,7 +43631,7 @@ n.a_()
 n.b=!0
 n.a_()
 p=4
-i=A.fb("http://178.105.162.123:8000/api/chat",0,null)
+i=A.fb("http://178.105.162.123/api/chat",0,null)
 h=t.N
 g=A.ak(["Content-Type","application/json","Authorization","Bearer "+A.j(n.w)],h,h)
 s=7
