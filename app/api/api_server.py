@@ -142,14 +142,8 @@ async def verify_code(req: VerifyRequest):
         user_id, expires_at = row[0], row[1]
         if expires_at < now_str:
             # Code expired
-            await db.execute("DELETE FROM login_codes WHERE code=?", (code,))
-            await db.commit()
             raise HTTPException(status_code=400, detail="Code expired. Please request a new one.")
             
-        # Clean up code after successful use
-        await db.execute("DELETE FROM login_codes WHERE code=?", (code,))
-        await db.commit()
-        
         token = generate_token(user_id)
         return {"token": token, "user_id": user_id}
 
