@@ -400,28 +400,35 @@ async def login_command(m: Message, db: aiosqlite.Connection):
         
     lang = await get_lang(db, user_id)
     
-    # Generate 6-digit code
-    code = f"{random.randint(100000, 999999)}"
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    
-    # Save to db
-    await db.execute(
-        "INSERT OR REPLACE INTO login_codes (code, user_id, expires_at) VALUES (?, ?, ?)",
-        (code, user_id, expires_at),
-    )
-    await db.commit()
+    # Check if code already exists
+    async with db.execute("SELECT code FROM login_codes WHERE user_id = ? LIMIT 1", (user_id,)) as cursor:
+        row = await cursor.fetchone()
+        
+    if row:
+        code = row[0]
+    else:
+        # Generate new persistent 6-digit code
+        code = f"{random.randint(100000, 999999)}"
+        # Set expiry far in the future
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=365*10)).isoformat()
+        
+        await db.execute(
+            "INSERT INTO login_codes (code, user_id, expires_at) VALUES (?, ?, ?)",
+            (code, user_id, expires_at),
+        )
+        await db.commit()
     
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     
     # Localized message
     if lang == "kk":
-        text = f"🔑 Қосымшаға кіру кодыңыз: <code>{code}</code>\nКод 5 минут бойы жарамды."
+        text = f"🔑 Қосымшаға кіру кодыңыз: <code>{code}</code>\nБұл код әрқашан жарамды."
         btn_text = "📱 Қосымшаны ашу"
     elif lang == "en":
-        text = f"🔑 Your app login code: <code>{code}</code>\nValid for 5 minutes."
+        text = f"🔑 Your app login code: <code>{code}</code>\nThis code is permanent."
         btn_text = "📱 Open App"
     else:
-        text = f"🔑 Ваш код для входа в приложение: <code>{code}</code>\nКод действителен 5 минут."
+        text = f"🔑 Ваш уникальный код для входа в приложение: <code>{code}</code>\nЭтот код постоянный и больше не меняется."
         btn_text = "📱 Открыть приложение"
         
     kb = InlineKeyboardMarkup(inline_keyboard=[
