@@ -411,15 +411,23 @@ async def login_command(m: Message, db: aiosqlite.Connection):
     )
     await db.commit()
     
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
     # Localized message
     if lang == "kk":
         text = f"🔑 Қосымшаға кіру кодыңыз: <code>{code}</code>\nКод 5 минут бойы жарамды."
+        btn_text = "📱 Қосымшаны ашу"
     elif lang == "en":
         text = f"🔑 Your app login code: <code>{code}</code>\nValid for 5 minutes."
+        btn_text = "📱 Open App"
     else:
         text = f"🔑 Ваш код для входа в приложение: <code>{code}</code>\nКод действителен 5 минут."
+        btn_text = "📱 Открыть приложение"
         
-    await m.answer(text, parse_mode="HTML")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=btn_text, url="http://178.105.162.123/")]
+    ])
+    await m.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.message(Command("cancel"))
