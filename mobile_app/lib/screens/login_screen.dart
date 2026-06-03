@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
+import 'dart:math' as math;
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 
@@ -11,15 +12,50 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
+// Particle model for dynamic background
+class Particle {
+  double x;
+  double y;
+  double speedY;
+  double speedX;
+  double radius;
+  double alpha;
+
+  Particle({
+    required this.x,
+    required this.y,
+    required this.speedY,
+    required this.speedX,
+    required this.radius,
+    required this.alpha,
+  });
+}
+
+class ParticlePainter extends CustomPainter {
+  final List<Particle> particles;
+  ParticlePainter(this.particles);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint();
+    for (var p in particles) {
+      paint.color = AppTheme.primary.withOpacity(p.alpha);
+      canvas.drawCircle(Offset(p.x * size.width, p.y * size.height), p.radius, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
 class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin {
   final TextEditingController _codeController = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
   String _errorMessage = '';
 
   late final AnimationController _backgroundController;
-  late final Animation<double> _blob1AnimationX;
-  late final Animation<double> _blob1AnimationY;
-  late final Animation<double> _blob2AnimationX;
-  late final Animation<double> _blob2AnimationY;
+  final List<Particle> _particles = [];
+  final math.Random _random = math.Random();
 
   late final AnimationController _logoController;
   late final Animation<double> _logoScale;
@@ -33,41 +69,57 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   void initState() {
     super.initState();
 
+    // 1. Particle setup & background loop
     _backgroundController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 15),
-    )..repeat(reverse: true);
+      duration: const Duration(seconds: 10),
+    )..repeat();
 
-    _blob1AnimationX = Tween<double>(begin: -140, end: -60).animate(
-      CurvedAnimation(parent: _backgroundController, curve: Curves.easeInOut),
-    );
-    _blob1AnimationY = Tween<double>(begin: -140, end: -60).animate(
-      CurvedAnimation(parent: _backgroundController, curve: Curves.easeInOut),
-    );
+    for (int i = 0; i < 25; i++) {
+      _particles.add(Particle(
+        x: _random.nextDouble(),
+        y: _random.nextDouble(),
+        speedY: 0.0004 + _random.nextDouble() * 0.0008,
+        speedX: -0.0003 + _random.nextDouble() * 0.0006,
+        radius: 1.5 + _random.nextDouble() * 2.5,
+        alpha: 0.05 + _random.nextDouble() * 0.15,
+      ));
+    }
 
-    _blob2AnimationX = Tween<double>(begin: -120, end: -40).animate(
-      CurvedAnimation(parent: _backgroundController, curve: Curves.easeInOut),
-    );
-    _blob2AnimationY = Tween<double>(begin: -170, end: -70).animate(
-      CurvedAnimation(parent: _backgroundController, curve: Curves.easeInOut),
-    );
+    _backgroundController.addListener(() {
+      setState(() {
+        for (var p in _particles) {
+          p.y -= p.speedY;
+          p.x += p.speedX;
+          if (p.y < 0) {
+            p.y = 1.0;
+            p.x = _random.nextDouble();
+          }
+          if (p.x < 0 || p.x > 1.0) {
+            p.speedX = -p.speedX;
+          }
+        }
+      });
+    });
 
+    // 2. Logo breath animation
     _logoController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 4),
     )..repeat(reverse: true);
 
-    _logoScale = Tween<double>(begin: 0.94, end: 1.06).animate(
+    _logoScale = Tween<double>(begin: 0.95, end: 1.05).animate(
       CurvedAnimation(parent: _logoController, curve: Curves.easeInOut),
     );
 
-    _logoGlow = Tween<double>(begin: 18, end: 38).animate(
+    _logoGlow = Tween<double>(begin: 16, end: 32).animate(
       CurvedAnimation(parent: _logoController, curve: Curves.easeInOut),
     );
 
+    // 3. Page slide & fade entrance
     _entranceController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 1000),
     );
 
     _entranceFade = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -75,18 +127,24 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     );
 
     _entranceSlide = Tween<Offset>(
-      begin: const Offset(0.0, 0.12),
+      begin: const Offset(0.0, 0.1),
       end: Offset.zero,
     ).animate(
       CurvedAnimation(parent: _entranceController, curve: const Interval(0.0, 0.8, curve: Curves.easeOutCubic)),
     );
 
     _entranceController.forward();
+
+    // Auto-focus OTP field
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+    });
   }
 
   @override
   void dispose() {
     _codeController.dispose();
+    _focusNode.dispose();
     _backgroundController.dispose();
     _logoController.dispose();
     _entranceController.dispose();
@@ -112,187 +170,140 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     }
   }
 
+  // Modern digital OTP digit grid layout
+  Widget _buildOTPInput() {
+    return GestureDetector(
+      onTap: () {
+        _focusNode.requestFocus();
+      },
+      child: Stack(
+        children: [
+          // Hidden actual text field
+          Opacity(
+            opacity: 0,
+            child: SizedBox(
+              height: 0,
+              width: 0,
+              child: TextField(
+                controller: _codeController,
+                focusNode: _focusNode,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                onChanged: (val) {
+                  setState(() {
+                    _errorMessage = '';
+                  });
+                  if (val.length == 6) {
+                    _submitCode();
+                  }
+                },
+              ),
+            ),
+          ),
+          // 6 Glassmorphic interactive digital digit containers
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: List.generate(6, (index) {
+              final codeText = _codeController.text;
+              String digit = '';
+              if (index < codeText.length) {
+                digit = codeText[index];
+              }
+              final isFocused = _focusNode.hasFocus && index == codeText.length;
+              final isFilled = index < codeText.length;
+
+              return Expanded(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 5),
+                  height: 62,
+                  decoration: BoxDecoration(
+                    color: isFocused
+                        ? AppTheme.primary.withOpacity(0.08)
+                        : Colors.white.withOpacity(0.015),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isFocused
+                          ? AppTheme.primary
+                          : (isFilled ? AppTheme.secondary.withOpacity(0.6) : Colors.white.withOpacity(0.08)),
+                      width: isFocused ? 2.2 : 1.2,
+                    ),
+                    boxShadow: isFocused
+                        ? [
+                            BoxShadow(
+                              color: AppTheme.primary.withOpacity(0.35),
+                              blurRadius: 10,
+                              spreadRadius: 1,
+                            )
+                          ]
+                        : [],
+                  ),
+                  alignment: Alignment.center,
+                  child: digit.isNotEmpty
+                      ? Text(
+                          digit,
+                          style: const TextStyle(
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.textPrimary,
+                          ),
+                        )
+                      : Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isFocused ? AppTheme.primary : Colors.white24,
+                          ),
+                        ),
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
     final isLoading = appState.isLoading;
+    final size = MediaQuery.of(context).size;
+    final isDesktop = size.width > 850;
+
     return Scaffold(
       body: Stack(
         children: [
-          // Animated Background Glowing Blobs
-          AnimatedBuilder(
-            animation: _backgroundController,
-            builder: (context, child) {
-              return Stack(
-                children: [
-                  Positioned(
-                    top: _blob1AnimationY.value,
-                    left: _blob1AnimationX.value,
-                    child: const BackgroundGlowBlob(size: 320, color: AppTheme.primary, opacity: 0.15),
-                  ),
-                  Positioned(
-                    bottom: _blob2AnimationY.value,
-                    right: _blob2AnimationX.value,
-                    child: const BackgroundGlowBlob(size: 370, color: AppTheme.secondary, opacity: 0.15),
-                  ),
-                ],
-              );
-            },
+          // Dynamic Floating Particles background
+          Positioned.fill(
+            child: CustomPaint(
+              painter: ParticlePainter(_particles),
+            ),
           ),
           
+          // Nebula glow blobs
+          const Positioned(
+            top: -120,
+            left: -120,
+            child: BackgroundGlowBlob(size: 400, color: AppTheme.primary, opacity: 0.1),
+          ),
+          const Positioned(
+            bottom: -150,
+            right: -100,
+            child: BackgroundGlowBlob(size: 450, color: AppTheme.secondary, opacity: 0.1),
+          ),
+
           SafeArea(
-            child: FadeTransition(
-              opacity: _entranceFade,
-              child: SlideTransition(
-                position: _entranceSlide,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Spacer(),
-                      
-                      // App Logo/Icon with pulsing scale and glow
-                      Center(
-                        child: AnimatedBuilder(
-                          animation: _logoController,
-                          builder: (context, child) {
-                            return Transform.scale(
-                              scale: _logoScale.value,
-                              child: Container(
-                                padding: const EdgeInsets.all(22),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: AppTheme.primaryGradient,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: AppTheme.primary.withOpacity(0.35),
-                                      blurRadius: _logoGlow.value,
-                                      spreadRadius: 2,
-                                    ),
-                                  ],
-                                ),
-                                child: const Icon(
-                                  Icons.account_balance_wallet_rounded,
-                                  size: 44,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      
-                      // Welcome text
-                      Center(
-                        child: Text(
-                          'Finance Tracker',
-                          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.textPrimary,
-                              ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      const Center(
-                        child: Text(
-                          'Введите код из Telegram бота для синхронизации',
-                          style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                      
-                      const Spacer(),
-
-                      // OTP Code input field - wrapped in GlassCard
-                      GlassCard(
-                        borderOpacity: 0.15,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: TextField(
-                          controller: _codeController,
-                          keyboardType: TextInputType.number,
-                          maxLength: 6,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 8,
-                            color: AppTheme.textPrimary,
-                          ),
-                          decoration: const InputDecoration(
-                            hintText: '000000',
-                            hintStyle: TextStyle(
-                              color: Colors.white24,
-                              letterSpacing: 8,
-                            ),
-                            border: InputBorder.none,
-                            counterText: '',
-                          ),
-                          onSubmitted: (_) => _submitCode(),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Error message display
-                      if (_errorMessage.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12.0),
-                          child: Text(
-                            _errorMessage,
-                            style: const TextStyle(color: AppTheme.expense, fontSize: 13),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-
-                      // Action buttons
-                      ElevatedButton(
-                        onPressed: isLoading ? null : _submitCode,
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Ink(
-                          decoration: BoxDecoration(
-                            gradient: AppTheme.primaryGradient,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Container(
-                            alignment: Alignment.center,
-                            constraints: const BoxConstraints(minHeight: 52),
-                            child: isLoading
-                                ? const SpinKitThreeBounce(
-                                    color: Colors.white,
-                                    size: 24,
-                                  )
-                                : const Text(
-                                    'Войти в аккаунт',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                      ),
-                      
-                      const Spacer(flex: 2),
-                      
-                      // Small note
-                      const Center(
-                        child: Text(
-                          'Чтобы получить код, отправьте команду /login в бота',
-                          style: TextStyle(color: Colors.white30, fontSize: 12),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: FadeTransition(
+                  opacity: _entranceFade,
+                  child: SlideTransition(
+                    position: _entranceSlide,
+                    child: isDesktop
+                        ? _buildSplitLayout(isLoading)
+                        : _buildMobileLayout(isLoading),
                   ),
                 ),
               ),
@@ -300,6 +311,408 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
           ),
         ],
       ),
+    );
+  }
+
+  // 1. Splitted Premium layout for web/desktop screen width
+  Widget _buildSplitLayout(bool isLoading) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // Left side: 3D rotating card showcase & brand info
+        Expanded(
+          flex: 12,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const NeonCardShowcase(),
+              const SizedBox(height: 48),
+              
+              // Key Features
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 40.0),
+                child: Column(
+                  children: [
+                    _buildFeatureItem(Icons.psychology_rounded, 'ИИ-Финансовый Консультант', 'Умный анализ и советы по расходам'),
+                    const SizedBox(height: 16),
+                    _buildFeatureItem(Icons.autorenew_rounded, 'Регулярные Платежи', 'Автоматическое отслеживание подписок и аренды'),
+                    const SizedBox(height: 16),
+                    _buildFeatureItem(Icons.analytics_rounded, 'Глубокая Аналитика', 'Интерактивные графики распределения средств'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // Vertical spacer
+        Container(
+          height: 450,
+          width: 1.5,
+          color: Colors.white.withOpacity(0.08),
+          margin: const EdgeInsets.symmetric(horizontal: 40),
+        ),
+
+        // Right side: Login Panel
+        Expanded(
+          flex: 10,
+          child: _buildLoginPanel(isLoading, true),
+        ),
+      ],
+    );
+  }
+
+  // 2. Focused layout for mobile screen width
+  Widget _buildMobileLayout(bool isLoading) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 420),
+      child: _buildLoginPanel(isLoading, false),
+    );
+  }
+
+  Widget _buildFeatureItem(IconData icon, String title, String desc) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppTheme.primary.withOpacity(0.08),
+            shape: BoxShape.circle,
+            border: Border.all(color: AppTheme.primary.withOpacity(0.15)),
+          ),
+          child: Icon(icon, color: AppTheme.primary, size: 22),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.textPrimary),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                desc,
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginPanel(bool isLoading, bool isDesktop) {
+    return GlassCard(
+      borderOpacity: 0.12,
+      padding: EdgeInsets.symmetric(horizontal: isDesktop ? 36 : 24, vertical: 40),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Bouncing/glowing logo
+          Center(
+            child: AnimatedBuilder(
+              animation: _logoController,
+              builder: (context, child) {
+                return Transform.scale(
+                  scale: _logoScale.value,
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: AppTheme.primaryGradient,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppTheme.primary.withOpacity(0.4),
+                          blurRadius: _logoGlow.value,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.account_balance_wallet_rounded,
+                      size: 40,
+                      color: Colors.white,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 24),
+          
+          const Center(
+            child: Text(
+              'Finance Tracker',
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Center(
+            child: Text(
+              'Введите код из Telegram бота для синхронизации',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13.5),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          
+          const SizedBox(height: 36),
+
+          // Digital code grid
+          _buildOTPInput(),
+          
+          const SizedBox(height: 20),
+
+          // Error display
+          if (_errorMessage.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16.0),
+              child: Text(
+                _errorMessage,
+                style: const TextStyle(color: AppTheme.expense, fontSize: 13, fontWeight: FontWeight.w500),
+                textAlign: TextAlign.center,
+              ),
+            ),
+
+          // Action button
+          ElevatedButton(
+            onPressed: isLoading ? null : _submitCode,
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              backgroundColor: Colors.transparent,
+              shadowColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: Ink(
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Container(
+                alignment: Alignment.center,
+                constraints: const BoxConstraints(minHeight: 52),
+                child: isLoading
+                    ? const SpinKitThreeBounce(
+                        color: Colors.white,
+                        size: 24,
+                      )
+                    : const Text(
+                        'Войти в аккаунт',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 28),
+          
+          const Center(
+            child: Text(
+              'Чтобы получить код, отправьте команду /login в бота',
+              style: TextStyle(color: Colors.white30, fontSize: 11.5, letterSpacing: 0.2),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 3D card display widget
+class NeonCardShowcase extends StatefulWidget {
+  const NeonCardShowcase({super.key});
+
+  @override
+  State<NeonCardShowcase> createState() => _NeonCardShowcaseState();
+}
+
+class _NeonCardShowcaseState extends State<NeonCardShowcase> with SingleTickerProviderStateMixin {
+  late final AnimationController _cardController;
+  late final Animation<double> _rotationY;
+  late final Animation<double> _rotationX;
+  late final Animation<double> _translateY;
+
+  @override
+  void initState() {
+    super.initState();
+    _cardController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 6),
+    )..repeat(reverse: true);
+
+    _rotationY = Tween<double>(begin: -0.15, end: 0.15).animate(
+      CurvedAnimation(parent: _cardController, curve: Curves.easeInOut),
+    );
+    _rotationX = Tween<double>(begin: -0.06, end: 0.06).animate(
+      CurvedAnimation(parent: _cardController, curve: Curves.easeInOut),
+    );
+    _translateY = Tween<double>(begin: -8, end: 8).animate(
+      CurvedAnimation(parent: _cardController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _cardController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _cardController,
+      builder: (context, child) {
+        return Transform(
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, 0.001) // perspective
+            ..translate(0.0, _translateY.value, 0.0)
+            ..rotateY(_rotationY.value)
+            ..rotateX(_rotationX.value),
+          alignment: Alignment.center,
+          child: Container(
+            width: 380,
+            height: 230,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.white.withOpacity(0.06),
+                  Colors.white.withOpacity(0.01),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.12),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primary.withOpacity(0.15),
+                  blurRadius: 30,
+                  spreadRadius: 2,
+                ),
+                BoxShadow(
+                  color: AppTheme.secondary.withOpacity(0.1),
+                  blurRadius: 40,
+                  offset: const Offset(10, 10),
+                )
+              ],
+            ),
+            child: Stack(
+              children: [
+                // Glowing background shine inside card
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      gradient: LinearGradient(
+                        colors: [
+                          AppTheme.primary.withOpacity(0.08),
+                          Colors.transparent,
+                          AppTheme.secondary.withOpacity(0.08),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                  ),
+                ),
+                // Card Details
+                Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'FinTrack Gold',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.2,
+                              color: AppTheme.textPrimary,
+                            ),
+                          ),
+                          Container(
+                            width: 42,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                            ),
+                            child: const Center(
+                              child: Icon(Icons.nfc_rounded, color: Colors.amber, size: 18),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      const Text(
+                        'ТЕКУЩИЙ БАЛАНС',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppTheme.textSecondary,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        '28,000.00 KZT',
+                        style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const Spacer(),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: const [
+                          Text(
+                            'PREMIUM MEMBER',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              color: AppTheme.secondary,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                          Text(
+                            '•••• 2026',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
