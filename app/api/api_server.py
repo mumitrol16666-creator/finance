@@ -139,10 +139,7 @@ async def verify_code(req: VerifyRequest):
         if not row:
             raise HTTPException(status_code=400, detail="Invalid verification code")
         
-        user_id, expires_at = row[0], row[1]
-        if expires_at < now_str:
-            # Code expired
-            raise HTTPException(status_code=400, detail="Code expired. Please request a new one.")
+        user_id = row[0]
             
         token = generate_token(user_id)
         return {"token": token, "user_id": user_id}
