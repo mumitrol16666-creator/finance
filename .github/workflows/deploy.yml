@@ -82,14 +82,9 @@ jobs:
               cp /root/Finance_bot/.env "$APP_DIR/.env"
             fi
 
-            # 2. Copy database if it exists in /root/Finance_bot and is newer/missing in /opt/finance-bot
-            if [ -f "/root/Finance_bot/data/bot.db" ]; then
-              mkdir -p "$APP_DIR/data"
-              if [ ! -f "$APP_DIR/data/bot.db" ] || [ "/root/Finance_bot/data/bot.db" -nt "$APP_DIR/data/bot.db" ]; then
-                echo "▸ Syncing database from /root/Finance_bot/data/bot.db to $APP_DIR/data/bot.db …"
-                cp /root/Finance_bot/data/bot.db "$APP_DIR/data/bot.db"
-              fi
-            fi
+            # 2. Database is now exclusively in /opt/finance-bot/data/bot.db
+            # We no longer sync from /root/Finance_bot to avoid overwriting!
+            mkdir -p "$APP_DIR/data"
 
             # 3. Copy service files and reload systemd to switch to /opt/finance-bot
             echo "▸ Updating systemd service files …"
