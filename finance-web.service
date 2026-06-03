@@ -17,7 +17,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/Finance_bot/mobile_app/build/web
+WorkingDirectory=/opt/finance-bot/mobile_app/build/web
 ExecStart=/usr/bin/python3 -m http.server 8080 --bind 0.0.0.0
 Restart=always
 RestartSec=5

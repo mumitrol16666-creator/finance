@@ -90,18 +90,22 @@ jobs:
             echo "▸ Updating systemd service files …"
             sudo cp "$APP_DIR/finance-bot.service" /etc/systemd/system/finance-bot.service
             sudo cp "$APP_DIR/finance-api.service" /etc/systemd/system/finance-api.service
+            sudo cp "$APP_DIR/finance-web.service" /etc/systemd/system/finance-web.service
             sudo systemctl daemon-reload
 
-            # Restart the bot and API (systemd services)
+            # Restart the bot, API, and web server (systemd services)
             echo "=== SYSTEMD SERVICE INFO ==="
             sudo systemctl cat finance-bot || true
             sudo systemctl cat finance-api || true
+            sudo systemctl cat finance-web || true
             
             echo "=== PYTHON PROCESSES BEFORE RESTART ==="
             ps aux | grep python || true
 
             sudo systemctl restart finance-bot
             sudo systemctl restart finance-api
+            sudo systemctl enable finance-web
+            sudo systemctl restart finance-web
 
             echo "=== SYSTEMD STATUS AFTER RESTART ==="
             sudo systemctl status finance-bot || true

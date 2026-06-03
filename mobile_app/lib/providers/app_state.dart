@@ -31,66 +31,20 @@ class AppState extends ChangeNotifier {
     return _isPremium || _availableFeatures.contains(feature);
   }
 
-  // Mock data for initial layout testing
-  List<Account> _accounts = [
-    Account(id: 1, name: 'Наличные', balance: 1880000), // 18,800.00 minor units
-    Account(id: 2, name: 'Kaspi Gold', balance: 15450000), // 154,500.00
-  ];
+  // Real data — loaded from server after login
+  List<Account> _accounts = [];
   List<Account> get accounts => _accounts;
 
-  List<Category> _categories = [
-    Category(id: 1, name: 'Еда', emoji: '🍔', limitAmount: 15000000, spentAmount: 6420000),
-    Category(id: 2, name: 'Транспорт', emoji: '🚕', limitAmount: 3000000, spentAmount: 1200000),
-    Category(id: 3, name: 'Развлечения', emoji: '🎬', limitAmount: 5000000, spentAmount: 4800000),
-    Category(id: 4, name: 'Дом', emoji: '🏠', limitAmount: 20000000, spentAmount: 15000000),
-  ];
+  List<Category> _categories = [];
   List<Category> get categories => _categories;
 
-  List<Transaction> _transactions = [
-    Transaction(
-      id: 101,
-      amount: 120000, // 1,200.00
-      kind: 'expense',
-      categoryName: 'Еда',
-      categoryEmoji: '🍔',
-      accountName: 'Наличные',
-      note: 'Кофе с другом попили',
-      timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
-    ),
-    Transaction(
-      id: 102,
-      amount: 450000,
-      kind: 'expense',
-      categoryName: 'Развлечения',
-      categoryEmoji: '🎬',
-      accountName: 'Kaspi Gold',
-      note: 'Билеты в кино',
-      timestamp: DateTime.now().subtract(const Duration(hours: 3)),
-    ),
-    Transaction(
-      id: 103,
-      amount: 35000000, // 350,000.00
-      kind: 'income',
-      categoryName: 'Зарплата',
-      categoryEmoji: '💰',
-      accountName: 'Kaspi Gold',
-      note: 'Аванс за май',
-      timestamp: DateTime.now().subtract(const Duration(days: 1)),
-    ),
-  ];
+  List<Transaction> _transactions = [];
   List<Transaction> get transactions => _transactions;
 
-  // Streak tracker [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
-  List<bool> _weeklyStreak = [true, true, false, false, false, false, false];
+  List<bool> _weeklyStreak = [false, false, false, false, false, false, false];
   List<bool> get weeklyStreak => _weeklyStreak;
 
-  List<ChatMessage> _chatHistory = [
-    ChatMessage(
-      text: 'Привет! Я твой финансовый ИИ-консультант. Чем я могу помочь тебе сегодня?',
-      isUser: false,
-      timestamp: DateTime.now().subtract(const Duration(hours: 1)),
-    )
-  ];
+  List<ChatMessage> _chatHistory = [];
   List<ChatMessage> get chatHistory => _chatHistory;
 
   int get totalBalance => _accounts.fold(0, (sum, acc) => sum + acc.balance);
