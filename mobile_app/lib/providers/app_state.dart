@@ -106,7 +106,7 @@ class AppState extends ChangeNotifier {
   List<PlannedTx> get plannedEvents => _plannedEvents;
 
   String? _token;
-  final String _baseUrl = 'http://178.105.162.123';
+  final String _baseUrl = 'http://178.105.162.123:8000';
 
   // Authentication
   Future<bool> verifyLoginCode(String code) async {
