@@ -91,22 +91,26 @@ jobs:
               fi
             fi
 
-            # 3. Copy service file and reload systemd to switch to /opt/finance-bot
-            echo "▸ Updating systemd service file …"
+            # 3. Copy service files and reload systemd to switch to /opt/finance-bot
+            echo "▸ Updating systemd service files …"
             sudo cp "$APP_DIR/finance-bot.service" /etc/systemd/system/finance-bot.service
+            sudo cp "$APP_DIR/finance-api.service" /etc/systemd/system/finance-api.service
             sudo systemctl daemon-reload
 
-            # Restart the bot (systemd service)
+            # Restart the bot and API (systemd services)
             echo "=== SYSTEMD SERVICE INFO ==="
             sudo systemctl cat finance-bot || true
+            sudo systemctl cat finance-api || true
             
             echo "=== PYTHON PROCESSES BEFORE RESTART ==="
             ps aux | grep python || true
 
             sudo systemctl restart finance-bot
+            sudo systemctl restart finance-api
 
             echo "=== SYSTEMD STATUS AFTER RESTART ==="
             sudo systemctl status finance-bot || true
+            sudo systemctl status finance-api || true
 
             echo "=== PYTHON PROCESSES AFTER RESTART ==="
             ps aux | grep python || true
