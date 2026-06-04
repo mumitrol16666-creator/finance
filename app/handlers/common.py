@@ -430,18 +430,23 @@ async def login_command(m: Message, db: aiosqlite.Connection):
         text = f"🔑 Қосымшаға кіру кодыңыз: <code>{code}</code>\nБұл код әрқашан жарамды."
         btn_tg_text = "📱 Telegram-да ашу"
         btn_browser_text = "🌐 Браузерде ашу"
+        btn_apk_text = "🤖 Android үшін жүктеу (APK)"
     elif lang == "en":
         text = f"🔑 Your app login code: <code>{code}</code>\nThis code is permanent."
         btn_tg_text = "📱 Open in Telegram"
         btn_browser_text = "🌐 Open in Browser"
+        btn_apk_text = "🤖 Download for Android (APK)"
     else:
         text = f"🔑 Ваш уникальный код для входа в приложение: <code>{code}</code>\nЭтот код постоянный и больше не меняется."
         btn_tg_text = "📱 Открыть в Telegram"
         btn_browser_text = "🌐 Открыть в браузере"
+        btn_apk_text = "🤖 Скачать для Android (APK)"
         
+    apk_url = f"{webapp_url}app-release.apk"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=btn_tg_text, web_app=WebAppInfo(url=web_url_with_code))],
-        [InlineKeyboardButton(text=btn_browser_text, url=web_url_with_code)]
+        [InlineKeyboardButton(text=btn_browser_text, url=web_url_with_code)],
+        [InlineKeyboardButton(text=btn_apk_text, url=apk_url)]
     ])
     await m.answer(text, parse_mode="HTML", reply_markup=kb)
 

@@ -60,8 +60,8 @@ class FsmEscapeMiddleware(BaseMiddleware):
         
         raw = text.strip()
         
-        # 1. Any command starting with / (e.g., /start, /cancel, /menu)
-        if raw.startswith("/"):
+        # 1. Only /cancel command is a cancellation command
+        if raw.lower() == "/cancel":
             return True
             
         # 2. General cancel/menu phrases in any language
@@ -73,6 +73,11 @@ class FsmEscapeMiddleware(BaseMiddleware):
             return True
             
         return False
+
+    def _is_slash_command(self, text: str | None) -> bool:
+        if not text:
+            return False
+        return text.strip().startswith("/")
 
     async def __call__(
         self,
@@ -96,9 +101,9 @@ class FsmEscapeMiddleware(BaseMiddleware):
             chat_id = event.chat.id
             text = event.text or event.caption or ""
             
-            # If user pressed a main menu navigation button
-            if self._is_menu_navigation(text):
-                logger.info(f"User {event.from_user.id} escaped state {current_state} via menu navigation: '{text}'")
+            # If user pressed a main menu navigation button OR typed a command that is NOT a cancellation
+            if self._is_menu_navigation(text) or (self._is_slash_command(text) and not self._is_cancellation(text)):
+                logger.info(f"User {event.from_user.id} escaped state {current_state} via menu navigation or command: '{text}'")
                 flow_data = await state.get_data()
                 try:
                     await _cleanup_ui(event.bot, chat_id, flow_data)
@@ -108,7 +113,7 @@ class FsmEscapeMiddleware(BaseMiddleware):
                 await state.clear()
                 return await handler(event, data)
                 
-            # If user sent a cancel or start command/phrase
+            # If user sent a cancel command/phrase
             elif self._is_cancellation(text):
                 logger.info(f"User {event.from_user.id} cancelled state {current_state} via text: '{text}'")
                 from app.handlers.common import cancel_to_main_menu
