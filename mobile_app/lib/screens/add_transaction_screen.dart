@@ -16,6 +16,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   String? _selectedCategory;
   String? _selectedAccount;
   final TextEditingController _noteController = TextEditingController();
+  final FocusNode _noteFocusNode = FocusNode();
 
   // Auto-save logic fields
   bool _autoSave = false;
@@ -26,16 +27,23 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   void initState() {
     super.initState();
     _noteController.addListener(_onNoteChanged);
+    _noteFocusNode.addListener(_onFocusChanged);
   }
 
   void _onNoteChanged() {
     setState(() {});
   }
 
+  void _onFocusChanged() {
+    setState(() {});
+  }
+
   @override
   void dispose() {
     _noteController.removeListener(_onNoteChanged);
+    _noteFocusNode.removeListener(_onFocusChanged);
     _noteController.dispose();
+    _noteFocusNode.dispose();
     super.dispose();
   }
 
@@ -137,7 +145,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     final appState = Provider.of<AppState>(context);
     final accounts = appState.accounts;
     final categories = appState.categories;
-    final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+    final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0 || _noteFocusNode.hasFocus;
 
     // Filter to exclude savings accounts from regular dropdown/selector
     final regularAccounts = accounts.where((a) => !a.isSaving).toList();
@@ -230,7 +238,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                         physics: const BouncingScrollPhysics(),
                         itemCount: regularAccounts.length,
                         itemBuilder: (context, index) {
-                          final name = regularAccounts[index].name;
+                          final acc = regularAccounts[index];
+                          final name = acc.name;
+                          final balance = acc.balance;
                           final isSelected = _selectedAccount == name;
                           return GestureDetector(
                             onTap: () => setState(() => _selectedAccount = name),
@@ -245,7 +255,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                 ),
                               ),
                               child: Text(
-                                name,
+                                '$name ($balance ₸)',
                                 style: TextStyle(
                                   color: isSelected ? Colors.white : AppTheme.textSecondary,
                                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -326,6 +336,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     ),
                     child: TextField(
                       controller: _noteController,
+                      focusNode: _noteFocusNode,
                       style: const TextStyle(color: AppTheme.textPrimary),
                       decoration: InputDecoration(
                         hintText: 'Опишите операцию (например: продукты в Магните, подарок маме)',
