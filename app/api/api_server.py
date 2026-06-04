@@ -633,3 +633,169 @@ async def reset_user_data_endpoint(user_id: int = Depends(get_current_user)):
         from app.db.repositories.reset_repo import wipe_user_data
         await wipe_user_data(db, user_id)
         return {"status": "success"}
+
+@app.get("/api/reports/export")
+async def export_report_endpoint(
+    period: str = "month",
+    lang: str = "ru",
+    user_id: int = Depends(get_current_user),
+):
+    async with get_db() as db:
+        from app.db.repositories.settings_repo import get_settings
+        from app.handlers.export import (
+            _resolve_period,
+            _fetch_rows,
+            _build_xlsx,
+            now_in_user_tz,
+            calculate_financial_metrics,
+            select_top_insights,
+        )
+        from fastapi import Response
+
+        settings = await get_settings(db, user_id)
+        currency = settings[0] if settings else "KZT"
+        tz_name = settings[1] if settings else "Asia/Aqtobe"
+
+        try:
+            start_iso, end_iso, label = await _resolve_period(db, user_id, period)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid period: {e}")
+
+        rows = await _fetch_rows(db, user_id, start_iso, end_iso)
+        if not rows:
+            raise HTTPException(status_code=404, detail="No transactions found for the selected period")
+
+        metrics = await calculate_financial_metrics(db, user_id, tz_name)
+
+        cur_prof = await db.execute("SELECT user_stage, behavioral_summary, discipline_score FROM ai_profile WHERE user_id=?", (user_id,))
+        row_prof = await cur_prof.fetchone()
+        if row_prof:
+            profile = {"stage": row_prof[0], "behavioral_summary": row_prof[1], "discipline_score": row_prof[2]}
+        else:
+            profile = {"stage": "chaotic", "behavioral_summary": "накапливаем статистику", "discipline_score": 100}
+
+        cur_ins = await db.execute("SELECT insight_key, insight_text, confidence FROM ai_insights WHERE user_id=? AND status='active'", (user_id,))
+        rows_ins = await cur_ins.fetchall()
+        ai_insights = [{"key": r[0], "text": r[1], "confidence": r[2]} for r in rows_ins]
+        priority_insights = select_top_insights(ai_insights)
+
+        cur_rec = await db.execute(
+            """
+            SELECT recommendation_type, message_text, target_metric_name, target_metric_start_value, target_metric_goal_value 
+            FROM ai_recommendations_log 
+            WHERE user_id=? AND status='sent' 
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id,)
+        )
+        row_rec = await cur_rec.fetchone()
+        if row_rec:
+            latest_rec = {
+                "type": row_rec[0],
+                "text": row_rec[1],
+                "metric": row_rec[2],
+                "start": row_rec[3],
+                "goal": row_rec[4]
+            }
+        else:
+            latest_rec = None
+
+        cur_acc = await db.execute(
+            "SELECT id, name, balance, starting_balance, currency, is_saving FROM accounts WHERE user_id = ? AND is_archived = 0",
+            (user_id,)
+        )
+        accounts_data = await cur_acc.fetchall()
+
+        now_local = await now_in_user_tz(db, user_id)
+        curr_month_str = now_local.strftime("%Y-%m")
+
+        from app.domain.services.reports_service import month_bounds_utc, iso
+        start_utc, end_utc, _, _ = month_bounds_utc(tz_name, datetime.now(timezone.utc))
+        start_iso_curr = iso(start_utc)
+        end_iso_curr = iso(end_utc)
+
+        cur_bud = await db.execute(
+            """
+            SELECT c.name, c.emoji, b.limit_amount,
+                   COALESCE((
+                       SELECT SUM(t.amount)
+                       FROM transactions t
+                       WHERE t.user_id = b.user_id
+                         AND t.category_id = b.category_id
+                         AND t.type = 'expense'
+                         AND t.deleted_at IS NULL
+                         AND t.ts >= ? AND t.ts < ?
+                   ), 0) AS spent
+            FROM budgets b
+            JOIN categories c ON c.id = b.category_id
+            WHERE b.user_id = ? AND b.month = ?
+            """,
+            (start_iso_curr, end_iso_curr, user_id, curr_month_str)
+        )
+        budgets_data = await cur_bud.fetchall()
+
+        liabilities_data = []
+        try:
+            cur_deb = await db.execute(
+                "SELECT direction AS kind, title, remaining_amount, payment_amount, next_payment_date, note FROM debts WHERE user_id = ? AND is_active = 1",
+                (user_id,)
+            )
+            liabilities_data = await cur_deb.fetchall()
+        except Exception:
+            pass
+
+        recurring_data = []
+        try:
+            cur_rec = await db.execute(
+                """
+                SELECT title, amount, 'expense' AS rtype, day_of_month, comment, next_run_date
+                FROM recurring_expenses
+                WHERE user_id = ? AND is_archived = 0
+                UNION ALL
+                SELECT title, amount, 'income' AS rtype, day_of_month, comment, next_run_date
+                FROM recurring_incomes
+                WHERE user_id = ? AND is_archived = 0
+                ORDER BY day_of_month ASC
+                """,
+                (user_id, user_id)
+            )
+            recurring_data = await cur_rec.fetchall()
+        except Exception:
+            pass
+
+        planned_data = []
+        try:
+            cur_plan = await db.execute(
+                """
+                SELECT p.title, p.kind, p.amount, p.planned_date, a.name AS account_name, c.name AS category_name, c.emoji AS category_emoji, p.is_required, p.comment
+                FROM planned_transactions p
+                LEFT JOIN accounts a ON a.id = p.account_id
+                LEFT JOIN categories c ON c.id = p.category_id
+                WHERE p.user_id = ? AND p.is_archived = 0
+                ORDER BY date(p.planned_date) ASC
+                """,
+                (user_id,)
+            )
+            planned_data = await cur_plan.fetchall()
+        except Exception:
+            pass
+
+        payload = _build_xlsx(
+            rows, lang, currency, user_id, metrics, profile, priority_insights, latest_rec, tz_name,
+            accounts_data=accounts_data,
+            budgets_data=budgets_data,
+            liabilities_data=liabilities_data,
+            recurring_data=recurring_data,
+            planned_data=planned_data,
+            all_insights=ai_insights
+        )
+
+        if payload is None:
+            raise HTTPException(status_code=500, detail="Failed to generate Excel report")
+
+        filename = f"finance_{label}.xlsx"
+        return Response(
+            content=payload,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )

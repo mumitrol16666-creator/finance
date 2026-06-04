@@ -754,7 +754,10 @@ async def _try_auto_pick_only_account(
 ) -> bool:
     """If the user has exactly one active account, skip the picker and continue."""
     accs = await list_accounts(db, user_id)
-    active = [r for r in accs if int(r[3] or 0) == 0]
+    if is_expense:
+        active = [r for r in accs if int(r[3] or 0) == 0 and not r[5]]
+    else:
+        active = [r for r in accs if int(r[3] or 0) == 0]
     if len(active) != 1:
         return False
     acc_id = int(active[0][0])
@@ -797,7 +800,7 @@ async def _exp_render_account(target: Message | CallbackQuery, state: FSMContext
     data = await state.get_data()
     lang = data.get("lang", "ru")
     accs = await list_accounts(db, target.from_user.id)
-    active = [r for r in accs if int(r[3] or 0) == 0]
+    active = [r for r in accs if int(r[3] or 0) == 0 and not r[5]]
     if not active:
         await _flow_render(
             target,
@@ -814,7 +817,7 @@ async def _exp_render_account(target: Message | CallbackQuery, state: FSMContext
         f"{_exp_summary_lines(data, lang)}\n\n"
         f"{_i18n_t(lang, 'TX_EXP_STEP_2')}"
     )
-    await _flow_render(target, state, text, reply_markup=accounts_kb(accs, "expacc", lang))
+    await _flow_render(target, state, text, reply_markup=accounts_kb(active, "expacc", lang))
 
 
 async def _exp_render_category(target: Message | CallbackQuery, state: FSMContext, db):
@@ -1931,8 +1934,216 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     if data.get("note"):
         msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"
 
-    await _flow_finish(ctx, state, msg, db, show_main_menu=True)
+    # Check if we should suggest saving to piggy bank
+    all_accs = await list_accounts(db, ctx.from_user.id)
+    savings = [a for a in all_accs if a[5] and not a[3]] # active saving accounts
+    source_acc = await get_account(db, ctx.from_user.id, int(data["account_id"]))
+    
+    if savings and source_acc and not source_acc[5]:
+        # Delete the previous FSM message
+        bot = ctx.bot
+        chat_id = ctx.message.chat.id if isinstance(ctx, CallbackQuery) else ctx.chat.id
+        await _delete_flow_message(bot, chat_id, state)
+        
+        # Save info for piggy bank suggest flow
+        await state.update_data(
+            income_saved_msg=msg,
+            income_tx_id=tx_id,
+            income_amount=int(data["amount"]),
+            income_account_id=int(data["account_id"]),
+            streak_before=streak_before
+        )
+        await state.set_state(IncomeFlow.piggy_suggest)
+        
+        # Build prompt message
+        prompt_text = f"{msg}\n\n{_i18n_t(lang, 'TX_PIGGY_SUGGEST_TITLE')}"
+        
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🎯 10%", callback_data="incpiggy:pct:10")
+        kb.button(text="🎯 20%", callback_data="incpiggy:pct:20")
+        kb.button(text="🎯 30%", callback_data="incpiggy:pct:30")
+        kb.button(text="✍️ Другая сумма" if lang == "ru" else ("✍️ Custom" if lang == "en" else "✍️ Басқа сома"), callback_data="incpiggy:pct:custom")
+        kb.button(text=_i18n_t(lang, "BTN_PIGGY_SKIP"), callback_data="incpiggy:skip")
+        kb.adjust(3, 1, 1)
+        
+        sent = await bot.send_message(chat_id, prompt_text, reply_markup=kb.as_markup(), parse_mode=PARSE_MODE)
+        await state.update_data(flow_message_id=sent.message_id)
+    else:
+        await _flow_finish(ctx, state, msg, db, show_main_menu=True)
+        await _check_and_send_streak_reward(ctx, db, streak_before)
+
+async def _inc_piggy_finish(ctx: Message | CallbackQuery, state: FSMContext, db, text: str, streak_before: int):
+    """Clean up, send main menu and streak reward after completing or skipping the piggy suggestions."""
+    bot = ctx.bot
+    chat_id = ctx.message.chat.id if isinstance(ctx, CallbackQuery) else ctx.chat.id
+    user_id = ctx.from_user.id
+    lang = await get_lang(db, user_id)
+    
+    await _delete_flow_message(bot, chat_id, state)
+    await state.clear()
+    
+    # 1. Send the result message
+    await bot.send_message(chat_id, text, parse_mode=PARSE_MODE)
+    
+    # 2. Send the Main Menu
+    menu_kb = await build_main_menu_markup(db, user_id, lang)
+    from app.domain.services.ai_consultant_service import build_main_menu_text
+    menu_text = await build_main_menu_text(db, user_id, lang)
+    await bot.send_message(chat_id, menu_text, reply_markup=menu_kb, parse_mode=PARSE_MODE)
+    
     await _check_and_send_streak_reward(ctx, db, streak_before)
+
+
+@router.callback_query(IncomeFlow.piggy_suggest, F.data == "incpiggy:skip")
+async def inc_piggy_skip(c: CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    income_saved_msg = data.get("income_saved_msg", "")
+    streak_before = int(data.get("streak_before", 0))
+    await c.answer()
+    await _inc_piggy_finish(c, state, db, income_saved_msg, streak_before)
+
+
+@router.callback_query(IncomeFlow.piggy_suggest, F.data.startswith("incpiggy:pct:"))
+async def inc_piggy_pct(c: CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    action = c.data.split(":")[2]
+    income_amount = int(data.get("income_amount", 0))
+    
+    if action == "custom":
+        # Ask user for custom amount
+        await state.set_state(IncomeFlow.piggy_amount)
+        # We can update the message
+        prompt_text = _i18n_t(lang, "TX_PIGGY_SUGGEST_CUSTOM_ASK")
+        
+        kb = InlineKeyboardBuilder()
+        kb.button(text=_i18n_t(lang, "BTN_PIGGY_SKIP"), callback_data="incpiggy:skip")
+        kb.adjust(1)
+        
+        await c.message.edit_text(prompt_text, reply_markup=kb.as_markup(), parse_mode=PARSE_MODE)
+        await c.answer()
+        return
+
+    # Calculate percentage amount
+    pct = int(action)
+    amount = int(income_amount * pct / 100)
+    if amount < 1:
+        amount = 1
+        
+    await state.update_data(piggy_amount=amount)
+    await _process_piggy_saving(c, state, db, amount)
+    await c.answer()
+
+
+async def _process_piggy_saving(c: CallbackQuery | Message, state: FSMContext, db, amount: int):
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    user_id = c.from_user.id
+    
+    all_accs = await list_accounts(db, user_id)
+    savings = [a for a in all_accs if a[5] and not a[3]] # active saving accounts
+    
+    if len(savings) == 1:
+        # Perform transfer directly
+        target_acc_id = savings[0][0]
+        target_name = savings[0][1]
+        source_acc_id = int(data["income_account_id"])
+        streak_before = int(data["streak_before"])
+        
+        await add_transfer(
+            db, user_id, amount, source_acc_id, target_acc_id,
+            note="Копилка (автонакопление)" if lang == "ru" else ("Savings (auto)" if lang == "en" else "Копилка (автожинақтау)")
+        )
+        
+        success_text = _i18n_t(lang, "TX_PIGGY_SUGGEST_SUCCESS").format(
+            amount=fmt_money(amount),
+            name=escape(target_name)
+        )
+        
+        final_msg = f"{data['income_saved_msg']}\n\n{success_text}"
+        await _inc_piggy_finish(c, state, db, final_msg, streak_before)
+    else:
+        # Ask user to pick which piggy bank
+        kb = InlineKeyboardBuilder()
+        for s in savings:
+            s_id, s_name, s_bal = s[0], s[1], s[2]
+            kb.button(text=f"{s_name} ({fmt_money(s_bal)})", callback_data=f"incpiggy:acc:{s_id}")
+        kb.button(text=_i18n_t(lang, "BTN_PIGGY_SKIP"), callback_data="incpiggy:skip")
+        kb.adjust(1)
+        
+        prompt_text = _i18n_t(lang, "TX_PIGGY_SUGGEST_SELECT")
+        
+        bot = c.bot
+        chat_id = c.message.chat.id if isinstance(c, CallbackQuery) else c.chat.id
+        await _delete_flow_message(bot, chat_id, state)
+        
+        sent = await bot.send_message(chat_id, prompt_text, reply_markup=kb.as_markup(), parse_mode=PARSE_MODE)
+        await state.update_data(flow_message_id=sent.message_id)
+
+
+@router.callback_query(IncomeFlow.piggy_suggest, F.data.startswith("incpiggy:acc:"))
+async def inc_piggy_acc_pick(c: CallbackQuery, state: FSMContext, db):
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    user_id = c.from_user.id
+    target_acc_id = int(c.data.split(":")[2])
+    amount = int(data["piggy_amount"])
+    source_acc_id = int(data["income_account_id"])
+    streak_before = int(data["streak_before"])
+    
+    target_acc = await get_account(db, user_id, target_acc_id)
+    target_name = target_acc[1] if target_acc else "Копилка"
+    
+    await add_transfer(
+        db, user_id, amount, source_acc_id, target_acc_id,
+        note="Копилка (автонакопление)" if lang == "ru" else ("Savings (auto)" if lang == "en" else "Копилка (автожинақтау)")
+    )
+    
+    success_text = _i18n_t(lang, "TX_PIGGY_SUGGEST_SUCCESS").format(
+        amount=fmt_money(amount),
+        name=escape(target_name)
+    )
+    
+    final_msg = f"{data['income_saved_msg']}\n\n{success_text}"
+    await c.answer()
+    await _inc_piggy_finish(c, state, db, final_msg, streak_before)
+
+
+@router.message(IncomeFlow.piggy_amount, F.text)
+async def inc_piggy_amount_input(m: Message, state: FSMContext, db):
+    if _is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+
+    lang = (await state.get_data()).get("lang", "ru")
+    amount = await parse_money_for_user(db, m.from_user.id, m.text)
+    data = await state.get_data()
+    income_amount = int(data.get("income_amount", 0))
+    
+    try:
+        await m.delete()
+    except Exception:
+        pass
+        
+    if amount is None or amount <= 0 or amount > income_amount:
+        # Invalid amount
+        err_msg = _i18n_t(lang, "TX_PIGGY_SUGGEST_CUSTOM_ERR").format(max=fmt_money(income_amount))
+        
+        kb = InlineKeyboardBuilder()
+        kb.button(text=_i18n_t(lang, "BTN_PIGGY_SKIP"), callback_data="incpiggy:skip")
+        kb.adjust(1)
+        
+        # Edit suggestion message with error
+        bot = m.bot
+        chat_id = m.chat.id
+        await _delete_flow_message(bot, chat_id, state)
+        
+        sent = await bot.send_message(chat_id, err_msg, reply_markup=kb.as_markup(), parse_mode=PARSE_MODE)
+        await state.update_data(flow_message_id=sent.message_id)
+        return
+        
+    await state.update_data(piggy_amount=amount)
+    await _process_piggy_saving(m, state, db, amount)
 
 # =========================================================
 # Transfer screens

@@ -3,9 +3,11 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
+import '../utils/file_saver.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
@@ -15,6 +17,7 @@ class AnalyticsScreen extends StatefulWidget {
 }
 
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
+  int _activeTab = 0; // 0: Expenses, 1: Savings
   int _activeTimeframe = 1; // 0: Week, 1: Month, 2: Year
   bool _isExporting = false;
   int touchedIndex = -1;
@@ -26,17 +29,80 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   Future<void> _exportExcel() async {
     setState(() => _isExporting = true);
-    // Simulate generation of excel report
-    await Future.delayed(const Duration(seconds: 2));
-    if (mounted) {
-      setState(() => _isExporting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Отчёт Excel успешно экспортирован и сохранён в загрузки!'),
-          backgroundColor: AppTheme.income,
-        ),
-      );
+    final appState = Provider.of<AppState>(context, listen: false);
+    final period = _activeTimeframe == 0
+        ? 'week'
+        : (_activeTimeframe == 1 ? 'month' : 'all');
+    try {
+      final bytes = await appState.exportExcelReport(period);
+      if (bytes != null && bytes.isNotEmpty) {
+        await FileSaver.saveFile(bytes, "finance_${period}_report.xlsx");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Отчёт Excel успешно экспортирован и сохранён в загрузки!'),
+              backgroundColor: AppTheme.income,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ Не удалось экспортировать отчет. Возможно, нет операций за этот период.'),
+              backgroundColor: AppTheme.expense,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Ошибка при экспорте отчета: $e'),
+            backgroundColor: AppTheme.expense,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExporting = false);
+      }
     }
+  }
+
+  Widget _buildTabButton(int index, String label) {
+    final isActive = _activeTab == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() {
+          _activeTab = index;
+          touchedIndex = -1;
+        }),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: isActive ? AppTheme.primary.withOpacity(0.2) : AppTheme.surface.withOpacity(0.3),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isActive ? AppTheme.primary : AppTheme.border.withOpacity(0.5),
+              width: 1.5,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: isActive ? Colors.white : AppTheme.textSecondary,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -44,6 +110,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final appState = Provider.of<AppState>(context);
     final categories = appState.categories;
     final totalSpent = appState.monthlyExpenses;
+
+    final savingsAccounts = appState.accounts.where((a) => a.isSaving).toList();
+    final int totalSavings = savingsAccounts.fold(0, (sum, a) => sum + a.balance);
 
     final List<Color> segmentColors = [
       AppTheme.expense,
@@ -65,7 +134,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Аналитика расходов',
+                  'Аналитика',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.bold,
                         color: AppTheme.textPrimary,
@@ -73,191 +142,337 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 ).animate().fade(duration: 400.ms).slideY(begin: -0.2),
                 const SizedBox(height: 18),
 
-                // Timeframe Selector Row
+                // Top Tab Selector Row
                 Row(
                   children: [
-                    _buildTimeframeTab(0, 'НЕДЕЛЯ'),
-                    const SizedBox(width: 8),
-                    _buildTimeframeTab(1, 'МЕСЯЦ'),
-                    const SizedBox(width: 8),
-                    _buildTimeframeTab(2, 'ГОД'),
+                    _buildTabButton(0, 'ТРАТЫ'),
+                    const SizedBox(width: 12),
+                    _buildTabButton(1, 'КОПИЛКИ'),
                   ],
-                ).animate().fade(delay: 100.ms).slideY(begin: 0.2),
-                const SizedBox(height: 24),
+                ).animate().fade(delay: 50.ms).slideY(begin: -0.1),
+                const SizedBox(height: 20),
 
-                // Donut Chart Card (using fl_chart)
-                GlassCard(
-                  radius: 16,
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
+                if (_activeTab == 0) ...[
+                  // Timeframe Selector Row
+                  Row(
                     children: [
-                      SizedBox(
-                        height: 200,
-                        child: Stack(
-                          children: [
-                            PieChart(
-                              PieChartData(
-                                pieTouchData: PieTouchData(
-                                  touchCallback: (FlTouchEvent event, pieTouchResponse) {
-                                    setState(() {
-                                      if (!event.isInterestedForInteractions ||
-                                          pieTouchResponse == null ||
-                                          pieTouchResponse.touchedSection == null) {
-                                        touchedIndex = -1;
-                                        return;
-                                      }
-                                      touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
-                                    });
-                                  },
+                      _buildTimeframeTab(0, 'НЕДЕЛЯ'),
+                      const SizedBox(width: 8),
+                      _buildTimeframeTab(1, 'МЕСЯЦ'),
+                      const SizedBox(width: 8),
+                      _buildTimeframeTab(2, 'ГОД'),
+                    ],
+                  ).animate().fade(delay: 100.ms).slideY(begin: 0.2),
+                  const SizedBox(height: 24),
+
+                  // Donut Chart Card (using fl_chart)
+                  GlassCard(
+                    radius: 16,
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          height: 200,
+                          child: Stack(
+                            children: [
+                              PieChart(
+                                PieChartData(
+                                  pieTouchData: PieTouchData(
+                                    touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                                      setState(() {
+                                        if (!event.isInterestedForInteractions ||
+                                            pieTouchResponse == null ||
+                                            pieTouchResponse.touchedSection == null) {
+                                          touchedIndex = -1;
+                                          return;
+                                        }
+                                        touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
+                                      });
+                                    },
+                                  ),
+                                  borderData: FlBorderData(show: false),
+                                  sectionsSpace: 2,
+                                  centerSpaceRadius: 60,
+                                  sections: showingSections(categories, totalSpent, segmentColors),
                                 ),
-                                borderData: FlBorderData(show: false),
-                                sectionsSpace: 2,
-                                centerSpaceRadius: 60,
-                                sections: showingSections(categories, totalSpent, segmentColors),
-                              ),
-                            ).animate().scale(duration: 600.ms, curve: Curves.easeOutBack),
-                            Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Text(
-                                    'ВСЕГО',
-                                    style: TextStyle(
-                                      color: AppTheme.textSecondary,
-                                      fontSize: 10,
-                                      letterSpacing: 1.0,
+                              ).animate().scale(duration: 600.ms, curve: Curves.easeOutBack),
+                              Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Text(
+                                      'ВСЕГО',
+                                      style: TextStyle(
+                                        color: AppTheme.textSecondary,
+                                        fontSize: 10,
+                                        letterSpacing: 1.0,
+                                      ),
                                     ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _formatKzt(totalSpent),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ).animate().fade(delay: 300.ms),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ).animate().fade(delay: 200.ms).slideY(begin: 0.2),
+                  const SizedBox(height: 20),
+
+                  // Export to Excel Button Card
+                  GestureDetector(
+                    onTap: _isExporting ? null : _exportExcel,
+                    child: GlassCard(
+                      color: AppTheme.surfaceCard.withOpacity(0.4),
+                      radius: 14,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.orangeAccent.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.file_present_rounded, color: Colors.orangeAccent, size: 24),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: const [
+                                Text(
+                                  'Выгрузить полный отчёт',
+                                  style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Сводная книга Excel (XLSX)',
+                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_isExporting)
+                            const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.orangeAccent),
+                              ),
+                            )
+                          else
+                            const Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+                        ],
+                      ),
+                    ),
+                  ).animate().fade(delay: 300.ms).slideY(begin: 0.2),
+                  const SizedBox(height: 24),
+
+                  const Text(
+                    'Детализация трат',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  ).animate().fade(delay: 400.ms),
+                  const SizedBox(height: 12),
+
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: categories.length,
+                    itemBuilder: (context, index) {
+                      final cat = categories[index];
+                      final color = segmentColors[index % segmentColors.length];
+                      final double percent = totalSpent > 0 ? (cat.spentAmount / totalSpent) * 100 : 0;
+                      
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: GlassCard(
+                          radius: 12,
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 12,
+                                height: 12,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(cat.emoji, style: const TextStyle(fontSize: 16)),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  cat.name,
+                                  style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    _formatKzt(cat.spentAmount),
+                                    style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    _formatKzt(totalSpent),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                    '${percent.toStringAsFixed(1)}%',
+                                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
                                   ),
                                 ],
-                              ),
-                            ).animate().fade(delay: 300.ms),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ).animate().fade(delay: 200.ms).slideY(begin: 0.2),
-                const SizedBox(height: 20),
-
-                // Export to Excel Button Card
-                GestureDetector(
-                  onTap: _isExporting ? null : _exportExcel,
-                  child: GlassCard(
-                    color: AppTheme.surfaceCard.withOpacity(0.4),
-                    radius: 14,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.orangeAccent.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.file_present_rounded, color: Colors.orangeAccent, size: 24),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: const [
-                              Text(
-                                'Выгрузить полный отчёт',
-                                style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-                              ),
-                              SizedBox(height: 2),
-                              Text(
-                                'Сводная книга Excel (XLSX) за месяц',
-                                style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
                               ),
                             ],
                           ),
                         ),
-                        if (_isExporting)
-                          const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.orangeAccent),
-                            ),
-                          )
-                        else
-                          const Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+                      ).animate().fade(delay: Duration(milliseconds: 400 + (index * 100))).slideX(begin: 0.1);
+                    },
+                  ),
+                ] else ...[
+                  // Savings Dashboard
+                  GlassCard(
+                    radius: 16,
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          height: 200,
+                          child: Stack(
+                            children: [
+                              PieChart(
+                                PieChartData(
+                                  pieTouchData: PieTouchData(
+                                    touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                                      setState(() {
+                                        if (!event.isInterestedForInteractions ||
+                                            pieTouchResponse == null ||
+                                            pieTouchResponse.touchedSection == null) {
+                                          touchedIndex = -1;
+                                          return;
+                                        }
+                                        touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
+                                      });
+                                    },
+                                  ),
+                                  borderData: FlBorderData(show: false),
+                                  sectionsSpace: 2,
+                                  centerSpaceRadius: 60,
+                                  sections: showingSavingsSections(savingsAccounts, totalSavings, segmentColors),
+                                ),
+                              ).animate().scale(duration: 600.ms, curve: Curves.easeOutBack),
+                              Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Text(
+                                      'НАКОПЛЕНО',
+                                      style: TextStyle(
+                                        color: AppTheme.textSecondary,
+                                        fontSize: 10,
+                                        letterSpacing: 1.0,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _formatKzt(totalSavings),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ).animate().fade(delay: 300.ms),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                  ),
-                ).animate().fade(delay: 300.ms).slideY(begin: 0.2),
-                const SizedBox(height: 24),
+                  ).animate().fade(delay: 200.ms).slideY(begin: 0.2),
+                  const SizedBox(height: 24),
 
-                const Text(
-                  'Детализация трат',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-                ).animate().fade(delay: 400.ms),
-                const SizedBox(height: 12),
+                  const Text(
+                    'Распределение сбережений',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  ).animate().fade(delay: 400.ms),
+                  const SizedBox(height: 12),
 
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: categories.length,
-                  itemBuilder: (context, index) {
-                    final cat = categories[index];
-                    final color = segmentColors[index % segmentColors.length];
-                    final double percent = totalSpent > 0 ? (cat.spentAmount / totalSpent) * 100 : 0;
-                    
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      child: GlassCard(
-                        radius: 12,
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 12,
-                              height: 12,
-                              decoration: BoxDecoration(
-                                color: color,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(cat.emoji, style: const TextStyle(fontSize: 16)),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                cat.name,
-                                style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
-                              ),
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
+                  if (savingsAccounts.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Center(
+                        child: Text(
+                          'У вас пока нет активных копилок.',
+                          style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+                        ),
+                      ),
+                    )
+                  else
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: savingsAccounts.length,
+                      itemBuilder: (context, index) {
+                        final acc = savingsAccounts[index];
+                        final color = segmentColors[index % segmentColors.length];
+                        final double percent = totalSavings > 0 ? (acc.balance / totalSavings) * 100 : 0;
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: GlassCard(
+                            radius: 12,
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
                               children: [
-                                Text(
-                                  _formatKzt(cat.spentAmount),
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                                Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: color,
+                                    shape: BoxShape.circle,
+                                  ),
                                 ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${percent.toStringAsFixed(1)}%',
-                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                                const SizedBox(width: 12),
+                                const Text('🐷', style: TextStyle(fontSize: 16)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    acc.name,
+                                    style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+                                  ),
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      _formatKzt(acc.balance),
+                                      style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${percent.toStringAsFixed(1)}%',
+                                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
-                          ],
-                        ),
-                      ),
-                    ).animate().fade(delay: Duration(milliseconds: 400 + (index * 100))).slideX(begin: 0.1);
-                  },
-                ),
+                          ),
+                        ).animate().fade(delay: Duration(milliseconds: 400 + (index * 100))).slideX(begin: 0.1);
+                      },
+                    ),
+                ],
               ],
             ),
           ),
@@ -277,14 +492,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         )
       ];
     }
-    
+
     return List.generate(categories.length, (i) {
       final isTouched = i == touchedIndex;
       final fontSize = isTouched ? 16.0 : 0.0;
       final radius = isTouched ? 35.0 : 25.0;
       final cat = categories[i];
       final color = colors[i % colors.length];
-      
+
       return PieChartSectionData(
         color: color,
         value: cat.spentAmount.toDouble(),
@@ -294,7 +509,41 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           fontSize: fontSize,
           fontWeight: FontWeight.bold,
           color: Colors.white,
-          shadows: [Shadow(color: Colors.black, blurRadius: 2)],
+          shadows: const [Shadow(color: Colors.black, blurRadius: 2)],
+        ),
+      );
+    });
+  }
+
+  List<PieChartSectionData> showingSavingsSections(List<Account> savingsAccounts, int totalSavings, List<Color> colors) {
+    if (totalSavings <= 0 || savingsAccounts.isEmpty) {
+      return [
+        PieChartSectionData(
+          color: AppTheme.border,
+          value: 100,
+          title: '',
+          radius: 30,
+        )
+      ];
+    }
+
+    return List.generate(savingsAccounts.length, (i) {
+      final isTouched = i == touchedIndex;
+      final fontSize = isTouched ? 16.0 : 0.0;
+      final radius = isTouched ? 35.0 : 25.0;
+      final account = savingsAccounts[i];
+      final color = colors[i % colors.length];
+
+      return PieChartSectionData(
+        color: color,
+        value: account.balance.toDouble(),
+        title: isTouched ? '${((account.balance / totalSavings) * 100).toStringAsFixed(0)}%' : '',
+        radius: radius,
+        titleStyle: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+          shadows: const [Shadow(color: Colors.black, blurRadius: 2)],
         ),
       );
     });
