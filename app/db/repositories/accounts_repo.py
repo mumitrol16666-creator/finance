@@ -33,6 +33,26 @@ async def get_account(db: aiosqlite.Connection, user_id: int, account_id: int):
     return await cur.fetchone()
 
 
+async def get_default_account(db: aiosqlite.Connection, user_id: int):
+    # Try to find a regular (non-saving) active account first
+    cur = await db.execute(
+        "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts "
+        "WHERE user_id=? AND is_archived=0 AND is_saving=0 ORDER BY id LIMIT 1",
+        (user_id,)
+    )
+    row = await cur.fetchone()
+    if row:
+        return row
+        
+    # If not found, try to find any active account (including saving)
+    cur = await db.execute(
+        "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts "
+        "WHERE user_id=? AND is_archived=0 ORDER BY id LIMIT 1",
+        (user_id,)
+    )
+    return await cur.fetchone()
+
+
 async def get_account_by_name(db: aiosqlite.Connection, user_id: int, name: str):
     cur = await db.execute(
         "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts WHERE user_id=? AND lower(name)=lower(?) LIMIT 1",
