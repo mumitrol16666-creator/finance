@@ -418,21 +418,30 @@ async def login_command(m: Message, db: aiosqlite.Connection):
         )
         await db.commit()
     
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    
+    webapp_url = settings.webapp_url
+    if not webapp_url.endswith("/"):
+        webapp_url += "/"
+    web_url_with_code = f"{webapp_url}?code={code}"
     
     # Localized message
     if lang == "kk":
         text = f"🔑 Қосымшаға кіру кодыңыз: <code>{code}</code>\nБұл код әрқашан жарамды."
-        btn_text = "📱 Қосымшаны ашу"
+        btn_tg_text = "📱 Telegram-да ашу"
+        btn_browser_text = "🌐 Браузерде ашу"
     elif lang == "en":
         text = f"🔑 Your app login code: <code>{code}</code>\nThis code is permanent."
-        btn_text = "📱 Open App"
+        btn_tg_text = "📱 Open in Telegram"
+        btn_browser_text = "🌐 Open in Browser"
     else:
         text = f"🔑 Ваш уникальный код для входа в приложение: <code>{code}</code>\nЭтот код постоянный и больше не меняется."
-        btn_text = "📱 Открыть приложение"
+        btn_tg_text = "📱 Открыть в Telegram"
+        btn_browser_text = "🌐 Открыть в браузере"
         
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=btn_text, url="http://178.105.162.123/")]
+        [InlineKeyboardButton(text=btn_tg_text, web_app=WebAppInfo(url=web_url_with_code))],
+        [InlineKeyboardButton(text=btn_browser_text, url=web_url_with_code)]
     ])
     await m.answer(text, parse_mode="HTML", reply_markup=kb)
 

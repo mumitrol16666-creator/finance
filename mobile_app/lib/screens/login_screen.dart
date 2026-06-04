@@ -142,7 +142,30 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     // Auto-focus OTP field
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
+      _checkUrlParameters();
     });
+  }
+
+  void _checkUrlParameters() {
+    try {
+      String? codeParam = Uri.base.queryParameters['code'];
+      if (codeParam == null) {
+        final fragment = Uri.base.fragment;
+        if (fragment.contains('code=')) {
+          final uri = Uri.parse('http://dummy.com$fragment');
+          codeParam = uri.queryParameters['code'];
+        }
+      }
+      if (codeParam != null && codeParam.length == 6 && RegExp(r'^\d{6}$').hasMatch(codeParam)) {
+        setState(() {
+          _codeController.text = codeParam!;
+          _errorMessage = '';
+        });
+        _submitCode();
+      }
+    } catch (e) {
+      debugPrint('Error reading URL params: $e');
+    }
   }
 
   @override

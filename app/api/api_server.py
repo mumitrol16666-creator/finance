@@ -18,32 +18,48 @@ from app.domain.services.access_service import can_use_feature
 
 app = FastAPI(title="Finance Tracker API")
 
+import time
+
+origins = [x.strip() for x in settings.cors_origins.split(",") if x.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-SECRET_KEY = b"finance_bot_secret_key_123!"
+SECRET_KEY = settings.secret_key.encode()
 
 def generate_token(user_id: int) -> str:
-    msg = str(user_id).encode()
+    # 90 days validity
+    exp_timestamp = int(time.time()) + 90 * 24 * 3600
+    msg = f"{user_id}.{exp_timestamp}".encode()
     sig = hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
-    return f"{user_id}.{sig}"
+    return f"{user_id}.{exp_timestamp}.{sig}"
 
 def verify_token(token: str) -> int | None:
     try:
         parts = token.split(".")
-        if len(parts) != 2:
-            return None
-        user_id_str, sig = parts
-        user_id = int(user_id_str)
-        msg = str(user_id).encode()
-        expected_sig = hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
-        if hmac.compare_digest(sig, expected_sig):
-            return user_id
+        if len(parts) == 3:
+            user_id_str, exp_str, sig = parts
+            user_id = int(user_id_str)
+            exp_time = int(exp_str)
+            if time.time() > exp_time:
+                return None
+            msg = f"{user_id}.{exp_time}".encode()
+            expected_sig = hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(sig, expected_sig):
+                return user_id
+        elif len(parts) == 2:
+            # Backwards compatibility: verify old token format without expiration
+            user_id_str, sig = parts
+            user_id = int(user_id_str)
+            msg = str(user_id).encode()
+            expected_sig = hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(sig, expected_sig):
+                return user_id
     except Exception:
         pass
     return None
