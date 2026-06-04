@@ -57,6 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
@@ -104,6 +105,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         items: ['KZT (₸)', 'RUB (₽)', 'USD (\$)', 'EUR (€)'],
                         onChanged: (val) {
                           if (val != null) setState(() => _currency = val);
+                        },
+                      ),
+                      const Divider(color: AppTheme.border, height: 1),
+                      // Budget cycle start day
+                      _buildDropdownTile(
+                        icon: Icons.calendar_month_rounded,
+                        title: 'День начала периода',
+                        value: appState.budgetCycleStartDay.toString(),
+                        items: List.generate(28, (i) => (i + 1).toString()),
+                        onChanged: (val) {
+                          if (val != null) {
+                            final day = int.tryParse(val);
+                            if (day != null) {
+                              appState.updateSettings(budgetCycleStartDay: day);
+                            }
+                          }
                         },
                       ),
                     ],

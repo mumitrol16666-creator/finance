@@ -32,12 +32,43 @@ class FinanceApp extends StatelessWidget {
   }
 }
 
-class AuthWrapper extends StatelessWidget {
+class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
+
+  @override
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> {
+  bool _initialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    await appState.initSessions();
+    if (mounted) {
+      setState(() {
+        _initialized = true;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
+    
+    if (!_initialized) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: AppTheme.primary),
+        ),
+      );
+    }
     
     if (!appState.isAuthenticated) {
       return const LoginScreen();
@@ -56,6 +87,7 @@ class MainNavigationFrame extends StatefulWidget {
 
 class _MainNavigationFrameState extends State<MainNavigationFrame> {
   int _currentIndex = 0;
+  late PageController _pageController;
 
   final List<Widget> _screens = [
     const DashboardScreen(),
@@ -63,6 +95,18 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
     const AiConsultantScreen(),
     const HubScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
   Widget _buildTabItem(int index, IconData icon, String label) {
     final isSelected = _currentIndex == index;
@@ -75,7 +119,14 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
           AppTheme.showPremiumBlockDialog(context);
           return;
         }
-        setState(() => _currentIndex = index);
+        setState(() {
+          _currentIndex = index;
+        });
+        _pageController.animateToPage(
+          index,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
       },
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -133,8 +184,22 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
           ),
           
           SafeArea(
-            child: IndexedStack(
-              index: _currentIndex,
+            child: PageView(
+              controller: _pageController,
+              onPageChanged: (index) {
+                final appState = Provider.of<AppState>(context, listen: false);
+                final isLocked = index == 2 && !appState.hasFeature('ai');
+                if (isLocked) {
+                  AppTheme.showPremiumBlockDialog(context);
+                  _pageController.animateToPage(
+                    _currentIndex,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                  );
+                } else {
+                  setState(() => _currentIndex = index);
+                }
+              },
               children: _screens,
             ),
           ),

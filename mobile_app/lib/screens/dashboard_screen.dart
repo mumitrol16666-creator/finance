@@ -8,12 +8,249 @@ import '../models/models.dart';
 import 'categories_screen.dart';
 import 'all_transactions_screen.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  bool _showSavings = false;
 
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
     return formatter.format(amountMinor);
+  }
+
+  void _showAccountSwitcherBottomSheet(BuildContext context, AppState appState) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Переключить аккаунт',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              if (appState.savedSessions.isEmpty)
+                const Text(
+                  'Нет других сохраненных аккаунтов. Вы можете войти в новый аккаунт, выйдя из текущего.',
+                  style: TextStyle(color: AppTheme.textSecondary),
+                  textAlign: TextAlign.center,
+                )
+              else
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: appState.savedSessions.length,
+                  itemBuilder: (context, index) {
+                    final session = appState.savedSessions[index];
+                    final isCurrent = session.name == appState.userName;
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: isCurrent ? AppTheme.primary : AppTheme.border,
+                        child: const Icon(Icons.person_rounded, color: Colors.white),
+                      ),
+                      title: Text(session.name, style: TextStyle(fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal, color: Colors.white)),
+                      subtitle: Text('ID: ${session.userId}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                      trailing: isCurrent ? const Icon(Icons.check_circle_outline_rounded, color: AppTheme.income) : null,
+                      onTap: () {
+                        Navigator.pop(context);
+                        if (!isCurrent) {
+                          appState.switchSession(session);
+                        }
+                      },
+                    );
+                  },
+                ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  appState.logout();
+                },
+                child: const Text('Выйти из аккаунта', style: TextStyle(color: AppTheme.expense)),
+              )
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showStatsBottomSheet(BuildContext context, AppState appState) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        final netSavings = appState.cycleIncome - appState.cycleExpenses;
+        final startFormat = appState.cycleStart != null && appState.cycleStart!.isNotEmpty
+            ? DateFormat('dd.MM.yyyy').format(DateTime.parse(appState.cycleStart!))
+            : '';
+        final endFormat = appState.cycleEnd != null && appState.cycleEnd!.isNotEmpty
+            ? DateFormat('dd.MM.yyyy').format(DateTime.parse(appState.cycleEnd!))
+            : '';
+        
+        return Container(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Аналитика за текущий период',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+              if (startFormat.isNotEmpty && endFormat.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '$startFormat — $endFormat',
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: _buildMetricCard(
+                      title: 'ДОХОДЫ',
+                      value: _formatKzt(appState.cycleIncome),
+                      color: AppTheme.income,
+                      icon: Icons.trending_up_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildMetricCard(
+                      title: 'РАСХОДЫ',
+                      value: _formatKzt(appState.cycleExpenses),
+                      color: AppTheme.expense,
+                      icon: Icons.trending_down_rounded,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              GlassCard(
+                radius: 16,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Чистая экономия:',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                    Text(
+                      _formatKzt(netSavings),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: netSavings >= 0 ? AppTheme.income : AppTheme.expense,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              GlassCard(
+                radius: 16,
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Активных дней:',
+                          style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                        ),
+                        Text(
+                          '${appState.activeDaysCount} из ${appState.totalCycleDays}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: appState.totalCycleDays > 0 
+                            ? appState.activeDaysCount / appState.totalCycleDays 
+                            : 0,
+                        backgroundColor: Colors.white.withOpacity(0.05),
+                        valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                        minHeight: 6,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMetricCard({required String title, required String value, required Color color, required IconData icon}) {
+    return GlassCard(
+      radius: 16,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showEditTransactionDialog(BuildContext context, AppState appState, Transaction tx) {
@@ -159,6 +396,9 @@ class DashboardScreen extends StatelessWidget {
     final categories = appState.categories;
     final streak = appState.weeklyStreak;
 
+    // Filter to only show expense categories on limits overview
+    final expenseCategories = categories.where((c) => c.kind == 'expense').toList();
+
     return RefreshIndicator(
       onRefresh: () async {
         await appState.refreshAllData();
@@ -176,21 +416,54 @@ class DashboardScreen extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Привет 👋',
-                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
-                      ),
-                      Text(
-                        'Мой Бюджет',
-                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: AppTheme.textPrimary,
+                  GestureDetector(
+                    onTap: () {
+                      _showAccountSwitcherBottomSheet(context, appState);
+                    },
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              'Привет 👋',
+                              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
                             ),
-                      ),
-                    ],
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                              decoration: BoxDecoration(
+                                gradient: appState.isPremium ? AppTheme.primaryGradient : null,
+                                color: appState.isPremium ? null : AppTheme.border,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                appState.isPremium ? 'PREMIUM' : 'БАЗОВЫЙ',
+                                style: const TextStyle(
+                                  fontSize: 7.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Text(
+                              appState.userName ?? 'Пользователь',
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: AppTheme.textPrimary,
+                                  ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.arrow_drop_down_rounded, color: AppTheme.textSecondary),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                   IconButton(
                     onPressed: () {
@@ -210,32 +483,86 @@ class DashboardScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'ОБЩИЙ БАЛАНС',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _formatKzt(totalBal),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _buildMiniMetric(
-                          label: 'РАСХОДЫ В МАЕ',
-                          value: _formatKzt(monthlyExp),
-                          color: AppTheme.expense,
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'ОБЩИЙ БАЛАНС',
+                              style: TextStyle(
+                                color: AppTheme.textSecondary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _formatKzt(totalBal),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 26,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Row(
+                              children: [
+                                const Text(
+                                  'КОПИЛКА',
+                                  style: TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 1.2,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                GestureDetector(
+                                  onTap: () => setState(() => _showSavings = !_showSavings),
+                                  child: Icon(
+                                    _showSavings ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                                    color: AppTheme.textSecondary,
+                                    size: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _showSavings ? _formatKzt(appState.savingsBalance) : '•••• ₸',
+                              style: const TextStyle(
+                                color: AppTheme.secondary,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        GestureDetector(
+                          onTap: () {
+                            _showStatsBottomSheet(context, appState);
+                          },
+                          child: Container(
+                            color: Colors.transparent,
+                            child: _buildMiniMetric(
+                              label: 'РАСХОДЫ В ПЕРИОДЕ',
+                              value: _formatKzt(monthlyExp),
+                              color: AppTheme.expense,
+                            ),
+                          ),
                         ),
                         _buildMiniMetric(
                           label: 'СЧЕТОВ АКТИВНО',
@@ -253,31 +580,54 @@ class DashboardScreen extends StatelessWidget {
               GlassCard(
                 radius: 16,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'Серия:',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                    Row(
+                      children: [
+                        const Text(
+                          'Серия активности:',
+                          style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: List.generate(7, (index) {
+                              final isFilled = index < streak.length && streak[index];
+                              final labels = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.local_fire_department_rounded,
+                                    color: isFilled ? AppTheme.secondary : Colors.grey.withOpacity(0.2),
+                                    size: 22,
+                                  ).animate(target: isFilled ? 1 : 0).scale(duration: 300.ms, delay: Duration(milliseconds: 200 + (index * 50))),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    labels[index],
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      color: isFilled ? AppTheme.secondary : AppTheme.textSecondary,
+                                      fontWeight: isFilled ? FontWeight.bold : FontWeight.normal,
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    // Progress flames
-                    Expanded(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: List.generate(7, (index) {
-                          final isFilled = index < streak.length && streak[index];
-                          return Icon(
-                            Icons.local_fire_department_rounded,
-                            color: isFilled ? AppTheme.secondary : Colors.grey.withOpacity(0.2),
-                            size: 24,
-                          ).animate(target: isFilled ? 1 : 0).scale(duration: 300.ms, delay: Duration(milliseconds: 200 + (index * 50)));
-                        }),
+                    const SizedBox(height: 12),
+                    const Divider(color: AppTheme.border, height: 1),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: Text(
+                        'Активных дней в периоде: ${appState.activeDaysCount} из ${appState.totalCycleDays} (Серия: ${appState.currentStreak} дн., Рекорд: ${appState.maxStreak} дн.)',
+                        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${streak.where((s) => s).length} из 7',
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
                     ),
                   ],
                 ),
@@ -304,64 +654,72 @@ class DashboardScreen extends StatelessWidget {
                 ],
               ).animate().fade(delay: 300.ms),
               const SizedBox(height: 8),
-              SizedBox(
-                height: 110,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: categories.length,
-                  itemBuilder: (context, index) {
-                    final cat = categories[index];
-                    final limit = cat.limitAmount ?? 0;
-                    final progress = limit > 0 ? (cat.spentAmount / limit).clamp(0.0, 1.0) : 0.0;
-                    
-                    return Container(
-                      width: 160,
-                      margin: const EdgeInsets.only(right: 12),
-                      child: GlassCard(
-                        radius: 14,
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                          Row(
+              if (expenseCategories.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16.0),
+                  child: Center(
+                    child: Text('Нет настроенных категорий', style: TextStyle(color: AppTheme.textSecondary)),
+                  ),
+                )
+              else
+                SizedBox(
+                  height: 110,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: expenseCategories.length,
+                    itemBuilder: (context, index) {
+                      final cat = expenseCategories[index];
+                      final limit = cat.limitAmount ?? 0;
+                      final progress = limit > 0 ? (cat.spentAmount / limit).clamp(0.0, 1.0) : 0.0;
+                      
+                      return Container(
+                        width: 160,
+                        margin: const EdgeInsets.only(right: 12),
+                        child: GlassCard(
+                          radius: 14,
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: [
-                              Text(cat.emoji, style: const TextStyle(fontSize: 18)),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  cat.name,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                  overflow: TextOverflow.ellipsis,
+                              Row(
+                                children: [
+                                  Text(cat.emoji, style: const TextStyle(fontSize: 18)),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      cat.name,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                '${_formatKzt(cat.spentAmount)} / ${_formatKzt(limit)}',
+                                style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                              ),
+                              const SizedBox(height: 6),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: progress,
+                                  backgroundColor: Colors.white.withOpacity(0.05),
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    progress >= 0.9 ? AppTheme.expense : AppTheme.primary,
+                                  ),
+                                  minHeight: 4,
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '${_formatKzt(cat.spentAmount)} / ${_formatKzt(limit)}',
-                            style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-                          ),
-                          const SizedBox(height: 6),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: progress,
-                              backgroundColor: Colors.white.withOpacity(0.05),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                progress >= 0.9 ? AppTheme.expense : AppTheme.primary,
-                              ),
-                              minHeight: 4,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ).animate().fade(delay: Duration(milliseconds: 300 + (index * 100))).slideX(begin: 0.1);
-                  },
+                        ),
+                      ).animate().fade(delay: Duration(milliseconds: 300 + (index * 100))).slideX(begin: 0.1);
+                    },
+                  ),
                 ),
-              ),
               const SizedBox(height: 24),
 
               // Recent Transactions header
@@ -403,58 +761,56 @@ class DashboardScreen extends StatelessWidget {
                         padding: const EdgeInsets.all(14),
                         child: Row(
                           children: [
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.03),
-                              borderRadius: BorderRadius.circular(10),
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.03),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(tx.categoryEmoji, style: const TextStyle(fontSize: 20)),
                             ),
-                            child: Text(tx.categoryEmoji, style: const TextStyle(fontSize: 20)),
-                          ),
-                          const SizedBox(width: 14),
-                          
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    tx.note ?? tx.categoryName,
+                                    style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    tx.accountName,
+                                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 Text(
-                                  tx.note ?? tx.categoryName,
-                                  style: const TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                  '${isExpense ? '-' : '+'}${_formatKzt(tx.amount)}',
+                                  style: TextStyle(
+                                    color: isExpense ? AppTheme.expense : AppTheme.income,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                  ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  tx.accountName,
-                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                                  DateFormat('dd.MM, HH:mm').format(tx.timestamp),
+                                  style: const TextStyle(color: Colors.white24, fontSize: 10),
                                 ),
                               ],
                             ),
-                          ),
-                          
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '${isExpense ? '-' : '+'}${_formatKzt(tx.amount)}',
-                                style: TextStyle(
-                                  color: isExpense ? AppTheme.expense : AppTheme.income,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                DateFormat('dd.MM, HH:mm').format(tx.timestamp),
-                                style: const TextStyle(color: Colors.white24, fontSize: 10),
-                              ),
-                            ],
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ).animate().fade(delay: Duration(milliseconds: 400 + (index * 50))).slideY(begin: 0.1);
+                  ).animate().fade(delay: Duration(milliseconds: 400 + (index * 50))).slideY(begin: 0.1);
                 },
               ),
             ],
