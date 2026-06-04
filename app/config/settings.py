@@ -14,8 +14,12 @@ class Settings(BaseModel):
     full_access_stars_price: int = Field(default_factory=lambda: int(os.getenv("FULL_ACCESS_STARS_PRICE", "150")))
     full_access_days: int = Field(default_factory=lambda: int(os.getenv("FULL_ACCESS_DAYS", "90")))
     main_channel_id: int = Field(default_factory=lambda: int(os.getenv("MAIN_CHANNEL_ID", "0")))
+    secret_key: str = Field(default_factory=lambda: os.getenv("SECRET_KEY", "finance_bot_secret_key_123!"))
+    cors_origins: str = Field(default_factory=lambda: os.getenv("CORS_ORIGINS", "*"))
+    webapp_url: str = Field(default_factory=lambda: os.getenv("WEBAPP_URL", "http://178.105.162.123/"))
 
 settings = Settings()
 
 if not settings.bot_token:
     raise RuntimeError("BOT_TOKEN is empty. Put it in .env")
+
