@@ -32,6 +32,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // Period navigation state
   DateTime _currentRefDate = DateTime.now();
 
+  // Custom date range states
+  DateTime? _customStartDate;
+  DateTime? _customEndDate;
+  bool _isCustomRangeActive = false;
+
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
     return formatter.format(amountMinor);
@@ -40,6 +45,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   void _previousPeriod() {
     setState(() {
       _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month - 1, _currentRefDate.day);
+      _isCustomRangeActive = false;
+      _customStartDate = null;
+      _customEndDate = null;
     });
     _reloadPeriodData();
   }
@@ -47,6 +55,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   void _nextPeriod() {
     setState(() {
       _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month + 1, _currentRefDate.day);
+      _isCustomRangeActive = false;
+      _customStartDate = null;
+      _customEndDate = null;
     });
     _reloadPeriodData();
   }
@@ -54,14 +65,23 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   void _resetPeriod() {
     setState(() {
       _currentRefDate = DateTime.now();
+      _isCustomRangeActive = false;
+      _customStartDate = null;
+      _customEndDate = null;
     });
     _reloadPeriodData();
   }
 
   void _reloadPeriodData() {
     final appState = Provider.of<AppState>(context, listen: false);
-    final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
-    appState.loadDashboardData(refDate: dateStr);
+    if (_isCustomRangeActive && _customStartDate != null && _customEndDate != null) {
+      final startStr = DateFormat('yyyy-MM-dd').format(_customStartDate!);
+      final endStr = DateFormat('yyyy-MM-dd').format(_customEndDate!);
+      appState.loadDashboardData(startDate: startStr, endDate: endStr);
+    } else {
+      final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
+      appState.loadDashboardData(refDate: dateStr);
+    }
     setState(() {
       _aiAuditText = null;
     });
@@ -73,14 +93,63 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       _aiAuditText = null;
     });
     final appState = Provider.of<AppState>(context, listen: false);
-    final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
-    final result = await appState.fetchAIBudgetAudit(refDate: dateStr);
+    String result;
+    if (_isCustomRangeActive && _customStartDate != null && _customEndDate != null) {
+      final startStr = DateFormat('yyyy-MM-dd').format(_customStartDate!);
+      final endStr = DateFormat('yyyy-MM-dd').format(_customEndDate!);
+      result = await appState.fetchAIBudgetAudit(startDate: startStr, endDate: endStr);
+    } else {
+      final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
+      result = await appState.fetchAIBudgetAudit(refDate: dateStr);
+    }
     if (mounted) {
       setState(() {
         _aiAuditText = result;
         _isAuditing = false;
       });
     }
+  }
+
+  Future<void> _selectCustomDateRange() async {
+    final DateTimeRange? picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDateRange: _customStartDate != null && _customEndDate != null
+          ? DateTimeRange(start: _customStartDate!, end: _customEndDate!)
+          : DateTimeRange(start: DateTime.now().subtract(const Duration(days: 7)), end: DateTime.now()),
+      builder: (context, child) {
+        return Theme(
+          data: AppTheme.darkTheme.copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppTheme.primary,
+              onPrimary: Colors.white,
+              surface: AppTheme.surface,
+              onSurface: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _customStartDate = picked.start;
+        _customEndDate = picked.end;
+        _isCustomRangeActive = true;
+      });
+      _reloadPeriodData();
+    }
+  }
+
+  void _clearCustomRange() {
+    setState(() {
+      _isCustomRangeActive = false;
+      _customStartDate = null;
+      _customEndDate = null;
+    });
+    _reloadPeriodData();
   }
 
   Future<void> _exportExcel() async {
@@ -219,7 +288,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final appState = Provider.of<AppState>(context);
     final allCategories = appState.categories;
     final transactions = appState.transactions;
-    final bool isCurrentPeriod = DateTime.now().year == _currentRefDate.year && DateTime.now().month == _currentRefDate.month;
+    final bool isCurrentPeriod = !_isCustomRangeActive && DateTime.now().year == _currentRefDate.year && DateTime.now().month == _currentRefDate.month;
 
     // Filter categories based on Expenses vs Incomes
     final expensesCategories = allCategories.where((c) => c.kind == 'expense').toList();
@@ -259,7 +328,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Аналитика',
+                       'Аналитика',
                       style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.bold,
                             color: AppTheme.textPrimary,
@@ -308,10 +377,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           Row(
                             children: [
                               const Text('Период списания:', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                              if (!isCurrentPeriod) ...[
+                              if (!isCurrentPeriod || _isCustomRangeActive) ...[
                                 const SizedBox(width: 6),
                                 GestureDetector(
-                                  onTap: _resetPeriod,
+                                  onTap: () {
+                                    if (_isCustomRangeActive) {
+                                      _clearCustomRange();
+                                    } else {
+                                      _resetPeriod();
+                                    }
+                                  },
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
                                     decoration: BoxDecoration(
@@ -319,9 +394,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                       borderRadius: BorderRadius.circular(4),
                                       border: Border.all(color: AppTheme.primary.withOpacity(0.4), width: 0.5),
                                     ),
-                                    child: const Text(
-                                      'ТЕКУЩИЙ',
-                                      style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                                    child: Text(
+                                      _isCustomRangeActive ? 'СБРОСИТЬ' : 'ТЕКУЩИЙ',
+                                      style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5),
                                     ),
                                   ),
                                 ),
@@ -330,6 +405,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           ),
                           Row(
                             children: [
+                              IconButton(
+                                icon: Icon(
+                                  Icons.calendar_month_rounded, 
+                                  color: _isCustomRangeActive ? AppTheme.primary : Colors.white70, 
+                                  size: 18
+                                ),
+                                constraints: const BoxConstraints(),
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                onPressed: _selectCustomDateRange,
+                              ),
                               IconButton(
                                 icon: const Icon(Icons.chevron_left_rounded, color: Colors.white70, size: 20),
                                 constraints: const BoxConstraints(),

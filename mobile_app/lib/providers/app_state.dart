@@ -380,12 +380,17 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<String> fetchAIBudgetAudit({String? refDate}) async {
+  Future<String> fetchAIBudgetAudit({String? refDate, String? startDate, String? endDate}) async {
     if (_token == null) return "Ошибка авторизации";
     try {
-      final uri = refDate != null
-          ? Uri.parse('$_baseUrl/api/analytics/ai-audit?ref_date=$refDate')
-          : Uri.parse('$_baseUrl/api/analytics/ai-audit');
+      Uri uri;
+      if (startDate != null && endDate != null) {
+        uri = Uri.parse('$_baseUrl/api/analytics/ai-audit?start_date=$startDate&end_date=$endDate');
+      } else if (refDate != null) {
+        uri = Uri.parse('$_baseUrl/api/analytics/ai-audit?ref_date=$refDate');
+      } else {
+        uri = Uri.parse('$_baseUrl/api/analytics/ai-audit');
+      }
       final response = await http.post(
         uri,
         headers: {
@@ -406,15 +411,20 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> loadDashboardData({String? refDate}) async {
+  Future<void> loadDashboardData({String? refDate, String? startDate, String? endDate}) async {
     if (_token == null) return;
     _isLoading = true;
     notifyListeners();
 
     try {
-      final uri = refDate != null
-          ? Uri.parse('$_baseUrl/api/dashboard?ref_date=$refDate')
-          : Uri.parse('$_baseUrl/api/dashboard');
+      Uri uri;
+      if (startDate != null && endDate != null) {
+        uri = Uri.parse('$_baseUrl/api/dashboard?start_date=$startDate&end_date=$endDate');
+      } else if (refDate != null) {
+        uri = Uri.parse('$_baseUrl/api/dashboard?ref_date=$refDate');
+      } else {
+        uri = Uri.parse('$_baseUrl/api/dashboard');
+      }
       final response = await http.get(
         uri,
         headers: {
