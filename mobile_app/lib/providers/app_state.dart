@@ -386,6 +386,69 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<void> updateAccount(int accountId, {
+    String? name,
+    int? balance,
+    int? isSaving,
+    int? isArchived,
+  }) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final Map<String, dynamic> bodyMap = {};
+      if (name != null) bodyMap['name'] = name;
+      if (balance != null) bodyMap['balance'] = balance;
+      if (isSaving != null) bodyMap['is_saving'] = isSaving;
+      if (isArchived != null) bodyMap['is_archived'] = isArchived;
+
+      final response = await http.put(
+        Uri.parse('$_baseUrl/api/accounts/$accountId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+        body: json.encode(bodyMap),
+      );
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      } else {
+        throw Exception(json.decode(response.body)['detail'] ?? 'Failed to update account');
+      }
+    } catch (e) {
+      print('Update account error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteAccount(int accountId) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/api/accounts/$accountId'),
+        headers: {
+          'Authorization': 'Bearer $_token',
+        },
+      );
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      } else {
+        throw Exception(json.decode(response.body)['detail'] ?? 'Failed to delete account');
+      }
+    } catch (e) {
+      print('Delete account error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> addDebt({
     required String title,
     required int remainingAmount,

@@ -14,11 +14,24 @@ class AiConsultantScreen extends StatefulWidget {
 class _AiConsultantScreenState extends State<AiConsultantScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode();
+  bool _isFocused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(() {
+      setState(() {
+        _isFocused = _focusNode.hasFocus;
+      });
+    });
+  }
 
   @override
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -126,14 +139,29 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
                 children: [
                   // Text message input field
                   Expanded(
-                    child: Container(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
                       decoration: BoxDecoration(
                         color: AppTheme.surfaceCard,
                         borderRadius: BorderRadius.circular(24),
+                        border: Border.all(
+                          color: _isFocused ? AppTheme.primary : AppTheme.border.withOpacity(0.5),
+                          width: 1.5,
+                        ),
+                        boxShadow: _isFocused
+                            ? [
+                                BoxShadow(
+                                  color: AppTheme.primary.withOpacity(0.15),
+                                  blurRadius: 8,
+                                  spreadRadius: 1,
+                                )
+                              ]
+                            : [],
                       ),
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: TextField(
                         controller: _messageController,
+                        focusNode: _focusNode,
                         style: const TextStyle(color: AppTheme.textPrimary, fontSize: 15),
                         textInputAction: TextInputAction.send,
                         onSubmitted: (_) => _sendMessage(),

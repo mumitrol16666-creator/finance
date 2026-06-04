@@ -23,7 +23,18 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   int _autoSavePercent = 10; // Default 10%
 
   @override
+  void initState() {
+    super.initState();
+    _noteController.addListener(_onNoteChanged);
+  }
+
+  void _onNoteChanged() {
+    setState(() {});
+  }
+
+  @override
   void dispose() {
+    _noteController.removeListener(_onNoteChanged);
     _noteController.dispose();
     super.dispose();
   }
@@ -126,6 +137,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     final appState = Provider.of<AppState>(context);
     final accounts = appState.accounts;
     final categories = appState.categories;
+    final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
 
     // Filter to exclude savings accounts from regular dropdown/selector
     final regularAccounts = accounts.where((a) => !a.isSaving).toList();
@@ -294,20 +306,90 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   const SizedBox(height: 16),
 
                   // Comment note field
-                  TextField(
-                    controller: _noteController,
-                    style: const TextStyle(color: AppTheme.textPrimary),
-                    decoration: InputDecoration(
-                      hintText: 'Комментарий к операции (например, Обед)',
-                      hintStyle: const TextStyle(color: Colors.white24, fontSize: 13),
-                      filled: true,
-                      fillColor: AppTheme.surfaceCard,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  const Text(
+                    '💬 Описание / Комментарий',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: _noteController.text.trim().isEmpty
+                          ? [
+                              BoxShadow(
+                                color: AppTheme.secondary.withOpacity(0.12),
+                                blurRadius: 10,
+                                spreadRadius: 2,
+                              )
+                            ]
+                          : [],
                     ),
+                    child: TextField(
+                      controller: _noteController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: InputDecoration(
+                        hintText: 'Опишите операцию (например: продукты в Магните, подарок маме)',
+                        hintStyle: const TextStyle(color: Colors.white30, fontSize: 13),
+                        filled: true,
+                        fillColor: AppTheme.surfaceCard,
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: _noteController.text.trim().isEmpty
+                                ? AppTheme.secondary.withOpacity(0.6)
+                                : AppTheme.accentBlue.withOpacity(0.4),
+                            width: 1.5,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: _noteController.text.trim().isEmpty ? AppTheme.secondary : AppTheme.accentBlue,
+                            width: 2.0,
+                          ),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    child: _noteController.text.trim().isEmpty
+                        ? Row(
+                            key: const ValueKey('empty_note'),
+                            children: const [
+                              Icon(Icons.lightbulb_outline_rounded, color: AppTheme.secondary, size: 16),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'ИИ рекомендует: напишите коммент для точного аудита!',
+                                  style: TextStyle(
+                                    color: AppTheme.secondary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Row(
+                            key: const ValueKey('filled_note'),
+                            children: const [
+                              Icon(Icons.check_circle_outline_rounded, color: AppTheme.income, size: 16),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Умный ИИ-анализ активен для этого платежа 🚀',
+                                  style: TextStyle(
+                                    color: AppTheme.income,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                   ),
                   const SizedBox(height: 16),
 
@@ -439,14 +521,16 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
           // Custom Numeric Keypad & Save Button in fixed space
           SizedBox(
-            height: 260,
+            height: isKeyboardVisible ? 60 : 260,
             child: Column(
               children: [
-                _buildKeyboardRow(['1', '2', '3']),
-                _buildKeyboardRow(['4', '5', '6']),
-                _buildKeyboardRow(['7', '8', '9']),
-                _buildKeyboardRow(['C', '0', '⌫']),
-                const SizedBox(height: 12),
+                if (!isKeyboardVisible) ...[
+                  _buildKeyboardRow(['1', '2', '3']),
+                  _buildKeyboardRow(['4', '5', '6']),
+                  _buildKeyboardRow(['7', '8', '9']),
+                  _buildKeyboardRow(['C', '0', '⌫']),
+                  const SizedBox(height: 12),
+                ],
 
                 // Save Button
                 SizedBox(

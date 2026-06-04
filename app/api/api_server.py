@@ -91,6 +91,12 @@ class AccountCreateRequest(BaseModel):
     currency: Optional[str] = "KZT"
     is_saving: Optional[int] = 0
 
+class AccountUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    balance: Optional[int] = None
+    is_saving: Optional[int] = None
+    is_archived: Optional[int] = None
+
 class DebtCreateRequest(BaseModel):
     direction: str  # 'out' or 'in'
     dtype: str      # 'bank' or 'private'
@@ -799,3 +805,53 @@ async def export_report_endpoint(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+
+@app.put("/api/accounts/{acc_id}")
+async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        now_str = datetime.now(timezone.utc).isoformat()
+        
+        # 1. Update name
+        if req.name is not None:
+            from app.db.repositories.accounts_repo import rename_account, has_active_account_with_name
+            name = req.name.strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="Название не может быть пустым")
+            if await has_active_account_with_name(db, user_id, name, exclude_account_id=acc_id):
+                raise HTTPException(status_code=400, detail="Счёт с таким названием уже существует")
+            await rename_account(db, user_id, acc_id, name, now_str)
+            
+        # 2. Update balance
+        if req.balance is not None:
+            from app.db.repositories.accounts_repo import set_account_balance
+            await set_account_balance(db, user_id, acc_id, req.balance, now_str)
+            
+        # 3. Toggle saving type
+        if req.is_saving is not None:
+            from app.db.repositories.accounts_repo import get_account, toggle_account_saving
+            acc = await get_account(db, user_id, acc_id)
+            if acc:
+                current_is_saving = acc[5]
+                # is_saving in database is integer 0/1
+                if current_is_saving != req.is_saving:
+                    await toggle_account_saving(db, user_id, acc_id, now_str)
+                    
+        # 4. Toggle archived status
+        if req.is_archived is not None:
+            from app.db.repositories.accounts_repo import archive_account, restore_account
+            if req.is_archived == 1:
+                await archive_account(db, user_id, acc_id, now_str)
+            else:
+                await restore_account(db, user_id, acc_id, now_str)
+                
+        await db.commit()
+        return {"status": "success"}
+
+@app.delete("/api/accounts/{acc_id}")
+async def delete_account_endpoint(acc_id: int, user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        from app.db.repositories.accounts_repo import archive_account
+        now_str = datetime.now(timezone.utc).isoformat()
+        await archive_account(db, user_id, acc_id, now_str)
+        await db.commit()
+        return {"status": "success"}

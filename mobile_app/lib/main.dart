@@ -115,6 +115,8 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+
     return Scaffold(
       body: Stack(
         children: [
@@ -138,58 +140,62 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          showModalBottomSheet(
-            context: context,
-            isScrollControlled: true,
-            backgroundColor: AppTheme.background,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-            builder: (context) => SizedBox(
-              height: MediaQuery.of(context).size.height * 0.85,
-              child: const ClipRRect(
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                child: Scaffold(
+      floatingActionButton: isKeyboardVisible
+          ? null
+          : FloatingActionButton(
+              onPressed: () {
+                showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
                   backgroundColor: AppTheme.background,
-                  body: SafeArea(child: AddTransactionScreen()),
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  builder: (context) => SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.85,
+                    child: const ClipRRect(
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                      child: Scaffold(
+                        backgroundColor: AppTheme.background,
+                        body: SafeArea(child: AddTransactionScreen()),
+                      ),
+                    ),
+                  ),
+                );
+              },
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              child: Container(
+                width: 56,
+                height: 56,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: AppTheme.primaryGradient,
+                ),
+                child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
+              ),
+            ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      bottomNavigationBar: isKeyboardVisible
+          ? null
+          : BottomAppBar(
+              color: AppTheme.surface,
+              shape: const CircularNotchedRectangle(),
+              notchMargin: 8.0,
+              child: SizedBox(
+                height: 60,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildTabItem(0, Icons.grid_view_rounded, 'Обзор'),
+                    _buildTabItem(1, Icons.analytics_rounded, 'Аналитика'),
+                    const SizedBox(width: 48), // Placeholder for FAB
+                    _buildTabItem(2, Icons.android_rounded, 'ИИ Чат'),
+                    _buildTabItem(3, Icons.explore_rounded, 'Сервисы'),
+                  ],
                 ),
               ),
             ),
-          );
-        },
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        child: Container(
-          width: 56,
-          height: 56,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: AppTheme.primaryGradient,
-          ),
-          child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
-        ),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: BottomAppBar(
-        color: AppTheme.surface,
-        shape: const CircularNotchedRectangle(),
-        notchMargin: 8.0,
-        child: SizedBox(
-          height: 60,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildTabItem(0, Icons.grid_view_rounded, 'Обзор'),
-              _buildTabItem(1, Icons.analytics_rounded, 'Аналитика'),
-              const SizedBox(width: 48), // Placeholder for FAB
-              _buildTabItem(2, Icons.android_rounded, 'ИИ Чат'),
-              _buildTabItem(3, Icons.explore_rounded, 'Сервисы'),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
