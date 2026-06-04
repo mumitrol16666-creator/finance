@@ -988,8 +988,8 @@ def _build_data_quality(kind: str, current_metrics: dict, previous_metrics: dict
     }
 
 
-async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str, kind: str, goal_text: str | None) -> dict:
-    meta = build_period_meta(kind, tz_name)
+async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str, kind: str, goal_text: str | None, ref_dt: datetime | None = None) -> dict:
+    meta = build_period_meta(kind, tz_name, now_utc=ref_dt)
     current_rows = await _fetch_rows(db, user_id, meta.start, meta.end)
     previous_rows = await _fetch_rows(db, user_id, meta.prev_start, meta.prev_end)
     month_rows = await _fetch_rows(db, user_id, meta.month_start, meta.month_end)

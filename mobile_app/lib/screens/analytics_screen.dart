@@ -29,9 +29,42 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // Visual layout mode: Pie vs Line Chart
   bool _showTrendLine = false;
 
+  // Period navigation state
+  DateTime _currentRefDate = DateTime.now();
+
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
     return formatter.format(amountMinor);
+  }
+
+  void _previousPeriod() {
+    setState(() {
+      _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month - 1, _currentRefDate.day);
+    });
+    _reloadPeriodData();
+  }
+
+  void _nextPeriod() {
+    setState(() {
+      _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month + 1, _currentRefDate.day);
+    });
+    _reloadPeriodData();
+  }
+
+  void _resetPeriod() {
+    setState(() {
+      _currentRefDate = DateTime.now();
+    });
+    _reloadPeriodData();
+  }
+
+  void _reloadPeriodData() {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
+    appState.loadDashboardData(refDate: dateStr);
+    setState(() {
+      _aiAuditText = null;
+    });
   }
 
   Future<void> _runAiAudit() async {
@@ -40,7 +73,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       _aiAuditText = null;
     });
     final appState = Provider.of<AppState>(context, listen: false);
-    final result = await appState.fetchAIBudgetAudit();
+    final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
+    final result = await appState.fetchAIBudgetAudit(refDate: dateStr);
     if (mounted) {
       setState(() {
         _aiAuditText = result;
@@ -185,6 +219,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final appState = Provider.of<AppState>(context);
     final allCategories = appState.categories;
     final transactions = appState.transactions;
+    final bool isCurrentPeriod = DateTime.now().year == _currentRefDate.year && DateTime.now().month == _currentRefDate.month;
 
     // Filter categories based on Expenses vs Incomes
     final expensesCategories = allCategories.where((c) => c.kind == 'expense').toList();
@@ -270,12 +305,50 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('Период списания:', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                          Text(
-                            appState.cycleStart != null && appState.cycleEnd != null
-                                ? '${DateFormat('dd.MM').format(DateTime.parse(appState.cycleStart!))} — ${DateFormat('dd.MM').format(DateTime.parse(appState.cycleEnd!))}'
-                                : 'Весь период',
-                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 12),
+                          Row(
+                            children: [
+                              const Text('Период списания:', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                              if (!isCurrentPeriod) ...[
+                                const SizedBox(width: 6),
+                                GestureDetector(
+                                  onTap: _resetPeriod,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.primary.withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(color: AppTheme.primary.withOpacity(0.4), width: 0.5),
+                                    ),
+                                    child: const Text(
+                                      'ТЕКУЩИЙ',
+                                      style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.chevron_left_rounded, color: Colors.white70, size: 20),
+                                constraints: const BoxConstraints(),
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                onPressed: _previousPeriod,
+                              ),
+                              Text(
+                                appState.cycleStart != null && appState.cycleEnd != null
+                                    ? '${DateFormat('dd.MM.yy').format(DateTime.parse(appState.cycleStart!))} — ${DateFormat('dd.MM.yy').format(DateTime.parse(appState.cycleEnd!))}'
+                                    : 'Весь период',
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 12),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.chevron_right_rounded, color: Colors.white70, size: 20),
+                                constraints: const BoxConstraints(),
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                onPressed: _nextPeriod,
+                              ),
+                            ],
                           ),
                         ],
                       ),
