@@ -2,7 +2,30 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
+
+class UserSession {
+  final String token;
+  final int userId;
+  final String name;
+
+  UserSession({required this.token, required this.userId, required this.name});
+
+  Map<String, dynamic> toJson() => {
+    'token': token,
+    'userId': userId,
+    'name': name,
+  };
+
+  factory UserSession.fromJson(Map<String, dynamic> json) {
+    return UserSession(
+      token: json['token'] as String,
+      userId: json['userId'] as int,
+      name: json['name'] as String? ?? 'Пользователь ${json['userId']}',
+    );
+  }
+}
 
 class ChatMessage {
   final String text;
@@ -32,6 +55,48 @@ class AppState extends ChangeNotifier {
     return _isPremium || _availableFeatures.contains(feature);
   }
 
+  // Personalization & Dynamic cycles properties
+  String? _userName;
+  String? get userName => _userName;
+
+  int _budgetCycleStartDay = 1;
+  int get budgetCycleStartDay => _budgetCycleStartDay;
+
+  int _cycleIncome = 0;
+  int get cycleIncome => _cycleIncome;
+
+  int _cycleExpenses = 0;
+  int get cycleExpenses => _cycleExpenses;
+
+  int _activeDaysCount = 0;
+  int get activeDaysCount => _activeDaysCount;
+
+  int _totalCycleDays = 30;
+  int get totalCycleDays => _totalCycleDays;
+
+  String? _cycleStart;
+  String? get cycleStart => _cycleStart;
+
+  String? _cycleEnd;
+  String? get cycleEnd => _cycleEnd;
+
+  int _currentStreak = 0;
+  int get currentStreak => _currentStreak;
+
+  int _maxStreak = 0;
+  int get maxStreak => _maxStreak;
+
+  bool _needsOnboardingName = false;
+  bool get needsOnboardingName => _needsOnboardingName;
+
+  List<UserSession> _savedSessions = [];
+  List<UserSession> get savedSessions => _savedSessions;
+
+  // Temp storage for onboarding
+  String? _tempToken;
+  int? _tempUserId;
+  bool? _tempSaveLogin;
+
   // Real data — loaded from server after login
   List<Account> _accounts = [];
   List<Account> get accounts => _accounts;
@@ -49,7 +114,9 @@ class AppState extends ChangeNotifier {
   List<ChatMessage> get chatHistory => _chatHistory;
 
   int get totalBalance => _accounts.where((acc) => !acc.isSaving).fold(0, (sum, acc) => sum + acc.balance);
-  int get monthlyExpenses => _categories.fold(0, (sum, cat) => sum + cat.spentAmount);
+  int get savingsBalance => _accounts.where((acc) => acc.isSaving).fold(0, (sum, acc) => sum + acc.balance);
+  int get monthlyExpenses => _categories.where((c) => c.kind == 'expense').fold(0, (sum, cat) => sum + cat.spentAmount);
+  int get monthlyIncome => _categories.where((c) => c.kind == 'income').fold(0, (sum, cat) => sum + cat.spentAmount);
 
   List<Debt> _debts = [];
   List<Debt> get debts => _debts;
@@ -63,9 +130,68 @@ class AppState extends ChangeNotifier {
   String? _token;
   final String _baseUrl = 'http://178.105.162.123:8000';
 
-  // Authentication
-  Future<bool> verifyLoginCode(String code) async {
+  // Authentication & Session management
+  Future<void> initSessions() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonStr = prefs.getString('saved_sessions');
+      if (jsonStr != null) {
+        final list = json.decode(jsonStr) as List;
+        _savedSessions = list.map((item) => UserSession.fromJson(item as Map<String, dynamic>)).toList();
+      }
+      
+      final activeToken = prefs.getString('active_token');
+      if (activeToken != null) {
+        final session = _savedSessions.firstWhere((s) => s.token == activeToken, orElse: () => _savedSessions.first);
+        _token = session.token;
+        _isAuthenticated = true;
+        notifyListeners();
+        await loadDashboardData();
+      }
+    } catch (e) {
+      print('Init sessions error: $e');
+    }
+  }
+
+  Future<void> switchSession(UserSession session) async {
     _isLoading = true;
+    notifyListeners();
+    
+    _token = session.token;
+    _isAuthenticated = true;
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('active_token', session.token);
+    
+    // Clear old state before load
+    _accounts = [];
+    _categories = [];
+    _transactions = [];
+    _debts = [];
+    _recurringTemplates = [];
+    _plannedEvents = [];
+    
+    await loadDashboardData();
+    
+    _isLoading = false;
+    notifyListeners();
+  }
+
+  Future<void> removeSession(UserSession session) async {
+    _savedSessions.removeWhere((s) => s.token == session.token);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('saved_sessions', json.encode(_savedSessions.map((s) => s.toJson()).toList()));
+    
+    if (_token == session.token) {
+      logout();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  Future<bool> verifyLoginCode(String code, {bool saveLogin = true}) async {
+    _isLoading = true;
+    _needsOnboardingName = false;
     notifyListeners();
 
     try {
@@ -77,7 +203,23 @@ class AppState extends ChangeNotifier {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        _token = data['token'] as String;
+        final token = data['token'] as String;
+        final userId = data['user_id'] as int;
+        final name = data['name'] as String?;
+
+        if (name == null || name.trim().isEmpty) {
+          // Onboarding Name needed!
+          _tempToken = token;
+          _tempUserId = userId;
+          _tempSaveLogin = saveLogin;
+          _needsOnboardingName = true;
+          _isLoading = false;
+          notifyListeners();
+          return true; // verified code, but needs name
+        }
+
+        // Complete authentication immediately
+        _token = token;
         _isAuthenticated = true;
         _isLoading = false;
         
@@ -88,6 +230,19 @@ class AppState extends ChangeNotifier {
         _debts = [];
         _recurringTemplates = [];
         _plannedEvents = [];
+        
+        if (saveLogin) {
+          final existingIndex = _savedSessions.indexWhere((s) => s.userId == userId);
+          final newSession = UserSession(token: token, userId: userId, name: name);
+          if (existingIndex >= 0) {
+            _savedSessions[existingIndex] = newSession;
+          } else {
+            _savedSessions.add(newSession);
+          }
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('saved_sessions', json.encode(_savedSessions.map((s) => s.toJson()).toList()));
+          await prefs.setString('active_token', token);
+        }
         
         notifyListeners();
         await loadDashboardData();
@@ -100,6 +255,129 @@ class AppState extends ChangeNotifier {
     _isLoading = false;
     notifyListeners();
     return false;
+  }
+
+  Future<bool> submitOnboardingName(String name) async {
+    if (_tempToken == null || _tempUserId == null) return false;
+    
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/user/profile'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_tempToken',
+        },
+        body: json.encode({'name': name}),
+      );
+
+      if (response.statusCode == 200) {
+        final token = _tempToken!;
+        final userId = _tempUserId!;
+        
+        _token = token;
+        _isAuthenticated = true;
+        _needsOnboardingName = false;
+        _isLoading = false;
+        
+        _accounts = [];
+        _categories = [];
+        _transactions = [];
+        _debts = [];
+        _recurringTemplates = [];
+        _plannedEvents = [];
+
+        if (_tempSaveLogin == true) {
+          final existingIndex = _savedSessions.indexWhere((s) => s.userId == userId);
+          final newSession = UserSession(token: token, userId: userId, name: name);
+          if (existingIndex >= 0) {
+            _savedSessions[existingIndex] = newSession;
+          } else {
+            _savedSessions.add(newSession);
+          }
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('saved_sessions', json.encode(_savedSessions.map((s) => s.toJson()).toList()));
+          await prefs.setString('active_token', token);
+        }
+
+        notifyListeners();
+        await loadDashboardData();
+        return true;
+      }
+    } catch (e) {
+      print('Onboarding name error: $e');
+    }
+
+    _isLoading = false;
+    notifyListeners();
+    return false;
+  }
+
+  Future<void> updateSettings({int? budgetCycleStartDay}) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final Map<String, dynamic> bodyMap = {};
+      if (budgetCycleStartDay != null) bodyMap['budget_cycle_start_day'] = budgetCycleStartDay;
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/user/settings'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+        body: json.encode(bodyMap),
+      );
+
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      }
+    } catch (e) {
+      print('Update settings error: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> updateCategory(int categoryId, {
+    String? name,
+    String? emoji,
+    int? limitAmount,
+  }) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final Map<String, dynamic> bodyMap = {};
+      if (name != null) bodyMap['name'] = name;
+      if (emoji != null) bodyMap['emoji'] = emoji;
+      if (limitAmount != null) bodyMap['limit_amount'] = limitAmount;
+
+      final response = await http.put(
+        Uri.parse('$_baseUrl/api/categories/$categoryId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+        body: json.encode(bodyMap),
+      );
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      } else {
+        throw Exception(json.decode(response.body)['detail'] ?? 'Failed to update category');
+      }
+    } catch (e) {
+      print('Update category error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   Future<void> loadDashboardData() async {
@@ -140,6 +418,18 @@ class AppState extends ChangeNotifier {
         _isPremium = data['isPremium'] as bool? ?? false;
         _premiumExpirationDate = data['premiumExpirationDate'] as String?;
         _availableFeatures = List<String>.from(data['availableFeatures'] as List? ?? []);
+
+        // Parse personalization & cycle stats
+        _userName = data['userName'] as String?;
+        _budgetCycleStartDay = data['budgetCycleStartDay'] as int? ?? 1;
+        _cycleIncome = data['cycleIncome'] as int? ?? 0;
+        _cycleExpenses = data['cycleExpenses'] as int? ?? 0;
+        _activeDaysCount = data['activeDaysCount'] as int? ?? 0;
+        _totalCycleDays = data['totalCycleDays'] as int? ?? 30;
+        _cycleStart = data['cycleStart'] as String?;
+        _cycleEnd = data['cycleEnd'] as String?;
+        _currentStreak = data['currentStreak'] as int? ?? 0;
+        _maxStreak = data['maxStreak'] as int? ?? 0;
       }
 
       await Future.wait([
@@ -239,7 +529,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void logout() {
+  void logout() async {
     _token = null;
     _isAuthenticated = false;
     _isPremium = false;
@@ -259,6 +549,12 @@ class AppState extends ChangeNotifier {
         timestamp: DateTime.now(),
       )
     ];
+    _userName = null;
+    _needsOnboardingName = false;
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_token');
+    
     notifyListeners();
   }
 

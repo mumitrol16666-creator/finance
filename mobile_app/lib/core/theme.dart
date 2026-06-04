@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
@@ -74,10 +75,14 @@ class AppTheme {
         surface: surface,
         error: expense,
       ),
-      pageTransitionsTheme: const PageTransitionsTheme(
+      pageTransitionsTheme: PageTransitionsTheme(
         builders: {
-          TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
-          TargetPlatform.iOS: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: CupertinoPageTransitionsBuilder(),
         },
       ),
       useMaterial3: true,

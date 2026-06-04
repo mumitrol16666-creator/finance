@@ -66,6 +66,58 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> int:
 class VerifyRequest(BaseModel):
     code: str
 
+class ProfileUpdateRequest(BaseModel):
+    name: str
+
+class SettingsUpdateRequest(BaseModel):
+    budget_cycle_start_day: Optional[int] = None
+    currency: Optional[str] = None
+    timezone: Optional[str] = None
+    lang: Optional[str] = None
+
+class CategoryUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    emoji: Optional[str] = None
+    limit_amount: Optional[int] = None
+
+def get_budget_cycle_bounds(ref_date: date, start_day: int) -> tuple[datetime, datetime, str]:
+    # Returns (start_datetime_utc, end_datetime_utc, budget_month_str)
+    # Clamp start_day to 1..28 (to avoid complications with February)
+    start_day = max(1, min(start_day, 28))
+    
+    if ref_date.day >= start_day:
+        start_date = date(ref_date.year, ref_date.month, start_day)
+        if ref_date.month == 12:
+            end_date = date(ref_date.year + 1, 1, start_day)
+        else:
+            end_date = date(ref_date.year, ref_date.month + 1, start_day)
+    else:
+        if ref_date.month == 1:
+            start_date = date(ref_date.year - 1, 12, start_day)
+        else:
+            start_date = date(ref_date.year, ref_date.month - 1, start_day)
+        end_date = date(ref_date.year, ref_date.month, start_day)
+        
+    start_dt = datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0, tzinfo=timezone.utc)
+    end_dt = datetime(end_date.year, end_date.month, end_date.day, 0, 0, 0, tzinfo=timezone.utc)
+    
+    budget_month_str = start_date.strftime("%Y-%m")
+    return start_dt, end_dt, budget_month_str
+
+async def get_budget_cycle_start_day(db: aiosqlite.Connection, user_id: int) -> int:
+    cur = await db.execute("SELECT budget_cycle_start_day FROM settings WHERE user_id=?", (user_id,))
+    row = await cur.fetchone()
+    if row:
+        return row[0]
+    return 1
+
+async def get_user_name(db: aiosqlite.Connection, user_id: int) -> str | None:
+    cur = await db.execute("SELECT name FROM users WHERE user_id=?", (user_id,))
+    row = await cur.fetchone()
+    if row:
+        return row[0]
+    return None
+
 class TransactionCreateRequest(BaseModel):
     amount: int  # in minor units (e.g. 100 for 1.00 KZT)
     kind: str  # 'expense', 'income', 'transfer'
@@ -154,19 +206,38 @@ async def verify_code(req: VerifyRequest):
             raise HTTPException(status_code=400, detail="Invalid verification code")
         
         user_id = row[0]
+        
+        # Check if user settings exists, if not create default settings row
+        cur_settings = await db.execute("SELECT 1 FROM settings WHERE user_id=?", (user_id,))
+        if not await cur_settings.fetchone():
+            await db.execute(
+                "INSERT INTO settings (user_id, created_at, updated_at) VALUES (?, ?, ?)",
+                (user_id, now_str, now_str)
+            )
+            await db.commit()
+            
+        cur_user = await db.execute("SELECT name FROM users WHERE user_id=?", (user_id,))
+        user_row = await cur_user.fetchone()
+        name = user_row[0] if user_row else None
             
         token = generate_token(user_id)
-        return {"token": token, "user_id": user_id}
+        return {"token": token, "user_id": user_id, "name": name}
 
 @app.get("/api/dashboard")
 async def get_dashboard(user_id: int = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
-    current_month_str = now.strftime("%Y-%m")
+    today = now.date()
     
     async with get_db() as db:
         from app.domain.services.access_service import get_user_context, get_available_features_from_context
         ctx = await get_user_context(db, user_id)
         available_features = list(get_available_features_from_context(ctx))
+
+        # Get settings cycle start day
+        cycle_start_day = await get_budget_cycle_start_day(db, user_id)
+        start_dt, end_dt, cycle_month_str = get_budget_cycle_bounds(today, cycle_start_day)
+        start_str = start_dt.isoformat()
+        end_str = end_dt.isoformat()
 
         # 1. Accounts & balances
         accounts = await list_accounts(db, user_id)
@@ -180,19 +251,26 @@ async def get_dashboard(user_id: int = Depends(get_current_user)):
                 "currency": acc["currency"],
                 "is_saving": bool(acc["is_saving"])
             })
-            total_balance += acc["balance"]
+            if not acc["is_saving"]:
+                total_balance += acc["balance"]
             
-        # 2. Monthly Expenses
+        # 2. Monthly Expenses inside current cycle
         cur = await db.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM transactions "
-            "WHERE user_id=? AND type='expense' AND deleted_at IS NULL AND strftime('%Y-%m', ts)=?",
-            (user_id, current_month_str)
+            "WHERE user_id=? AND type='expense' AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+            (user_id, start_str, end_str)
         )
         (monthly_expenses_row,) = await cur.fetchone()
+
+        # 2b. Monthly Income inside current cycle
+        cur_inc = await db.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+            "WHERE user_id=? AND type='income' AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+            (user_id, start_str, end_str)
+        )
+        (monthly_income_row,) = await cur_inc.fetchone()
         
         # 3. Weekly streak (Monday to Sunday)
-        # Find start of current week
-        today = date.today()
         start_of_week = today - timedelta(days=today.weekday())
         weekly_streak = []
         for i in range(7):
@@ -236,22 +314,22 @@ async def get_dashboard(user_id: int = Depends(get_current_user)):
                 "note": row["note"]
             })
             
-        # 5. Categories progress (limit vs spent)
-        categories = await list_categories(db, user_id, "expense")
+        # 5. Categories progress (limit vs spent) for both expenses and incomes
+        expense_cats = await list_categories(db, user_id, "expense")
+        income_cats = await list_categories(db, user_id, "income")
         categories_data = []
-        for cat in categories:
-            # Get spent amount for current month
+        
+        for cat in expense_cats:
             cur_spent = await db.execute(
                 "SELECT COALESCE(SUM(amount), 0) FROM transactions "
-                "WHERE user_id=? AND category_id=? AND type='expense' AND deleted_at IS NULL AND strftime('%Y-%m', ts)=?",
-                (user_id, cat["id"], current_month_str)
+                "WHERE user_id=? AND category_id=? AND type='expense' AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+                (user_id, cat["id"], start_str, end_str)
             )
             (spent_val,) = await cur_spent.fetchone()
             
-            # Get budget limit
             cur_limit = await db.execute(
                 "SELECT limit_amount FROM budgets WHERE user_id=? AND category_id=? AND month=?",
-                (user_id, cat["id"], current_month_str)
+                (user_id, cat["id"], cycle_month_str)
             )
             limit_row = await cur_limit.fetchone()
             limit_amount = limit_row[0] if limit_row else 0
@@ -260,13 +338,46 @@ async def get_dashboard(user_id: int = Depends(get_current_user)):
                 "id": cat["id"],
                 "name": cat["name"],
                 "emoji": cat["emoji"],
+                "kind": "expense",
                 "limitAmount": limit_amount,
                 "spentAmount": abs(spent_val)
             })
+            
+        for cat in income_cats:
+            cur_earned = await db.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+                "WHERE user_id=? AND category_id=? AND type='income' AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+                (user_id, cat["id"], start_str, end_str)
+            )
+            (earned_val,) = await cur_earned.fetchone()
+            
+            categories_data.append({
+                "id": cat["id"],
+                "name": cat["name"],
+                "emoji": cat["emoji"],
+                "kind": "income",
+                "limitAmount": 0,
+                "spentAmount": abs(earned_val)
+            })
+
+        # Calculate active days count in current cycle
+        cur_active_days = await db.execute(
+            "SELECT COUNT(DISTINCT date(ts)) FROM transactions "
+            "WHERE user_id=? AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+            (user_id, start_str, end_str)
+        )
+        active_days_count = (await cur_active_days.fetchone())[0]
+        total_cycle_days = (end_dt - start_dt).days
 
         return {
             "totalBalance": total_balance,
             "monthlyExpenses": abs(monthly_expenses_row),
+            "cycleIncome": abs(monthly_income_row),
+            "cycleExpenses": abs(monthly_expenses_row),
+            "activeDaysCount": active_days_count,
+            "totalCycleDays": total_cycle_days,
+            "cycleStart": start_dt.strftime("%Y-%m-%d"),
+            "cycleEnd": end_dt.strftime("%Y-%m-%d"),
             "weeklyStreak": weekly_streak,
             "accounts": accounts_data,
             "recentTransactions": recent_tx,
@@ -274,7 +385,11 @@ async def get_dashboard(user_id: int = Depends(get_current_user)):
             "isPremium": ctx.mode == "full",
             "premiumExpirationDate": ctx.expiration_date,
             "availableFeatures": available_features,
-            "progressLevel": ctx.progress_level
+            "progressLevel": ctx.progress_level,
+            "currentStreak": ctx.current_streak,
+            "maxStreak": ctx.max_streak,
+            "userName": await get_user_name(db, user_id),
+            "budgetCycleStartDay": cycle_start_day
         }
 
 @app.get("/api/accounts")
@@ -860,5 +975,91 @@ async def delete_account_endpoint(acc_id: int, user_id: int = Depends(get_curren
         from app.db.repositories.accounts_repo import archive_account
         now_str = datetime.now(timezone.utc).isoformat()
         await archive_account(db, user_id, acc_id, now_str)
+        await db.commit()
+        return {"status": "success"}
+
+@app.post("/api/user/profile")
+async def update_profile(req: ProfileUpdateRequest, user_id: int = Depends(get_current_user)):
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE users SET name=? WHERE user_id=?",
+            (name, user_id)
+        )
+        await db.commit()
+    return {"status": "success", "name": name}
+
+@app.post("/api/user/settings")
+async def update_settings(req: SettingsUpdateRequest, user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        cur = await db.execute("SELECT 1 FROM settings WHERE user_id=?", (user_id,))
+        exists = await cur.fetchone() is not None
+        now_str = datetime.now(timezone.utc).isoformat()
+        if not exists:
+            await db.execute(
+                "INSERT INTO settings (user_id, created_at, updated_at) VALUES (?, ?, ?)",
+                (user_id, now_str, now_str)
+            )
+        if req.budget_cycle_start_day is not None:
+            day = max(1, min(req.budget_cycle_start_day, 28))
+            await db.execute(
+                "UPDATE settings SET budget_cycle_start_day=?, updated_at=? WHERE user_id=?",
+                (day, now_str, user_id)
+            )
+        if req.currency is not None:
+            await db.execute(
+                "UPDATE settings SET currency=?, updated_at=? WHERE user_id=?",
+                (req.currency, now_str, user_id)
+            )
+        if req.timezone is not None:
+            await db.execute(
+                "UPDATE settings SET timezone=?, updated_at=? WHERE user_id=?",
+                (req.timezone, now_str, user_id)
+            )
+        if req.lang is not None:
+            await db.execute(
+                "UPDATE settings SET lang=?, updated_at=? WHERE user_id=?",
+                (req.lang, now_str, user_id)
+            )
+        await db.commit()
+        return {"status": "success"}
+
+@app.put("/api/categories/{category_id}")
+async def update_category_endpoint(category_id: int, req: CategoryUpdateRequest, user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        now_str = datetime.now(timezone.utc).isoformat()
+        cur = await db.execute("SELECT kind FROM categories WHERE id=? AND user_id=? LIMIT 1", (category_id, user_id))
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Category not found")
+        
+        if req.name is not None:
+            name = req.name.strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="Name cannot be empty")
+            cur_dup = await db.execute(
+                "SELECT 1 FROM categories WHERE user_id=? AND name=? AND id != ? AND is_archived=0 LIMIT 1",
+                (user_id, name, category_id)
+            )
+            if await cur_dup.fetchone():
+                raise HTTPException(status_code=400, detail="Category with this name already exists")
+            await db.execute("UPDATE categories SET name=?, updated_at=? WHERE id=?", (name, now_str, category_id))
+            
+        if req.emoji is not None:
+            await db.execute("UPDATE categories SET emoji=?, updated_at=? WHERE id=?", (req.emoji, now_str, category_id))
+            
+        if req.limit_amount is not None:
+            start_day = await get_budget_cycle_start_day(db, user_id)
+            _, _, cycle_month_str = get_budget_cycle_bounds(date.today(), start_day)
+            from app.db.repositories.budgets_repo import upsert_budget
+            await db.execute(
+                "INSERT INTO budgets (user_id, month, category_id, limit_amount, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id, month, category_id) DO UPDATE SET limit_amount=excluded.limit_amount, updated_at=excluded.updated_at",
+                (user_id, cycle_month_str, category_id, req.limit_amount, now_str, now_str)
+            )
+            
         await db.commit()
         return {"status": "success"}

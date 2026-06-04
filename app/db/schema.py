@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS settings (
   nudge_last_sent_at    TEXT,
   debts_enabled         INTEGER NOT NULL DEFAULT 1,
   debts_days_before     INTEGER NOT NULL DEFAULT 3,
+  budget_cycle_start_day INTEGER NOT NULL DEFAULT 1,
   created_at            TEXT    NOT NULL,
   updated_at            TEXT    NOT NULL,
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE

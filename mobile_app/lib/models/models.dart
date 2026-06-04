@@ -38,6 +38,7 @@ class Category {
   final String emoji;
   final int? limitAmount;
   final int spentAmount;
+  final String kind; // 'expense' or 'income'
 
   Category({
     required this.id,
@@ -45,6 +46,7 @@ class Category {
     required this.emoji,
     this.limitAmount,
     required this.spentAmount,
+    this.kind = 'expense',
   });
 
   factory Category.fromJson(Map<String, dynamic> json) {
@@ -54,6 +56,7 @@ class Category {
       emoji: json['emoji'] as String? ?? '📂',
       limitAmount: json['limitAmount'] as int? ?? json['limit_amount'] as int?,
       spentAmount: json['spentAmount'] as int? ?? json['spent_amount'] as int? ?? 0,
+      kind: json['kind'] as String? ?? 'expense',
     );
   }
 
@@ -63,6 +66,7 @@ class Category {
     'emoji': emoji,
     'limit_amount': limitAmount,
     'spent_amount': spentAmount,
+    'kind': kind,
   };
 }
 

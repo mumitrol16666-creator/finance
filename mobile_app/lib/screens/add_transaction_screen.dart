@@ -155,9 +155,13 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     if (_selectedAccount == null || !regularAccounts.any((a) => a.name == _selectedAccount)) {
       _selectedAccount = regularAccounts.isNotEmpty ? regularAccounts[0].name : null;
     }
-    _selectedCategory ??= categories.isNotEmpty ? categories[0].name : null;
-
+    
     final isExpense = _kind == 'expense';
+    final filteredCategories = categories.where((c) => c.kind == (isExpense ? 'expense' : 'income')).toList();
+
+    if (_selectedCategory == null || !filteredCategories.any((c) => c.name == _selectedCategory)) {
+      _selectedCategory = filteredCategories.isNotEmpty ? filteredCategories[0].name : null;
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
@@ -179,7 +183,11 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                           title: 'РАСХОД',
                           active: isExpense,
                           activeColor: AppTheme.expense,
-                          onTap: () => setState(() => _kind = 'expense'),
+                          onTap: () => setState(() {
+                            _kind = 'expense';
+                            final filtered = categories.where((c) => c.kind == 'expense').toList();
+                            _selectedCategory = filtered.isNotEmpty ? filtered[0].name : null;
+                          }),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -188,7 +196,11 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                           title: 'ДОХОД',
                           active: !isExpense,
                           activeColor: AppTheme.income,
-                          onTap: () => setState(() => _kind = 'income'),
+                          onTap: () => setState(() {
+                            _kind = 'income';
+                            final filtered = categories.where((c) => c.kind == 'income').toList();
+                            _selectedCategory = filtered.isNotEmpty ? filtered[0].name : null;
+                          }),
                         ),
                       ),
                     ],
@@ -279,9 +291,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
-                      itemCount: categories.length,
+                      itemCount: filteredCategories.length,
                       itemBuilder: (context, index) {
-                        final cat = categories[index];
+                        final cat = filteredCategories[index];
                         final isSelected = _selectedCategory == cat.name;
                         return GestureDetector(
                           onTap: () => setState(() => _selectedCategory = cat.name),
