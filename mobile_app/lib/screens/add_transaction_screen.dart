@@ -12,9 +12,10 @@ class AddTransactionScreen extends StatefulWidget {
 
 class _AddTransactionScreenState extends State<AddTransactionScreen> {
   String _amountStr = '0';
-  String _kind = 'expense'; // 'expense' or 'income'
+  String _kind = 'expense'; // 'expense', 'income', or 'transfer'
   String? _selectedCategory;
   String? _selectedAccount;
+  String? _selectedToAccount;
   final TextEditingController _noteController = TextEditingController();
   final FocusNode _noteFocusNode = FocusNode();
 
@@ -78,7 +79,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       return;
     }
 
-    if (_selectedCategory == null) {
+    if (_kind != 'transfer' && _selectedCategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Выберите категорию')),
       );
@@ -93,31 +94,66 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     }
 
     final appState = Provider.of<AppState>(context, listen: false);
-    final category = appState.categories.firstWhere((c) => c.name == _selectedCategory);
 
-    // Save transaction in app state
-    await appState.addTransaction(
-      amount: amountInt, // raw whole units
-      kind: _kind,
-      categoryName: category.name,
-      categoryEmoji: category.emoji,
-      accountName: _selectedAccount!,
-      note: _noteController.text.trim().isNotEmpty ? _noteController.text.trim() : null,
-    );
-
-    // Auto-save part to savings if checked
-    if (_kind == 'income' && _autoSave && _selectedSavingAccount != null) {
-      final transferAmount = (amountInt * _autoSavePercent / 100).round();
-      if (transferAmount > 0) {
-        await appState.addTransaction(
-          amount: transferAmount,
-          kind: 'transfer',
-          categoryName: category.name,
-          categoryEmoji: category.emoji,
-          accountName: _selectedAccount!,
-          toAccountName: _selectedSavingAccount!,
-          note: 'Автонакопление ($_autoSavePercent% от дохода)',
+    if (_kind == 'transfer') {
+      if (!appState.isPremium) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('🔒 Функция перевода доступна только в Premium версии'),
+            backgroundColor: AppTheme.expense,
+          ),
         );
+        return;
+      }
+      if (_selectedToAccount == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Выберите счёт зачисления')),
+        );
+        return;
+      }
+      if (_selectedAccount == _selectedToAccount) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Счета списания и зачисления должны отличаться')),
+        );
+        return;
+      }
+
+      await appState.addTransaction(
+        amount: amountInt,
+        kind: 'transfer',
+        categoryName: '',
+        categoryEmoji: '',
+        accountName: _selectedAccount!,
+        toAccountName: _selectedToAccount!,
+        note: _noteController.text.trim().isNotEmpty ? _noteController.text.trim() : null,
+      );
+    } else {
+      final category = appState.categories.firstWhere((c) => c.name == _selectedCategory);
+
+      // Save transaction in app state
+      await appState.addTransaction(
+        amount: amountInt, // raw whole units
+        kind: _kind,
+        categoryName: category.name,
+        categoryEmoji: category.emoji,
+        accountName: _selectedAccount!,
+        note: _noteController.text.trim().isNotEmpty ? _noteController.text.trim() : null,
+      );
+
+      // Auto-save part to savings if checked
+      if (_kind == 'income' && _autoSave && _selectedSavingAccount != null) {
+        final transferAmount = (amountInt * _autoSavePercent / 100).round();
+        if (transferAmount > 0) {
+          await appState.addTransaction(
+            amount: transferAmount,
+            kind: 'transfer',
+            categoryName: category.name,
+            categoryEmoji: category.emoji,
+            accountName: _selectedAccount!,
+            toAccountName: _selectedSavingAccount!,
+            note: 'Автонакопление ($_autoSavePercent% от дохода)',
+          );
+        }
       }
     }
 
@@ -152,11 +188,19 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     final savingsAccounts = accounts.where((a) => a.isSaving).toList();
 
     // Set defaults if not selected yet
-    if (_selectedAccount == null || !regularAccounts.any((a) => a.name == _selectedAccount)) {
-      _selectedAccount = regularAccounts.isNotEmpty ? regularAccounts[0].name : null;
+    if (_selectedAccount == null || !accounts.any((a) => a.name == _selectedAccount)) {
+      _selectedAccount = accounts.isNotEmpty ? accounts[0].name : null;
+    }
+    if (_selectedToAccount == null || !accounts.any((a) => a.name == _selectedToAccount) || _selectedToAccount == _selectedAccount) {
+      try {
+        _selectedToAccount = accounts.firstWhere((a) => a.name != _selectedAccount).name;
+      } catch (_) {
+        _selectedToAccount = null;
+      }
     }
     
     final isExpense = _kind == 'expense';
+    final isTransfer = _kind == 'transfer';
     final filteredCategories = categories.where((c) => c.kind == (isExpense ? 'expense' : 'income')).toList();
 
     if (_selectedCategory == null || !filteredCategories.any((c) => c.name == _selectedCategory)) {
@@ -175,13 +219,13 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Segmented Tab Control (Expense / Income)
+                  // Segmented Tab Control (Expense / Income / Transfer)
                   Row(
                     children: [
                       Expanded(
                         child: _buildTypeButton(
                           title: 'РАСХОД',
-                          active: isExpense,
+                          active: _kind == 'expense',
                           activeColor: AppTheme.expense,
                           onTap: () => setState(() {
                             _kind = 'expense';
@@ -190,16 +234,27 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                           }),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: _buildTypeButton(
                           title: 'ДОХОД',
-                          active: !isExpense,
+                          active: _kind == 'income',
                           activeColor: AppTheme.income,
                           onTap: () => setState(() {
                             _kind = 'income';
                             final filtered = categories.where((c) => c.kind == 'income').toList();
                             _selectedCategory = filtered.isNotEmpty ? filtered[0].name : null;
+                          }),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildTypeButton(
+                          title: 'ПЕРЕВОД',
+                          active: _kind == 'transfer',
+                          activeColor: AppTheme.accentBlue,
+                          onTap: () => setState(() {
+                            _kind = 'transfer';
                           }),
                         ),
                       ),
@@ -223,7 +278,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                           style: TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.bold,
-                            color: isExpense ? AppTheme.expense : AppTheme.income,
+                            color: isTransfer
+                                ? AppTheme.accentBlue
+                                : (isExpense ? AppTheme.expense : AppTheme.income),
                           ),
                         ),
                       ],
@@ -231,31 +288,35 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // Horizontal scroll of accounts (Excluding Savings)
-                  const Text(
-                    'Счёт списания / зачисления',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
-                  ),
-                  const SizedBox(height: 6),
-                  if (regularAccounts.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8.0),
-                      child: Text('Нет активных счетов', style: TextStyle(color: AppTheme.textSecondary)),
-                    )
-                  else
+                  if (isTransfer) ...[
+                    // Счёт списания
+                    const Text(
+                      'Откуда (Счёт списания)',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
+                    ),
+                    const SizedBox(height: 6),
                     SizedBox(
                       height: 40,
                       child: ListView.builder(
                         scrollDirection: Axis.horizontal,
                         physics: const BouncingScrollPhysics(),
-                        itemCount: regularAccounts.length,
+                        itemCount: accounts.length,
                         itemBuilder: (context, index) {
-                          final acc = regularAccounts[index];
+                          final acc = accounts[index];
                           final name = acc.name;
                           final balance = acc.balance;
                           final isSelected = _selectedAccount == name;
                           return GestureDetector(
-                            onTap: () => setState(() => _selectedAccount = name),
+                            onTap: () => setState(() {
+                              _selectedAccount = name;
+                              if (_selectedAccount == _selectedToAccount) {
+                                try {
+                                  _selectedToAccount = accounts.firstWhere((a) => a.name != name).name;
+                                } catch (_) {
+                                  _selectedToAccount = null;
+                                }
+                              }
+                            }),
                             child: Container(
                               margin: const EdgeInsets.only(right: 8),
                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -278,54 +339,149 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                         },
                       ),
                     ),
-                  const SizedBox(height: 16),
+                    const SizedBox(height: 16),
 
-                  // Horizontal scroll of categories
-                  const Text(
-                    'Категория',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
-                  ),
-                  const SizedBox(height: 6),
-                  SizedBox(
-                    height: 40,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      physics: const BouncingScrollPhysics(),
-                      itemCount: filteredCategories.length,
-                      itemBuilder: (context, index) {
-                        final cat = filteredCategories[index];
-                        final isSelected = _selectedCategory == cat.name;
-                        return GestureDetector(
-                          onTap: () => setState(() => _selectedCategory = cat.name),
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: isSelected ? AppTheme.primary : AppTheme.surfaceCard,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: isSelected ? Colors.white24 : Colors.transparent,
+                    // Счёт зачисления
+                    const Text(
+                      'Куда (Счёт зачисления)',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
+                    ),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      height: 40,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        itemCount: accounts.length,
+                        itemBuilder: (context, index) {
+                          final acc = accounts[index];
+                          final name = acc.name;
+                          final balance = acc.balance;
+                          if (name == _selectedAccount) return const SizedBox.shrink();
+
+                          final isSelected = _selectedToAccount == name;
+                          return GestureDetector(
+                            onTap: () => setState(() => _selectedToAccount = name),
+                            child: Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected ? AppTheme.accentBlue : AppTheme.surfaceCard,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: isSelected ? Colors.white24 : Colors.transparent,
+                                ),
+                              ),
+                              child: Text(
+                                '$name ($balance ₸)',
+                                style: TextStyle(
+                                  color: isSelected ? Colors.white : AppTheme.textSecondary,
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                ),
                               ),
                             ),
-                            child: Row(
-                              children: [
-                                Text(cat.emoji),
-                                const SizedBox(width: 6),
-                                Text(
-                                  cat.name,
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ] else ...[
+                    // Horizontal scroll of accounts (Excluding Savings)
+                    const Text(
+                      'Счёт списания / зачисления',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
+                    ),
+                    const SizedBox(height: 6),
+                    if (regularAccounts.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Text('Нет активных счетов', style: TextStyle(color: AppTheme.textSecondary)),
+                      )
+                    else
+                      SizedBox(
+                        height: 40,
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: regularAccounts.length,
+                          itemBuilder: (context, index) {
+                            final acc = regularAccounts[index];
+                            final name = acc.name;
+                            final balance = acc.balance;
+                            final isSelected = _selectedAccount == name;
+                            return GestureDetector(
+                              onTap: () => setState(() => _selectedAccount = name),
+                              child: Container(
+                                margin: const EdgeInsets.only(right: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? AppTheme.primary : AppTheme.surfaceCard,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: isSelected ? Colors.white24 : Colors.transparent,
+                                  ),
+                                ),
+                                child: Text(
+                                  '$name ($balance ₸)',
                                   style: TextStyle(
                                     color: isSelected ? Colors.white : AppTheme.textSecondary,
                                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+
+                    // Horizontal scroll of categories
+                    const Text(
+                      'Категория',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
                     ),
-                  ),
-                  const SizedBox(height: 16),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      height: 40,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        itemCount: filteredCategories.length,
+                        itemBuilder: (context, index) {
+                          final cat = filteredCategories[index];
+                          final isSelected = _selectedCategory == cat.name;
+                          return GestureDetector(
+                            onTap: () => setState(() => _selectedCategory = cat.name),
+                            child: Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected ? AppTheme.primary : AppTheme.surfaceCard,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: isSelected ? Colors.white24 : Colors.transparent,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Text(cat.emoji),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    cat.name,
+                                    style: TextStyle(
+                                      color: isSelected ? Colors.white : AppTheme.textSecondary,
+                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
 
                   // Comment note field
                   const Text(
@@ -351,7 +507,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                       focusNode: _noteFocusNode,
                       style: const TextStyle(color: AppTheme.textPrimary),
                       decoration: InputDecoration(
-                        hintText: 'Опишите операцию (например: продукты в Магните, подарок маме)',
+                        hintText: 'Опишите операцию (например: продукты в Магните, перевод на карту)',
                         hintStyle: const TextStyle(color: Colors.white30, fontSize: 13),
                         filled: true,
                         fillColor: AppTheme.surfaceCard,
@@ -417,7 +573,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   const SizedBox(height: 16),
 
                   // Auto-save settings shown only for income operations if savings accounts exist
-                  if (!isExpense && savingsAccounts.isNotEmpty) ...[
+                  if (_kind == 'income' && savingsAccounts.isNotEmpty) ...[
                     GlassCard(
                       radius: 12,
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),

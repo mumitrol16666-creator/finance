@@ -380,11 +380,14 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<String> fetchAIBudgetAudit() async {
+  Future<String> fetchAIBudgetAudit({String? refDate}) async {
     if (_token == null) return "Ошибка авторизации";
     try {
+      final uri = refDate != null
+          ? Uri.parse('$_baseUrl/api/analytics/ai-audit?ref_date=$refDate')
+          : Uri.parse('$_baseUrl/api/analytics/ai-audit');
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/analytics/ai-audit'),
+        uri,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $_token',
@@ -403,14 +406,17 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> loadDashboardData() async {
+  Future<void> loadDashboardData({String? refDate}) async {
     if (_token == null) return;
     _isLoading = true;
     notifyListeners();
 
     try {
+      final uri = refDate != null
+          ? Uri.parse('$_baseUrl/api/dashboard?ref_date=$refDate')
+          : Uri.parse('$_baseUrl/api/dashboard');
       final response = await http.get(
-        Uri.parse('$_baseUrl/api/dashboard'),
+        uri,
         headers: {
           'Authorization': 'Bearer $_token',
         },

@@ -224,9 +224,15 @@ async def verify_code(req: VerifyRequest):
         return {"token": token, "user_id": user_id, "name": name}
 
 @app.get("/api/dashboard")
-async def get_dashboard(user_id: int = Depends(get_current_user)):
+async def get_dashboard(ref_date: Optional[str] = None, user_id: int = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     today = now.date()
+    if ref_date:
+        try:
+            from datetime import date
+            today = date.fromisoformat(ref_date)
+        except Exception:
+            pass
     
     async with get_db() as db:
         from app.domain.services.access_service import get_user_context, get_available_features_from_context
@@ -613,7 +619,7 @@ async def get_analytics(user_id: int = Depends(get_current_user)):
         }
 
 @app.post("/api/analytics/ai-audit")
-async def post_analytics_audit(user_id: int = Depends(get_current_user)):
+async def post_analytics_audit(ref_date: Optional[str] = None, user_id: int = Depends(get_current_user)):
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "ai"):
             raise HTTPException(status_code=403, detail="ИИ-аудит доступен только в Premium версии")
@@ -625,7 +631,17 @@ async def post_analytics_audit(user_id: int = Depends(get_current_user)):
             
             tz_name = await get_timezone(db, user_id)
             goal = await get_financial_goal(db, user_id)
-            context = await build_ai_context(db, user_id, tz_name, "month", goal)
+            
+            ref_dt = None
+            if ref_date:
+                try:
+                    from datetime import date, datetime
+                    parsed_date = date.fromisoformat(ref_date)
+                    ref_dt = datetime(parsed_date.year, parsed_date.month, parsed_date.day, 12, 0, 0, tzinfo=timezone.utc)
+                except Exception:
+                    pass
+            
+            context = await build_ai_context(db, user_id, tz_name, "month", goal, ref_dt=ref_dt)
             
             audit_prompt = (
                 "Проанализируй мои финансовые показатели за текущий месяц. "

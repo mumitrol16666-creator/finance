@@ -628,9 +628,10 @@ async def _reports_hub_text(db: aiosqlite.Connection, user_id: int, lang: str) -
         act_title = "⚡ <b>RECENT ACTIVITY</b>"
         act_lines = []
         for tx in recent_txs:
-            amt = int(tx[4])
-            sign = "+" if tx[3] == "income" else "-"
-            act_lines.append(f"• {sign}{_fmt_money(amt)} {tx[7] or 'Ops'}")
+            amt = abs(int(tx[3]))
+            sign = "+" if tx[2] == "income" else "-"
+            desc = tx[5] or tx[4] or 'Ops'
+            act_lines.append(f"• {sign}{_fmt_money(amt)} {desc}")
         if not act_lines:
             act_lines.append("• No recent transactions")
             
@@ -652,9 +653,10 @@ async def _reports_hub_text(db: aiosqlite.Connection, user_id: int, lang: str) -
         act_title = "⚡ <b>СОҢҒЫ ОПЕРАЦИЯЛАР</b>"
         act_lines = []
         for tx in recent_txs:
-            amt = int(tx[4])
-            sign = "+" if tx[3] == "income" else "-"
-            act_lines.append(f"• {sign}{_fmt_money(amt)} {tx[7] or 'Операция'}")
+            amt = abs(int(tx[3]))
+            sign = "+" if tx[2] == "income" else "-"
+            desc = tx[5] or tx[4] or 'Операция'
+            act_lines.append(f"• {sign}{_fmt_money(amt)} {desc}")
         if not act_lines:
             act_lines.append("• Операциялар жоқ")
             
@@ -676,15 +678,16 @@ async def _reports_hub_text(db: aiosqlite.Connection, user_id: int, lang: str) -
         act_title = "⚡ <b>ПОСЛЕДНЯЯ АКТИВНОСТЬ</b>"
         act_lines = []
         for tx in recent_txs:
-            amt = int(tx[4])
-            sign = "+" if tx[3] == "income" else "-"
-            act_lines.append(f"• {sign}{_fmt_money(amt)} {tx[7] or 'Операция'}")
+            amt = abs(int(tx[3]))
+            sign = "+" if tx[2] == "income" else "-"
+            desc = tx[5] or tx[4] or 'Операция'
+            act_lines.append(f"• {sign}{_fmt_money(amt)} {desc}")
         if not act_lines:
             act_lines.append("• Нет недавних операций")
             
         bud_title = "🎯 <b>ПРОГНОЗЫ И БЮДЖЕТ</b>"
         if total_limit > 0:
-            bud_text = f"• Бюджет: <code>{budget_bar}</code> {budget_pct:.0f}%\n• Остаток: <b>{_fmt_money(total_limit - total_spent_limit)}</b>"
+            bud_text = f"• Budget: <code>{budget_bar}</code> {budget_pct:.0f}%\n• Left: <b>{_fmt_money(total_limit - total_spent_limit)}</b>"
         else:
             bud_text = "• Бюджеты не заданы. Добавьте лимиты для прогноза."
             
