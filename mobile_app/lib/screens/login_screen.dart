@@ -188,8 +188,9 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         }
       }
     } catch (e) {
+      debugPrint('Clipboard error: $e');
       setState(() {
-        _errorMessage = 'Не удалось получить данные из буфера обмена';
+        _errorMessage = 'Не удалось получить данные из буфера обмена. Проверьте разрешения браузера или используйте HTTPS.';
       });
     }
   }
