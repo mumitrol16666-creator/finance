@@ -668,7 +668,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  '1. Откройте нашего Telegram бота @FIntrack24_bot\n'
+                  '1. Откройте нашего Telegram бота @FinanceBo1_bot\n'
                   '2. Нажмите Запустить (/start) или напишите /login\n'
                   '3. Скопируйте сгенерированный 6-значный код и вставьте его выше.',
                   style: TextStyle(color: Colors.white30, fontSize: 11.5, height: 1.4),
@@ -676,7 +676,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                 const SizedBox(height: 12),
                 ElevatedButton.icon(
                   onPressed: () async {
-                    final url = Uri.parse('https://t.me/FIntrack24_bot');
+                    final url = Uri.parse('https://t.me/FinanceBo1_bot');
                     if (await canLaunchUrl(url)) {
                       await launchUrl(url, mode: LaunchMode.externalApplication);
                     }

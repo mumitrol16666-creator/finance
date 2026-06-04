@@ -380,6 +380,29 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<String> fetchAIBudgetAudit() async {
+    if (_token == null) return "Ошибка авторизации";
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/analytics/ai-audit'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['audit'] as String? ?? "Анализ не получен";
+      } else {
+        final err = json.decode(response.body)['detail'] ?? "Не удалось получить ИИ-анализ";
+        return err.toString();
+      }
+    } catch (e) {
+      print('Fetch AI Audit error: $e');
+      return "Ошибка соединения с сервером";
+    }
+  }
+
   Future<void> loadDashboardData() async {
     if (_token == null) return;
     _isLoading = true;

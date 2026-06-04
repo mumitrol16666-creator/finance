@@ -612,6 +612,34 @@ async def get_analytics(user_id: int = Depends(get_current_user)):
             "chartData": chart_data
         }
 
+@app.post("/api/analytics/ai-audit")
+async def post_analytics_audit(user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        if not await can_use_feature(db, user_id, "ai"):
+            raise HTTPException(status_code=403, detail="ИИ-аудит доступен только в Premium версии")
+        try:
+            from app.db.repositories.settings_repo import get_timezone, get_financial_goal
+            from app.domain.services.ai_consultant_service import build_ai_context
+            from app.domain.services.ai_llm_service import render_final_ai_question
+            import re
+            
+            tz_name = await get_timezone(db, user_id)
+            goal = await get_financial_goal(db, user_id)
+            context = await build_ai_context(db, user_id, tz_name, "month", goal)
+            
+            audit_prompt = (
+                "Проанализируй мои финансовые показатели за текущий месяц. "
+                "Дай очень краткий (3-4 предложения), конкретный и практичный аудит моих расходов, "
+                "сбережений и лимитов. Укажи на аномалии или дай совет по оптимизации."
+            )
+            
+            raw_response = await render_final_ai_question(context, audit_prompt, chat_history=None)
+            clean_response = re.sub(r"<[^>]+>", "", raw_response).strip()
+            return {"audit": clean_response}
+        except Exception as e:
+            logger.exception(f"Failed to generate AI analytics audit: {e}")
+            return {"audit": "В данный момент ИИ-аудит временно недоступен. Попробуйте обновить позже."}
+
 @app.post("/api/accounts")
 async def add_account(req: AccountCreateRequest, user_id: int = Depends(get_current_user)):
     now_str = datetime.now(timezone.utc).isoformat()
