@@ -41,84 +41,113 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
       text: debt.paymentAmount > 0 ? debt.paymentAmount.toString() : debt.remainingAmount.toString(),
     );
     final dateController = TextEditingController(text: debt.nextPaymentDate ?? '');
+    int? selectedAccountId = appState.accounts.isNotEmpty ? appState.accounts.first.id : null;
 
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          backgroundColor: AppTheme.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: AppTheme.border),
-          ),
-          title: Text('Оплата долга: ${debt.title}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: amountController,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: AppTheme.textPrimary),
-                decoration: const InputDecoration(
-                  labelText: 'Сумма платежа',
-                  labelStyle: TextStyle(color: AppTheme.textSecondary),
-                  suffixText: '₸',
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                ),
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.border),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: dateController,
-                style: const TextStyle(color: AppTheme.textPrimary),
-                decoration: const InputDecoration(
-                  labelText: 'Следующий платёж (ГГГГ-ММ-ДД)',
-                  labelStyle: TextStyle(color: AppTheme.textSecondary),
-                  hintText: 'Необязательно',
-                  hintStyle: TextStyle(color: Colors.white24),
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                ),
-                onTap: () async {
-                  FocusScope.of(context).requestFocus(FocusNode());
-                  final date = await showDatePicker(
-                    context: context,
-                    initialDate: DateTime.now(),
-                    firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                    lastDate: DateTime.now().add(const Duration(days: 3650)),
-                  );
-                  if (date != null) {
-                    dateController.text = DateFormat('yyyy-MM-dd').format(date);
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
-            ),
-            TextButton(
-              onPressed: () async {
-                final amt = int.tryParse(amountController.text) ?? 0;
-                if (amt <= 0) return;
-                Navigator.pop(context);
-                await appState.payDebt(
-                  debt.id,
-                  amount: amt,
-                  nextPaymentDate: dateController.text.trim().isEmpty ? null : dateController.text.trim(),
-                );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('✅ Платеж успешно внесен!'),
-                    backgroundColor: AppTheme.income,
+              title: Text('Оплата долга: ${debt.title}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: amountController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: AppTheme.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Сумма платежа',
+                      labelStyle: TextStyle(color: AppTheme.textSecondary),
+                      suffixText: '₸',
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                    ),
                   ),
-                );
-              },
-              child: const Text('Оплатить', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
-            ),
-          ],
+                  const SizedBox(height: 16),
+                  if (appState.accounts.isNotEmpty) ...[
+                    DropdownButtonFormField<int>(
+                      value: selectedAccountId,
+                      dropdownColor: AppTheme.surface,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Счет для списания/зачисления',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                      items: appState.accounts.map((acc) {
+                        return DropdownMenuItem<int>(
+                          value: acc.id,
+                          child: Text('${acc.name} (${acc.balance} ₸)'),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() => selectedAccountId = val);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  TextField(
+                    controller: dateController,
+                    style: const TextStyle(color: AppTheme.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Следующий платёж (ГГГГ-ММ-ДД)',
+                      labelStyle: TextStyle(color: AppTheme.textSecondary),
+                      hintText: 'Необязательно',
+                      hintStyle: TextStyle(color: Colors.white24),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                    ),
+                    onTap: () async {
+                      FocusScope.of(context).requestFocus(FocusNode());
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                        lastDate: DateTime.now().add(const Duration(days: 3650)),
+                      );
+                      if (date != null) {
+                        dateController.text = DateFormat('yyyy-MM-dd').format(date);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final amt = int.tryParse(amountController.text) ?? 0;
+                    if (amt <= 0) return;
+                    Navigator.pop(context);
+                    await appState.payDebt(
+                      debt.id,
+                      amount: amt,
+                      accountId: selectedAccountId,
+                      nextPaymentDate: dateController.text.trim().isEmpty ? null : dateController.text.trim(),
+                    );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text('✅ Платеж успешно внесен!'),
+                        backgroundColor: AppTheme.income,
+                      ),
+                    );
+                  },
+                  child: const Text('Оплатить', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          }
         );
       },
     );
