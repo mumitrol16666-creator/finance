@@ -457,6 +457,7 @@ async def qa_batch_save(c: CallbackQuery, state: FSMContext, db):
     
     # 2. Сохраняем всё в цикле
     success_count = 0
+    saved_incomes = []
     for d in drafts:
         kind = d.get("kind", "expense")
         amount = int(d.get("amount", 0))
@@ -475,7 +476,8 @@ async def qa_batch_save(c: CallbackQuery, state: FSMContext, db):
             if kind == "expense":
                 await add_expense_v2(db, c.from_user.id, amount, acc_id, cat_id, note)
             else:
-                await add_income(db, c.from_user.id, amount, acc_id, cat_id, note)
+                tx_id = await add_income(db, c.from_user.id, amount, acc_id, cat_id, note)
+                saved_incomes.append({"tx_id": tx_id, "amount": amount, "account_id": acc_id})
             success_count += 1
         except Exception:
             continue
@@ -489,7 +491,41 @@ async def qa_batch_save(c: CallbackQuery, state: FSMContext, db):
     elif lang == "kk":
         text = f"✅ <b>Сиқыр орындалды!</b>\nҚосылған операциялар: <b>{success_count}</b>"
 
-    await c.message.answer(text, reply_markup=await build_main_menu_markup(db, c.from_user.id, lang), parse_mode="HTML")
+    # Check if we should suggest saving to piggy bank
+    all_accs = await list_accounts(db, c.from_user.id)
+    savings = [a for a in all_accs if a[5] and not a[3]] # active saving accounts
+    
+    if saved_incomes and savings:
+        from app.db.repositories.users_repo import get_streak
+        streak_before, _, _ = await get_streak(db, c.from_user.id)
+        inc = saved_incomes[-1]
+        
+        await state.update_data(
+            income_saved_msg=text,
+            income_tx_id=inc["tx_id"],
+            income_amount=inc["amount"],
+            income_account_id=inc["account_id"],
+            streak_before=streak_before,
+            lang=lang
+        )
+        await state.set_state(IncomeFlow.piggy_suggest)
+        
+        prompt_text = f"{text}\n\n{_i18n_t(lang, 'TX_PIGGY_SUGGEST_TITLE')}"
+        
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🎯 10%", callback_data="incpiggy:pct:10")
+        kb.button(text="🎯 20%", callback_data="incpiggy:pct:20")
+        kb.button(text="🎯 30%", callback_data="incpiggy:pct:30")
+        kb.button(text="✍️ Другая сумма" if lang == "ru" else ("✍️ Custom" if lang == "en" else "✍️ Басқа сома"), callback_data="incpiggy:pct:custom")
+        kb.button(text=_i18n_t(lang, "BTN_PIGGY_SKIP"), callback_data="incpiggy:skip")
+        kb.adjust(3, 1, 1)
+        
+        sent = await c.message.answer(prompt_text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        await state.update_data(flow_message_id=sent.message_id)
+    else:
+        await c.message.answer(text, reply_markup=await build_main_menu_markup(db, c.from_user.id, lang), parse_mode="HTML")
+        
     await c.answer()
 
 

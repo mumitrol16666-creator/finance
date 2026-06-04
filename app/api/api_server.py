@@ -208,11 +208,18 @@ async def get_dashboard(user_id: int = Depends(get_current_user)):
             
         # 4. Recent Transactions (last 10)
         cur = await db.execute(
-            "SELECT t.id, t.ts, t.type, t.amount, a.name as account_name, c.name as category_name, c.emoji as category_emoji, t.note "
+            "SELECT t.id, t.ts, t.type, t.amount, "
+            "       a.name as account_name, "
+            "       dest_a.name as dest_account_name, "
+            "       c.name as category_name, "
+            "       c.emoji as category_emoji, "
+            "       t.note "
             "FROM transactions t "
             "JOIN accounts a ON a.id=t.account_id "
+            "LEFT JOIN transactions dest_t ON dest_t.id=t.related_tx_id AND t.type='transfer' "
+            "LEFT JOIN accounts dest_a ON dest_a.id=dest_t.account_id "
             "LEFT JOIN categories c ON c.id=t.category_id "
-            "WHERE t.user_id=? AND t.deleted_at IS NULL "
+            "WHERE t.user_id=? AND t.deleted_at IS NULL AND (t.type != 'transfer' OR t.amount < 0) "
             "ORDER BY t.ts DESC, t.id DESC LIMIT 10",
             (user_id,)
         )
@@ -223,8 +230,8 @@ async def get_dashboard(user_id: int = Depends(get_current_user)):
                 "ts": row["ts"],
                 "type": row["type"],
                 "amount": abs(row["amount"]),
-                "accountName": row["account_name"],
-                "categoryName": row["category_name"] or ("Перевод" if row["type"] == "transfer" else "Прочее"),
+                "accountName": row["account_name"] if row["type"] != "transfer" else f"{row['account_name']} ➡️ {row['dest_account_name']}",
+                "categoryName": row["category_name"] or ("Перевод в копилку" if row["type"] == "transfer" and row["dest_account_name"] and "копил" in row["dest_account_name"].lower() else ("Перевод" if row["type"] == "transfer" else "Прочее")),
                 "categoryEmoji": row["category_emoji"] or ("🔁" if row["type"] == "transfer" else "📦"),
                 "note": row["note"]
             })
