@@ -2288,6 +2288,20 @@ async def tr_start(m: Message, state: FSMContext, db):
     await _tr_render_amount(m, state)
 
 
+@router.callback_query(F.data == "more:transfer")
+async def tr_start_callback(c: CallbackQuery, state: FSMContext, db):
+    if not await can_use_feature(db, c.from_user.id, FEATURE_TRANSFER):
+        await deny_feature_message(c, db, c.from_user.id)
+        return
+    await _clear_flow_message(c.bot, c.message.chat.id, state)
+    await state.clear()
+    lang = await get_lang(db, c.from_user.id)
+    await state.update_data(lang=lang)
+    await state.set_state(TransferFlow.amount)
+    await _tr_render_amount(c, state)
+    await c.answer()
+
+
 @router.message(TransferFlow.amount, F.text)
 async def tr_amount(m: Message, state: FSMContext, db):
     if _is_cancel_text(m.text):
