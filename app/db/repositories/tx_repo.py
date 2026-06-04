@@ -37,9 +37,16 @@ async def create_transfer(db: aiosqlite.Connection, user_id: int, ts_iso: str, f
 
 async def list_last(db: aiosqlite.Connection, user_id: int, limit: int = 10):
     cur = await db.execute(
-        "SELECT t.id, t.ts, t.type, t.amount, a.name, t.note "
-        "FROM transactions t JOIN accounts a ON a.id=t.account_id "
-        "WHERE t.user_id=? AND t.deleted_at IS NULL "
+        "SELECT t.id, t.ts, t.type, t.amount, "
+        "       (CASE WHEN t.type='transfer' AND dest_a.name IS NOT NULL "
+        "             THEN a.name || ' ➡️ ' || dest_a.name "
+        "             ELSE a.name END) as account_name, "
+        "       t.note "
+        "FROM transactions t "
+        "JOIN accounts a ON a.id=t.account_id "
+        "LEFT JOIN transactions dest_t ON dest_t.id=t.related_tx_id AND t.type='transfer' "
+        "LEFT JOIN accounts dest_a ON dest_a.id=dest_t.account_id "
+        "WHERE t.user_id=? AND t.deleted_at IS NULL AND (t.type != 'transfer' OR t.amount < 0) "
         "ORDER BY t.id DESC LIMIT ?",
         (user_id, limit),
     )
