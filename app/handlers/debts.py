@@ -1067,13 +1067,10 @@ async def debt_close_yes(c: CallbackQuery, db: aiosqlite.Connection, state: FSMC
     await c.answer()
 
 
-@router.callback_query(F.data.startswith("debt:close:"))
+@router.callback_query(F.data.startswith("debt:close:") & ~F.data.startswith("debt:close:yes:"))
 async def debt_close_ask(c: CallbackQuery, db: aiosqlite.Connection, state: FSMContext):
     lang = await get_lang(db, c.from_user.id)
     parts = c.data.split(":")
-    if len(parts) == 4 and parts[2] == "yes":
-        await c.answer()
-        return
 
     debt_id = int(parts[-1])
     debt_raw = await get_debt(db, c.from_user.id, debt_id)

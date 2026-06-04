@@ -393,21 +393,25 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> payDebt(int debtId, {required int amount, String? nextPaymentDate}) async {
+  Future<void> payDebt(int debtId, {required int amount, int? accountId, String? nextPaymentDate}) async {
     if (_token == null) return;
     _isLoading = true;
     notifyListeners();
     try {
+      final Map<String, dynamic> bodyMap = {
+        'payment_amount': amount,
+        'next_payment_date': nextPaymentDate,
+      };
+      if (accountId != null) {
+        bodyMap['account_id'] = accountId;
+      }
       final response = await http.post(
         Uri.parse('$_baseUrl/api/debts/$debtId/pay'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $_token',
         },
-        body: json.encode({
-          'payment_amount': amount,
-          'next_payment_date': nextPaymentDate,
-        }),
+        body: json.encode(bodyMap),
       );
       if (response.statusCode == 200) {
         await loadDashboardData();
@@ -650,5 +654,59 @@ class AppState extends ChangeNotifier {
 
     _isLoading = false;
     notifyListeners();
+  }
+
+  Future<void> deleteTransaction(int txId) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/api/transactions/$txId'),
+        headers: {
+          'Authorization': 'Bearer $_token',
+        },
+      );
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      }
+    } catch (e) {
+      print('Delete transaction error: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> updateTransaction({
+    required int tx_id,
+    int? amount,
+    String? note,
+  }) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final Map<String, dynamic> bodyMap = {};
+      if (amount != null) bodyMap['amount'] = amount;
+      if (note != null) bodyMap['note'] = note;
+
+      final response = await http.put(
+        Uri.parse('$_baseUrl/api/transactions/$tx_id'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+        body: json.encode(bodyMap),
+      );
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      }
+    } catch (e) {
+      print('Update transaction error: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 }

@@ -75,6 +75,13 @@ class TransactionCreateRequest(BaseModel):
     to_account_id: Optional[int] = None  # for transfers
     date_override: Optional[str] = None  # YYYY-MM-DD override
 
+class TransactionUpdateRequest(BaseModel):
+    amount: Optional[int] = None
+    category_id: Optional[int] = None
+    note: Optional[str] = None
+    account_id: Optional[int] = None
+    to_account_id: Optional[int] = None
+
 class ChatRequest(BaseModel):
     text: str
 
@@ -94,6 +101,7 @@ class DebtCreateRequest(BaseModel):
 
 class DebtPayRequest(BaseModel):
     payment_amount: int
+    account_id: Optional[int] = None
     next_payment_date: Optional[str] = None
 
 class RecurringCreateRequest(BaseModel):
@@ -322,6 +330,32 @@ async def add_transaction(req: TransactionCreateRequest, user_id: int = Depends(
             
         return {"status": "success"}
 
+@app.delete("/api/transactions/{tx_id}")
+async def delete_transaction_endpoint(tx_id: int, user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        from app.db.repositories.tx_repo import delete_tx
+        success, msg = await delete_tx(db, user_id, tx_id)
+        if not success:
+            raise HTTPException(status_code=400, detail=msg)
+        return {"status": "success"}
+
+@app.put("/api/transactions/{tx_id}")
+async def update_transaction_endpoint(tx_id: int, req: TransactionUpdateRequest, user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        from app.db.repositories.tx_repo import update_tx
+        success = await update_tx(
+            db, user_id, tx_id,
+            new_amount=req.amount,
+            new_category_id=req.category_id,
+            new_note=req.note,
+            new_account_id=req.account_id,
+            new_to_account_id=req.to_account_id
+        )
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to update transaction")
+        return {"status": "success"}
+
+
 @app.get("/api/debts")
 async def get_debts(user_id: int = Depends(get_current_user)):
     async with get_db() as db:
@@ -483,6 +517,70 @@ async def pay_debt_endpoint(debt_id: int, req: DebtPayRequest, user_id: int = De
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "debts"):
             raise HTTPException(status_code=403, detail="Функция долгов доступна только в Premium версии")
+        
+        if req.account_id is not None:
+            from app.db.repositories.debts_repo import get_debt
+            row = await get_debt(db, user_id, debt_id)
+            if row:
+                if hasattr(row, "keys"):
+                    debt = {k: row[k] for k in row.keys()}
+                else:
+                    debt = {
+                        "id": row[0],
+                        "title": row[1],
+                        "payment_amount": row[2],
+                        "next_payment_date": row[3],
+                        "remaining_amount": row[4],
+                        "dtype": row[5],
+                        "direction": row[6],
+                        "is_active": row[7],
+                        "status": row[8],
+                    }
+                
+                direction = debt["direction"]
+                dtype = debt["dtype"]
+                title = debt["title"]
+                amount = req.payment_amount
+
+                async def ensure_category(db_conn, u_id, kind, name, emoji):
+                    cur = await db_conn.execute(
+                        "SELECT id FROM categories WHERE user_id = ? AND kind = ? AND name = ?",
+                        (u_id, kind, name),
+                    )
+                    r = await cur.fetchone()
+                    if r:
+                        return int(r["id"] if hasattr(r, "keys") else r[0])
+
+                    cur = await db_conn.execute(
+                        """
+                        INSERT INTO categories (
+                            user_id, name, emoji, kind, is_archived, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, 0, datetime('now'), datetime('now'))
+                        """,
+                        (u_id, name, emoji, kind),
+                    )
+                    return int(cur.lastrowid)
+
+                if direction == "out":
+                    category_id = await ensure_category(
+                        db, user_id, kind="expense",
+                        name="Платёж по кредиту" if dtype == "bank" else "Возврат долга",
+                        emoji="💳" if dtype == "bank" else "📤"
+                    )
+                    note = f"Платёж по кредиту: {title}" if dtype == "bank" else f"Возврат долга: {title}"
+                    from app.domain.services.accounting_service import add_expense
+                    await add_expense(db, user_id, amount, req.account_id, category_id, note)
+                else:
+                    category_id = await ensure_category(
+                        db, user_id, kind="income",
+                        name="Мне вернули долг",
+                        emoji="📥"
+                    )
+                    note = f"Мне вернули долг: {title}"
+                    from app.domain.services.accounting_service import add_income
+                    await add_income(db, user_id, amount, req.account_id, category_id, note)
+
         from app.db.repositories.debts_repo import apply_debt_payment
         await apply_debt_payment(
             db, user_id, debt_id, req.payment_amount, req.next_payment_date

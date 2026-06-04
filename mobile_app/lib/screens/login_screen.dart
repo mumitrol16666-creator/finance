@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 import 'dart:math' as math;
@@ -170,6 +171,29 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     }
   }
 
+  Future<void> _pasteFromClipboard() async {
+    try {
+      final ClipboardData? data = await Clipboard.getData(Clipboard.kTextPlain);
+      if (data != null && data.text != null) {
+        final pastedText = data.text!.replaceAll(RegExp(r'\D'), '').trim();
+        if (pastedText.isNotEmpty) {
+          final digits = pastedText.length > 6 ? pastedText.substring(0, 6) : pastedText;
+          setState(() {
+            _codeController.text = digits;
+            _errorMessage = '';
+          });
+          if (digits.length == 6) {
+            _submitCode();
+          }
+        }
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Не удалось получить данные из буфера обмена';
+      });
+    }
+  }
+
   // Modern digital OTP digit grid layout
   Widget _buildOTPInput() {
     return GestureDetector(
@@ -189,6 +213,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                 focusNode: _focusNode,
                 keyboardType: TextInputType.number,
                 maxLength: 6,
+                enableInteractiveSelection: false,
                 onChanged: (val) {
                   setState(() {
                     _errorMessage = '';
@@ -468,7 +493,28 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
           // Digital code grid
           _buildOTPInput(),
           
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
+
+          // Paste from clipboard button
+          Center(
+            child: TextButton.icon(
+              onPressed: isLoading ? null : _pasteFromClipboard,
+              icon: const Icon(Icons.paste_rounded, size: 16, color: AppTheme.secondary),
+              label: const Text(
+                'Вставить скопированное',
+                style: TextStyle(
+                  color: AppTheme.secondary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
 
           // Error display
           if (_errorMessage.isNotEmpty)

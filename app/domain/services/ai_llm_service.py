@@ -330,3 +330,21 @@ async def transcribe_audio_ai(file_path: str) -> str:
         logger.warning("Whisper transcription failed: {}", exc)
         return ""
 
+
+async def chat_with_user_ai(db, user_id: int, text: str) -> str:
+    """Helper to process AI chat messages from the web/mobile API client."""
+    import aiosqlite
+    from app.db.repositories.settings_repo import get_timezone, get_financial_goal
+    from app.domain.services.ai_consultant_service import build_ai_context
+    import re
+
+    tz_name = await get_timezone(db, user_id)
+    goal = await get_financial_goal(db, user_id)
+    context = await build_ai_context(db, user_id, tz_name, "month", goal)
+
+    raw_response = await render_final_ai_question(context, text, chat_history=None)
+    # Strip HTML tags (<b>, <i>, etc.) from the response for the mobile client
+    clean_response = re.sub(r"<[^>]+>", "", raw_response).strip()
+    return clean_response
+
+
