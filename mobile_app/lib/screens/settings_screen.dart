@@ -16,6 +16,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _currency = 'KZT (₸)';
   bool _quietHours = true;
   bool _notifications = true;
+  TimeOfDay _dailyReportTime = const TimeOfDay(hour: 21, minute: 0);
+  TimeOfDay _quietHoursStart = const TimeOfDay(hour: 22, minute: 0);
+  TimeOfDay _quietHoursEnd = const TimeOfDay(hour: 8, minute: 0);
+
+  String _formatTimeOfDay(TimeOfDay time) {
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  Future<void> _selectTime(BuildContext context, TimeOfDay initialTime, ValueChanged<TimeOfDay> onSelected) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: initialTime,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppTheme.primary,
+              onPrimary: Colors.white,
+              surface: AppTheme.surface,
+              onSurface: Colors.white,
+            ),
+            timePickerTheme: TimePickerThemeData(
+              backgroundColor: AppTheme.surface,
+              dialBackgroundColor: AppTheme.surfaceCard,
+              dialHandColor: AppTheme.primary,
+              entryModeIconColor: AppTheme.primary,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      onSelected(picked);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -89,14 +127,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: _notifications,
                         onChanged: (val) => setState(() => _notifications = val),
                       ),
+                      if (_notifications) ...[
+                        const Divider(color: AppTheme.border, height: 1),
+                        _buildTimeTile(
+                          icon: Icons.access_time_rounded,
+                          title: 'Время ежедневного отчета',
+                          time: _dailyReportTime,
+                          onTap: () => _selectTime(
+                            context,
+                            _dailyReportTime,
+                            (time) => setState(() => _dailyReportTime = time),
+                          ),
+                        ),
+                      ],
                       const Divider(color: AppTheme.border, height: 1),
                       // Quiet Hours
                       _buildSwitchTile(
                         icon: Icons.do_not_disturb_on_rounded,
-                        title: 'Режим тишины (22:00 - 08:00)',
+                        title: 'Режим тишины (${_formatTimeOfDay(_quietHoursStart)} - ${_formatTimeOfDay(_quietHoursEnd)})',
                         value: _quietHours,
                         onChanged: (val) => setState(() => _quietHours = val),
                       ),
+                      if (_quietHours) ...[
+                        const Divider(color: AppTheme.border, height: 1),
+                        _buildTimeTile(
+                          icon: Icons.play_arrow_rounded,
+                          title: 'Начало режима тишины',
+                          time: _quietHoursStart,
+                          onTap: () => _selectTime(
+                            context,
+                            _quietHoursStart,
+                            (time) => setState(() => _quietHoursStart = time),
+                          ),
+                        ),
+                        const Divider(color: AppTheme.border, height: 1),
+                        _buildTimeTile(
+                          icon: Icons.stop_rounded,
+                          title: 'Конец режима тишины',
+                          time: _quietHoursEnd,
+                          onTap: () => _selectTime(
+                            context,
+                            _quietHoursEnd,
+                            (time) => setState(() => _quietHoursEnd = time),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -230,6 +305,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTimeTile({
+    required IconData icon,
+    required String title,
+    required TimeOfDay time,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          children: [
+            Icon(icon, color: AppTheme.accentBlue, size: 22),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(title, style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.primary.withOpacity(0.3)),
+              ),
+              child: Text(
+                _formatTimeOfDay(time),
+                style: const TextStyle(
+                  color: AppTheme.primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
