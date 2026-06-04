@@ -33,6 +33,8 @@ class IncomeFlow(StatesGroup):
     note = State()
     confirm = State()
     add_category = State()
+    piggy_suggest = State()
+    piggy_amount = State()
 
 class TransferFlow(StatesGroup):
     amount = State()

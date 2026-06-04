@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:typed_data';
 import '../models/models.dart';
 
 class ChatMessage {
@@ -47,7 +48,7 @@ class AppState extends ChangeNotifier {
   List<ChatMessage> _chatHistory = [];
   List<ChatMessage> get chatHistory => _chatHistory;
 
-  int get totalBalance => _accounts.fold(0, (sum, acc) => sum + acc.balance);
+  int get totalBalance => _accounts.where((acc) => !acc.isSaving).fold(0, (sum, acc) => sum + acc.balance);
   int get monthlyExpenses => _categories.fold(0, (sum, cat) => sum + cat.spentAmount);
 
   List<Debt> _debts = [];
@@ -268,6 +269,7 @@ class AppState extends ChangeNotifier {
     required String categoryName,
     required String categoryEmoji,
     required String accountName,
+    String? toAccountName,
     String? note,
   }) async {
     if (_token == null) return;
@@ -286,6 +288,14 @@ class AppState extends ChangeNotifier {
         throw Exception("Account not found");
       }
 
+      int? toAccountId;
+      if (toAccountName != null) {
+        try {
+          final acc = _accounts.firstWhere((a) => a.name == toAccountName);
+          toAccountId = acc.id;
+        } catch (_) {}
+      }
+
       int? categoryId;
       try {
         final cat = _categories.firstWhere((c) => c.name == categoryName);
@@ -302,6 +312,7 @@ class AppState extends ChangeNotifier {
           'amount': amount,
           'kind': kind,
           'account_id': accountId,
+          'to_account_id': toAccountId,
           'category_id': categoryId,
           'note': note,
         }),
@@ -316,6 +327,26 @@ class AppState extends ChangeNotifier {
 
     _isLoading = false;
     notifyListeners();
+  }
+
+  Future<Uint8List?> exportExcelReport(String period) async {
+    if (_token == null) return null;
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/reports/export?period=$period'),
+        headers: {
+          'Authorization': 'Bearer $_token',
+        },
+      );
+      if (response.statusCode == 200) {
+        return response.bodyBytes;
+      } else {
+        print('Export excel response code: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('Export excel error: $e');
+    }
+    return null;
   }
 
   Future<void> addAccount({

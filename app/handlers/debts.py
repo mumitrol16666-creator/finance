@@ -371,7 +371,7 @@ def _pay_amount_kb(debt: dict):
 def _accounts_kb(accounts, debt_id: int, amount: int):
     kb = InlineKeyboardBuilder()
     for acc in accounts:
-        acc_id, name, balance, _arch = acc
+        acc_id, name, balance, _arch = acc[0], acc[1], acc[2], acc[3]
         kb.button(
             text=f"{name} · {fmt_money(int(balance or 0))}",
             callback_data=f"debt:acc:{debt_id}:{amount}:{acc_id}",
@@ -1154,7 +1154,7 @@ async def debt_pay_amount_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
     amount = int(amount_raw)
     await state.update_data(pay_amount=amount)
 
-    accounts = await list_accounts(db, c.from_user.id)
+    accounts = [a for a in await list_accounts(db, c.from_user.id) if not a[5]]
     if not accounts:
         await state.clear()
         await _edit_debt_screen(c, state, _i18n_t(lang, "DEBT_NEED_ACCOUNT"), debts_menu_kb())
@@ -1200,7 +1200,7 @@ async def debt_pay_amount_custom(m: Message, state: FSMContext, db: aiosqlite.Co
 
     debt = _normalize_row(debt_raw)
 
-    accounts = await list_accounts(db, m.from_user.id)
+    accounts = [a for a in await list_accounts(db, m.from_user.id) if not a[5]]
     if not accounts:
         await _clear_last_debt_screen(m.bot, m.chat.id, state, forget=True)
         await state.clear()
