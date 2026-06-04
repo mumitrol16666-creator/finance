@@ -988,10 +988,33 @@ def _build_data_quality(kind: str, current_metrics: dict, previous_metrics: dict
     }
 
 
-async def build_ai_context(db: aiosqlite.Connection, user_id: int, tz_name: str, kind: str, goal_text: str | None, ref_dt: datetime | None = None) -> dict:
+async def build_ai_context(
+    db: aiosqlite.Connection, 
+    user_id: int, 
+    tz_name: str, 
+    kind: str, 
+    goal_text: str | None, 
+    ref_dt: datetime | None = None,
+    start_dt: datetime | None = None,
+    end_dt: datetime | None = None
+) -> dict:
     meta = build_period_meta(kind, tz_name, now_utc=ref_dt)
-    current_rows = await _fetch_rows(db, user_id, meta.start, meta.end)
-    previous_rows = await _fetch_rows(db, user_id, meta.prev_start, meta.prev_end)
+    
+    if start_dt and end_dt:
+        current_start = start_dt
+        current_end = end_dt
+        # For comparison, shift previous period back by the same duration
+        duration = end_dt - start_dt
+        previous_start = start_dt - duration
+        previous_end = start_dt
+    else:
+        current_start = meta.start
+        current_end = meta.end
+        previous_start = meta.prev_start
+        previous_end = meta.prev_end
+
+    current_rows = await _fetch_rows(db, user_id, current_start, current_end)
+    previous_rows = await _fetch_rows(db, user_id, previous_start, previous_end)
     month_rows = await _fetch_rows(db, user_id, meta.month_start, meta.month_end)
     current = _summarize(current_rows, tz_name)
     previous = _summarize(previous_rows, tz_name)

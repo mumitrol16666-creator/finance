@@ -240,7 +240,12 @@ async def verify_code(req: VerifyRequest):
         return {"token": token, "user_id": user_id, "name": name}
 
 @app.get("/api/dashboard")
-async def get_dashboard(ref_date: Optional[str] = None, user_id: int = Depends(get_current_user)):
+async def get_dashboard(
+    ref_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user_id: int = Depends(get_current_user)
+):
     now = datetime.now(timezone.utc)
     today = now.date()
     if ref_date:
@@ -249,15 +254,36 @@ async def get_dashboard(ref_date: Optional[str] = None, user_id: int = Depends(g
             today = date.fromisoformat(ref_date)
         except Exception:
             pass
+            
+    is_custom_range = False
+    custom_start_dt = None
+    custom_end_dt = None
+    custom_cycle_month_str = None
+    
+    if start_date and end_date:
+        try:
+            from datetime import date
+            s_date = date.fromisoformat(start_date)
+            e_date = date.fromisoformat(end_date)
+            custom_start_dt = datetime(s_date.year, s_date.month, s_date.day, 0, 0, 0, tzinfo=timezone.utc)
+            custom_end_dt = datetime(e_date.year, e_date.month, e_date.day, 0, 0, 0, tzinfo=timezone.utc) + timedelta(days=1)
+            custom_cycle_month_str = f"{s_date.strftime('%d.%m.%y')} - {e_date.strftime('%d.%m.%y')}"
+            is_custom_range = True
+        except Exception:
+            pass
     
     async with get_db() as db:
         from app.domain.services.access_service import get_user_context, get_available_features_from_context
         ctx = await get_user_context(db, user_id)
         available_features = list(get_available_features_from_context(ctx))
 
-        # Get settings cycle start day
-        cycle_start_day = await get_budget_cycle_start_day(db, user_id)
-        start_dt, end_dt, cycle_month_str = get_budget_cycle_bounds(today, cycle_start_day)
+        if is_custom_range:
+            start_dt, end_dt, cycle_month_str = custom_start_dt, custom_end_dt, custom_cycle_month_str
+        else:
+            # Get settings cycle start day
+            cycle_start_day = await get_budget_cycle_start_day(db, user_id)
+            start_dt, end_dt, cycle_month_str = get_budget_cycle_bounds(today, cycle_start_day)
+            
         start_str = start_dt.isoformat()
         end_str = end_dt.isoformat()
 
@@ -635,7 +661,12 @@ async def get_analytics(user_id: int = Depends(get_current_user)):
         }
 
 @app.post("/api/analytics/ai-audit")
-async def post_analytics_audit(ref_date: Optional[str] = None, user_id: int = Depends(get_current_user)):
+async def post_analytics_audit(
+    ref_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user_id: int = Depends(get_current_user)
+):
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "ai"):
             raise HTTPException(status_code=403, detail="ИИ-аудит доступен только в Premium версии")
@@ -657,7 +688,24 @@ async def post_analytics_audit(ref_date: Optional[str] = None, user_id: int = De
                 except Exception:
                     pass
             
-            context = await build_ai_context(db, user_id, tz_name, "month", goal, ref_dt=ref_dt)
+            custom_start_dt = None
+            custom_end_dt = None
+            if start_date and end_date:
+                try:
+                    from datetime import date, datetime
+                    s_date = date.fromisoformat(start_date)
+                    e_date = date.fromisoformat(end_date)
+                    custom_start_dt = datetime(s_date.year, s_date.month, s_date.day, 0, 0, 0, tzinfo=timezone.utc)
+                    custom_end_dt = datetime(e_date.year, e_date.month, e_date.day, 0, 0, 0, tzinfo=timezone.utc) + timedelta(days=1)
+                except Exception:
+                    pass
+                    
+            context = await build_ai_context(
+                db, user_id, tz_name, "month", goal, 
+                ref_dt=ref_dt, 
+                start_dt=custom_start_dt, 
+                end_dt=custom_end_dt
+            )
             
             audit_prompt = (
                 "Проанализируй мои финансовые показатели за текущий месяц. "
