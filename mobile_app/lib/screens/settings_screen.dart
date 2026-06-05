@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/theme.dart';
-import 'categories_screen.dart';
 import '../providers/app_state.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -31,22 +30,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       initialTime: initialTime,
       builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.dark(
-              primary: AppTheme.primary,
-              onPrimary: Colors.white,
-              surface: AppTheme.surface,
-              onSurface: Colors.white,
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              colorScheme: const ColorScheme.dark(
+                primary: AppTheme.primary,
+                onPrimary: Colors.white,
+                surface: AppTheme.surface,
+                onSurface: Colors.white,
+              ),
+              timePickerTheme: TimePickerThemeData(
+                backgroundColor: AppTheme.surface,
+                dialBackgroundColor: AppTheme.surfaceCard,
+                dialHandColor: AppTheme.primary,
+                entryModeIconColor: AppTheme.primary,
+              ),
             ),
-            timePickerTheme: TimePickerThemeData(
-              backgroundColor: AppTheme.surface,
-              dialBackgroundColor: AppTheme.surfaceCard,
-              dialHandColor: AppTheme.primary,
-              entryModeIconColor: AppTheme.primary,
-            ),
+            child: child!,
           ),
-          child: child!,
         );
       },
     );
@@ -194,38 +196,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // 3. Category Directories
-                _buildSectionHeader('КАТЕГОРИИ'),
-                const SizedBox(height: 10),
+                const SizedBox(height: 20),
 
-                GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const CategoriesScreen()),
-                    );
-                  },
-                  child: Container(
-                    decoration: AppTheme.glassCardDecoration(radius: 16),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                    child: Row(
-                      children: const [
-                        Icon(Icons.category_rounded, color: AppTheme.primary),
-                        SizedBox(width: 14),
-                        Expanded(
-                          child: Text(
-                            'Настроить категории трат',
-                            style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-                          ),
-                        ),
-                        Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 36),
-
-                // 4. Wipe account data
+                // 3. Wipe account data
                 ElevatedButton.icon(
                   onPressed: () {
                     _showDeleteWarningDialog(context);

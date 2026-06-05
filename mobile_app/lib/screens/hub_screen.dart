@@ -6,11 +6,33 @@ import 'accounts_screen.dart';
 import 'debts_screen.dart';
 import 'recurring_screen.dart';
 import 'budgets_screen.dart';
-import 'settings_screen.dart';
 import 'planned_screen.dart';
+import 'categories_screen.dart';
 
 class HubScreen extends StatelessWidget {
   const HubScreen({super.key});
+
+  String _formatExpiryDate(String? dateStr) {
+    if (dateStr == null) return 'Подписка активна';
+    DateTime? dt = DateTime.tryParse(dateStr);
+    if (dt == null) {
+      final parts = dateStr.split(' ')[0].split('-');
+      if (parts.length == 3) {
+        final y = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        final d = int.tryParse(parts[2]);
+        if (y != null && m != null && d != null) {
+          dt = DateTime(y, m, d);
+        }
+      }
+    }
+    if (dt == null) return 'Подписка активна до $dateStr';
+    final months = [
+      'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+    ];
+    return 'Подписка активна до ${dt.day} ${months[dt.month - 1]} ${dt.year}г.';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +56,7 @@ class HubScreen extends StatelessWidget {
         'feature': 'debts',
       },
       {
-        'title': 'Регулярные',
+        'title': 'Автоплатежи',
         'subtitle': 'Шаблоны автоплатежей',
         'icon': Icons.loop_rounded,
         'color': AppTheme.primary,
@@ -42,14 +64,14 @@ class HubScreen extends StatelessWidget {
         'feature': 'recurring',
       },
       {
-        'title': 'Бюджеты',
-        'subtitle': 'Лимиты категорий',
+        'title': 'Категории',
+        'subtitle': 'Лимиты по категориям',
         'icon': Icons.pie_chart_rounded,
         'color': AppTheme.income,
         'target': const BudgetsScreen(),
       },
       {
-        'title': 'Запланировано',
+        'title': 'Планы трат',
         'subtitle': 'Ожидаемые транзакции',
         'icon': Icons.schedule_rounded,
         'color': Colors.orangeAccent,
@@ -57,11 +79,11 @@ class HubScreen extends StatelessWidget {
         'feature': 'planned',
       },
       {
-        'title': 'Настройки',
-        'subtitle': 'Язык, валюта, тишина',
-        'icon': Icons.settings_rounded,
-        'color': AppTheme.textSecondary,
-        'target': const SettingsScreen(),
+        'title': 'Категории расходов',
+        'subtitle': 'Управление категориями',
+        'icon': Icons.category_rounded,
+        'color': Colors.tealAccent,
+        'target': const CategoriesScreen(),
       },
     ];
 
@@ -107,9 +129,7 @@ class HubScreen extends StatelessWidget {
                           const SizedBox(height: 2),
                           Text(
                             appState.isPremium
-                                ? (appState.premiumExpirationDate != null
-                                    ? 'Подписка активна до ${appState.premiumExpirationDate}'
-                                    : 'Подписка активна')
+                                ? _formatExpiryDate(appState.premiumExpirationDate)
                                 : 'Активируйте Premium в боте (/upgrade)',
                             style: TextStyle(
                               color: appState.isPremium ? AppTheme.income : AppTheme.textSecondary,
