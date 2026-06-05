@@ -109,21 +109,63 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
 
             // Chat Messages List
             Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.all(20),
-                itemCount: history.length + (isLoading ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (index == history.length) {
-                    // Typing loader
-                    return _buildLoadingBubble();
-                  }
-
-                  final msg = history[index];
-                  return _buildChatBubble(msg);
-                },
-              ),
+              child: history.isEmpty
+                  ? Center(
+                      child: SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(),
+                        child: Padding(
+                          padding: const EdgeInsets.all(24.0),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: AppTheme.primary.withOpacity(0.1),
+                                ),
+                                child: const Icon(
+                                  Icons.chat_bubble_outline_rounded,
+                                  color: AppTheme.primary,
+                                  size: 48,
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                              const Text(
+                                'С чего начать?',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.textPrimary),
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Спросите меня о чем угодно или выберите один из частых запросов ниже:',
+                                style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 24),
+                              
+                              _buildPromptChip('Сколько я потратил на еду в этом месяце?'),
+                              const SizedBox(height: 12),
+                              _buildPromptChip('Сделай аудит моих подписок'),
+                              const SizedBox(height: 12),
+                              _buildPromptChip('Какая у меня чистая экономия?'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.all(20),
+                      itemCount: history.length + (isLoading ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index == history.length) {
+                          return _buildLoadingBubble();
+                        }
+                        final msg = history[index];
+                        return _buildChatBubble(msg);
+                      },
+                    ),
             ),
 
             // Input Send Row
@@ -259,6 +301,32 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
         child: const SpinKitThreeBounce(
           color: AppTheme.secondary,
           size: 18,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPromptChip(String prompt) {
+    return GestureDetector(
+      onTap: () {
+        _messageController.text = prompt;
+        FocusScope.of(context).requestFocus(_focusNode);
+      },
+      child: GlassCard(
+        radius: 12,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        color: AppTheme.surfaceCard.withOpacity(0.4),
+        child: Row(
+          children: [
+            const Icon(Icons.arrow_right_alt_rounded, color: AppTheme.primary, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                prompt,
+                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13.5, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
         ),
       ),
     );

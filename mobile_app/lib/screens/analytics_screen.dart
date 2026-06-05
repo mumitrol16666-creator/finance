@@ -356,11 +356,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 // Top Tab Selector Row
                 Row(
                   children: [
-                    _buildTabButton(0, 'РАСХОДЫ'),
+                    _buildTabButton(0, 'Расходы'),
                     const SizedBox(width: 8),
-                    _buildTabButton(1, 'ДОХОДЫ'),
+                    _buildTabButton(1, 'Доходы'),
                     const SizedBox(width: 8),
-                    _buildTabButton(2, 'КОПИЛКИ'),
+                    _buildTabButton(2, 'Копилки'),
                   ],
                 ).animate().fade(delay: 50.ms).slideY(begin: -0.1),
                 const SizedBox(height: 20),
@@ -376,7 +376,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         children: [
                           Row(
                             children: [
-                              const Text('Период списания:', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                              const Text('Период:', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                               if (!isCurrentPeriod || _isCustomRangeActive) ...[
                                 const SizedBox(width: 6),
                                 GestureDetector(
@@ -587,11 +587,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   // Timeframe Selector Row
                   Row(
                     children: [
-                      _buildTimeframeTab(0, 'НЕДЕЛЯ'),
+                      _buildTimeframeTab(0, 'Неделя'),
                       const SizedBox(width: 8),
-                      _buildTimeframeTab(1, 'МЕСЯЦ'),
+                      _buildTimeframeTab(1, 'Месяц'),
                       const SizedBox(width: 8),
-                      _buildTimeframeTab(2, 'ГОД'),
+                      _buildTimeframeTab(2, 'Год'),
                     ],
                   ).animate().fade(delay: 200.ms),
                   const SizedBox(height: 20),
@@ -607,7 +607,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
-                              _showTrendLine ? 'Трендовый график' : 'Долевое распределение',
+                              _showTrendLine ? 'Трендовый график' : 'Структура расходов',
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white70),
                             ),
                             // Toggle Chart Type

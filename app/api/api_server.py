@@ -7,6 +7,7 @@ import hashlib
 import hmac
 from datetime import datetime, timezone, date, timedelta
 import calendar
+from contextlib import asynccontextmanager
 
 from app.config.settings import settings
 from app.db.connection import get_db
@@ -16,7 +17,16 @@ from app.db.repositories.categories_repo import list_categories
 from app.db.repositories.tx_repo import create_tx, create_transfer
 from app.domain.services.access_service import can_use_feature
 
-app = FastAPI(title="Finance Tracker API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Perform database typo migrations
+    async with get_db() as db:
+        await db.execute("UPDATE accounts SET name = 'Копилка' WHERE TRIM(name) = 'Копила'")
+        await db.execute("UPDATE transactions SET note = 'Копилка' WHERE TRIM(note) = 'Копила'")
+        await db.commit()
+    yield
+
+app = FastAPI(title="Finance Tracker API", lifespan=lifespan)
 
 import time
 

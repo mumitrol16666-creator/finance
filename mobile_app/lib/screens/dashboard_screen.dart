@@ -8,6 +8,7 @@ import '../models/models.dart';
 import 'categories_screen.dart';
 import 'all_transactions_screen.dart';
 import 'accounts_screen.dart';
+import 'settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -24,6 +25,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return formatter.format(amountMinor);
   }
 
+  String _getRussianPlural(int number, String one, String two, String many) {
+    int n = number % 100;
+    int n1 = n % 10;
+    if (n > 10 && n < 20) return many;
+    if (n1 > 1 && n1 < 5) return two;
+    if (n1 == 1) return one;
+    return many;
+  }
+
   void _showPremiumStatusDialog(BuildContext context, AppState appState) {
     showDialog(
       context: context,
@@ -32,10 +42,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
         DateTime? expDate = appState.premiumExpirationDate != null
             ? DateTime.tryParse(appState.premiumExpirationDate!)
             : null;
+        if (expDate == null && appState.premiumExpirationDate != null) {
+          final parts = appState.premiumExpirationDate!.split(' ')[0].split('-');
+          if (parts.length == 3) {
+            final y = int.tryParse(parts[0]);
+            final m = int.tryParse(parts[1]);
+            final d = int.tryParse(parts[2]);
+            if (y != null && m != null && d != null) {
+              expDate = DateTime(y, m, d);
+            }
+          }
+        }
         
         String expiryText = '';
         if (expDate != null) {
-          final formattedDate = DateFormat('dd.MM.yyyy').format(expDate);
+          final months = [
+            'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+            'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+          ];
+          final formattedDate = '${expDate.day} ${months[expDate.month - 1]} ${expDate.year}г.';
           final daysLeft = expDate.difference(DateTime.now()).inDays;
           if (daysLeft > 0) {
             expiryText = '\n\nПодписка активна до: $formattedDate\nОсталось дней: $daysLeft';
@@ -771,11 +796,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ],
                     ),
                   ),
-                  IconButton(
+                   IconButton(
                     onPressed: () {
-                      appState.logout();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                      );
                     },
-                    icon: const Icon(Icons.logout_rounded, color: AppTheme.textSecondary),
+                    icon: const Icon(Icons.settings_rounded, color: AppTheme.textSecondary),
                   )
                 ],
               ).animate().fade(duration: 400.ms).slideY(begin: -0.2),
@@ -875,14 +903,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           child: Container(
                             color: Colors.transparent,
                             child: _buildMiniMetric(
-                              label: 'РАСХОДЫ В ПЕРИОДЕ',
+                              label: 'Расходы за период',
                               value: _formatKzt(monthlyExp),
                               color: AppTheme.expense,
                             ),
                           ),
                         ),
                         _buildMiniMetric(
-                          label: 'СЧЕТОВ АКТИВНО',
+                          label: 'Активные счета',
                           value: appState.accounts.length.toString(),
                           color: AppTheme.accentBlue,
                         ),
@@ -942,8 +970,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 8),
                     Center(
                       child: Text(
-                        'Активных дней в периоде: ${appState.activeDaysCount} из ${appState.totalCycleDays} (Серия: ${appState.currentStreak} дн., Рекорд: ${appState.maxStreak} дн.)',
+                        appState.currentStreak == 0
+                            ? 'Начните заполнять трекер сегодня! Ваш рекорд — ${appState.maxStreak} ${_getRussianPlural(appState.maxStreak, 'день', 'дня', 'дней')}.'
+                            : 'Вы заполняете трекер ${appState.currentStreak} ${_getRussianPlural(appState.currentStreak, 'день', 'дня', 'дней')} подряд. Ваш рекорд — ${appState.maxStreak} ${_getRussianPlural(appState.maxStreak, 'день', 'дня', 'дней')}!',
                         style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                        textAlign: TextAlign.center,
                       ),
                     ),
                   ],

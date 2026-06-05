@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
-import '../models/models.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 class PlannedScreen extends StatefulWidget {
@@ -211,7 +210,7 @@ class _PlannedScreenState extends State<PlannedScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Запланировано', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Планы трат', style: TextStyle(fontWeight: FontWeight.bold)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: AppTheme.textPrimary, size: 20),
           onPressed: () => Navigator.pop(context),
