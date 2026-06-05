@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 class AddTransactionScreen extends StatefulWidget {
   const AddTransactionScreen({super.key});
@@ -19,6 +20,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   String? _selectedToAccount;
   final TextEditingController _noteController = TextEditingController();
   final FocusNode _noteFocusNode = FocusNode();
+
+  int? _selectedPlannedId;
+  int? _selectedDebtId;
+  String? _linkedItemTitle;
 
   // Auto-save logic fields
   bool _autoSave = false;
@@ -85,7 +90,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       return;
     }
 
-    if (_kind != 'transfer' && _selectedCategory == null) {
+    if (_selectedDebtId == null && _kind != 'transfer' && _selectedCategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Выберите категорию')),
       );
@@ -101,7 +106,14 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
     final appState = Provider.of<AppState>(context, listen: false);
 
-    if (_kind == 'transfer') {
+    if (_selectedDebtId != null) {
+      final account = appState.accounts.firstWhere((a) => a.name == _selectedAccount);
+      await appState.payDebt(
+        _selectedDebtId!,
+        amount: amountInt,
+        accountId: account.id,
+      );
+    } else if (_kind == 'transfer') {
       if (!appState.isPremium) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -161,6 +173,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           );
         }
       }
+
+      if (_selectedPlannedId != null) {
+        await appState.completePlanned(_selectedPlannedId!);
+      }
     }
 
     // Reset state & show success
@@ -168,6 +184,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       _amountStr = '0';
       _noteController.clear();
       _autoSave = false;
+      _selectedPlannedId = null;
+      _selectedDebtId = null;
+      _linkedItemTitle = null;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -180,6 +199,133 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
+  }
+
+  void _showAddCategoryDialog(BuildContext context) {
+    final nameController = TextEditingController();
+    String selectedEmoji = '📦';
+    final popularEmojis = ['📦', '💸', '🍔', '🚗', '🛍️', '🍿', '🏠', '📈', '💰', '🎁', '🏥', '✈️'];
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.surfaceCard,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.border),
+              ),
+              title: const Text('Новая категория', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Название категории',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Выберите иконку (Emoji):', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: popularEmojis.map((emoji) {
+                        final isSelected = selectedEmoji == emoji;
+                        return GestureDetector(
+                          onTap: () => setDialogState(() => selectedEmoji = emoji),
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: isSelected ? AppTheme.primary.withOpacity(0.2) : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: isSelected ? AppTheme.primary : AppTheme.border.withOpacity(0.5)),
+                            ),
+                            child: Text(emoji, style: const TextStyle(fontSize: 18)),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text('Свой Emoji: ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 40,
+                          child: TextField(
+                            maxLength: 1,
+                            style: const TextStyle(color: Colors.white, fontSize: 18),
+                            decoration: const InputDecoration(
+                              counterText: '',
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(vertical: 4),
+                            ),
+                            onChanged: (val) {
+                              if (val.trim().isNotEmpty) {
+                                setDialogState(() => selectedEmoji = val.trim());
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final name = nameController.text.trim();
+                    if (name.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Введите название категории')),
+                      );
+                      return;
+                    }
+                    Navigator.pop(context);
+
+                    try {
+                      final appState = Provider.of<AppState>(context, listen: false);
+                      await appState.addCategory(
+                        name: name,
+                        emoji: selectedEmoji,
+                        kind: _kind,
+                      );
+                      setState(() {
+                        _selectedCategory = name;
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Категория "$name" успешно создана!'), backgroundColor: AppTheme.income),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Ошибка при создании категории: $e'), backgroundColor: AppTheme.expense),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+                  child: const Text('Создать', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -442,150 +588,205 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     const SizedBox(height: 16),
 
                     // Horizontal scroll of categories
-                    const Text(
-                      'Категория',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Категория',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _showAddCategoryDialog(context),
+                          icon: const Icon(Icons.add_circle_outline_rounded, size: 16, color: AppTheme.primary),
+                          label: const Text(
+                            'Добавить',
+                            style: TextStyle(fontSize: 12, color: AppTheme.primary, fontWeight: FontWeight.bold),
+                          ),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 6),
-                    SizedBox(
-                      height: 120, // Taller to fit all details
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        physics: const BouncingScrollPhysics(),
-                        itemCount: filteredCategories.length,
-                        itemBuilder: (context, index) {
-                          final cat = filteredCategories[index];
-                          final isSelected = _selectedCategory == cat.name;
-                          
-                          // Parse currently typed amount preview
-                          final currentTypedAmount = int.tryParse(_amountStr) ?? 0;
-                          final limit = cat.limitAmount;
-                          final spent = cat.spentAmount;
-                          
-                          // Check if current type is expense (limits only make sense for expenses)
-                          final showLimitInfo = limit != null && _kind == 'expense';
-                          
-                          // Calculate warning text and progress
-                          String? warningText;
-                          double progressVal = 0.0;
-                          
-                          if (showLimitInfo && limit > 0) {
-                            final totalPredicted = spent + (isSelected ? currentTypedAmount : 0);
-                            progressVal = totalPredicted / limit;
-                            if (progressVal > 1.0) {
-                              warningText = '⚠️ Превысит лимит!';
-                            } else if (progressVal > 0.8) {
-                              warningText = '⚠️ Близко к лимиту';
-                            }
-                          }
-                          
-                          return GestureDetector(
-                            onTap: () => setState(() => _selectedCategory = cat.name),
-                            child: Container(
-                              width: 170,
-                              margin: const EdgeInsets.only(right: 10),
-                              child: GlassCard(
-                                padding: const EdgeInsets.all(10),
-                                radius: 12,
-                                color: isSelected 
-                                    ? AppTheme.primary.withOpacity(0.12)
-                                    : Colors.white.withOpacity(0.02),
-                                borderOpacity: isSelected ? 0.25 : 0.06,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    // Emoji + Name
-                                    Row(
-                                      children: [
-                                        Text(cat.emoji, style: const TextStyle(fontSize: 16)),
-                                        const SizedBox(width: 6),
-                                        Expanded(
-                                          child: Text(
-                                            cat.name,
-                                            style: TextStyle(
-                                              color: isSelected ? Colors.white : AppTheme.textPrimary,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 12,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    
-                                    // Spent / Limit status
-                                    Column(
+                    Stack(
+                      alignment: Alignment.centerRight,
+                      children: [
+                        SizedBox(
+                          height: 120, // Taller to fit all details
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            physics: const BouncingScrollPhysics(),
+                            itemCount: filteredCategories.length,
+                            itemBuilder: (context, index) {
+                              final cat = filteredCategories[index];
+                              final isSelected = _selectedCategory == cat.name;
+                              
+                              // Parse currently typed amount preview
+                              final currentTypedAmount = int.tryParse(_amountStr) ?? 0;
+                              final limit = cat.limitAmount;
+                              final spent = cat.spentAmount;
+                              
+                              // Check if current type is expense (limits only make sense for expenses)
+                              final showLimitInfo = limit != null && _kind == 'expense';
+                              
+                              // Calculate warning text and progress
+                              String? warningText;
+                              double progressVal = 0.0;
+                              
+                              if (showLimitInfo && limit > 0) {
+                                final totalPredicted = spent + (isSelected ? currentTypedAmount : 0);
+                                progressVal = totalPredicted / limit;
+                                if (progressVal >= 1.0) {
+                                  warningText = '⚠️ Превысит лимит!';
+                                } else if (progressVal >= cat.warnThreshold) {
+                                  warningText = '⚠️ Близко к лимиту';
+                                }
+                              }
+                              
+                              return GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _selectedCategory = cat.name;
+                                    if (cat.defaultAccountId != null && cat.defaultAccountId! > 0) {
+                                      final matchAcc = appState.accounts.where((a) => a.id == cat.defaultAccountId);
+                                      if (matchAcc.isNotEmpty) {
+                                        _selectedAccount = matchAcc.first.name;
+                                      }
+                                    }
+                                  });
+                                },
+                                child: Container(
+                                  width: 170,
+                                  margin: const EdgeInsets.only(right: 10),
+                                  child: GlassCard(
+                                    padding: const EdgeInsets.all(10),
+                                    radius: 12,
+                                    color: isSelected 
+                                        ? AppTheme.primary.withOpacity(0.12)
+                                        : Colors.white.withOpacity(0.02),
+                                    borderOpacity: isSelected ? 0.25 : 0.06,
+                                    child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Text(
-                                          limit != null && limit > 0
-                                              ? 'Лимит: ${_formatKzt(limit)}'
-                                              : 'Без лимита',
-                                          style: const TextStyle(
-                                            color: AppTheme.textSecondary,
-                                            fontSize: 10,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          currentTypedAmount > 0 && isSelected && _kind == 'expense'
-                                              ? '${_formatKzt(spent)} + ${_formatKzt(currentTypedAmount)}'
-                                              : 'Потрачено: ${_formatKzt(spent)}',
-                                          style: TextStyle(
-                                            color: isSelected ? Colors.white70 : AppTheme.textSecondary,
-                                            fontSize: 10,
-                                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ),
-                                    
-                                    // Progress bar & Warning text
-                                    Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        if (showLimitInfo) ...[
-                                          const SizedBox(height: 2),
-                                          ClipRRect(
-                                            borderRadius: BorderRadius.circular(4),
-                                            child: LinearProgressIndicator(
-                                              value: progressVal.clamp(0.0, 1.0),
-                                              backgroundColor: Colors.white10,
-                                              valueColor: AlwaysStoppedAnimation<Color>(
-                                                progressVal > 1.0 
-                                                    ? AppTheme.expense 
-                                                    : (progressVal > 0.8 ? Colors.orange : AppTheme.income)
+                                        // Emoji + Name
+                                        Row(
+                                          children: [
+                                            Text(cat.emoji, style: const TextStyle(fontSize: 16)),
+                                            const SizedBox(width: 6),
+                                            Expanded(
+                                              child: Text(
+                                                cat.name,
+                                                style: TextStyle(
+                                                  color: isSelected ? Colors.white : AppTheme.textPrimary,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 12,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                               ),
-                                              minHeight: 4,
                                             ),
-                                          ),
-                                        ],
-                                        if (warningText != null && isSelected) ...[
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            warningText,
-                                            style: TextStyle(
-                                              color: progressVal > 1.0 ? AppTheme.expense : Colors.orange,
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.bold,
+                                          ],
+                                        ),
+                                        
+                                        // Spent / Limit status
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              limit != null && limit > 0
+                                                  ? 'Лимит: ${_formatKzt(limit)}'
+                                                  : 'Без лимита',
+                                              style: const TextStyle(
+                                                color: AppTheme.textSecondary,
+                                                fontSize: 10,
+                                              ),
                                             ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ],
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              currentTypedAmount > 0 && isSelected && _kind == 'expense'
+                                                  ? '${_formatKzt(spent)} + ${_formatKzt(currentTypedAmount)}'
+                                                  : 'Потрачено: ${_formatKzt(spent)}',
+                                              style: TextStyle(
+                                                color: isSelected ? Colors.white70 : AppTheme.textSecondary,
+                                                fontSize: 10,
+                                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                        
+                                        // Progress bar & Warning text
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            if (showLimitInfo) ...[
+                                              const SizedBox(height: 2),
+                                              ClipRRect(
+                                                borderRadius: BorderRadius.circular(4),
+                                                child: LinearProgressIndicator(
+                                                  value: progressVal.clamp(0.0, 1.0),
+                                                  backgroundColor: Colors.white10,
+                                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                                    progressVal >= 1.0 
+                                                        ? AppTheme.expense 
+                                                        : (progressVal >= cat.warnThreshold ? Colors.amber : AppTheme.income)
+                                                  ),
+                                                  minHeight: 4,
+                                                ),
+                                              ),
+                                            ],
+                                            if (warningText != null && isSelected) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                warningText,
+                                                style: TextStyle(
+                                                  color: progressVal >= 1.0 ? AppTheme.expense : Colors.orange,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ],
+                                          ],
+                                        ),
                                       ],
                                     ),
-                                  ],
+                                  ),
                                 ),
-                              ),
+                              );
+                            },
+                          ),
+                        ),
+                        if (filteredCategories.length > 2)
+                          Positioned(
+                            right: 4,
+                            child: IgnorePointer(
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black45,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white10),
+                                ),
+                                child: const Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: AppTheme.primary,
+                                  size: 20,
+                                ),
+                              )
+                              .animate(onPlay: (controller) => controller.repeat(reverse: true))
+                              .slideX(begin: 0.0, end: 0.2, duration: 800.ms)
+                              .fade(begin: 0.5, end: 1.0),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 16),
                   ],
@@ -678,6 +879,225 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                           ),
                   ),
                   const SizedBox(height: 16),
+
+                  // Linked status chip
+                  if (_linkedItemTitle != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppTheme.primary.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.link_rounded, color: AppTheme.primary, size: 18),
+                              const SizedBox(width: 8),
+                              Text(
+                                _linkedItemTitle!,
+                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedPlannedId = null;
+                                _selectedDebtId = null;
+                                _linkedItemTitle = null;
+                                _noteController.clear();
+                              });
+                            },
+                            child: const Icon(Icons.close_rounded, color: AppTheme.textSecondary, size: 18),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  if (_kind == 'expense') ...[
+                    // Planned payments
+                    if (appState.plannedEvents.where((p) => p.kind == 'expense' && p.status != 'done').isNotEmpty) ...[
+                      const Text(
+                        '📅 Ближайшие планируемые платежи',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 70,
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: appState.plannedEvents.where((p) => p.kind == 'expense' && p.status != 'done').length,
+                          itemBuilder: (context, index) {
+                            final planned = appState.plannedEvents.where((p) => p.kind == 'expense' && p.status != 'done').toList()[index];
+                            final isLinked = _selectedPlannedId == planned.id;
+                            
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _amountStr = planned.amount.toString();
+                                  _selectedPlannedId = planned.id;
+                                  _selectedDebtId = null;
+                                  _linkedItemTitle = 'План: ${planned.title}';
+                                  _noteController.text = planned.title;
+                                  
+                                  // Auto match category
+                                  final match = appState.categories.where((c) => c.emoji == planned.categoryEmoji);
+                                  if (match.isNotEmpty) {
+                                    _selectedCategory = match.first.name;
+                                    
+                                    // Auto match account if defined
+                                    final cat = match.first;
+                                    if (cat.defaultAccountId != null && cat.defaultAccountId! > 0) {
+                                      final matchAcc = appState.accounts.where((a) => a.id == cat.defaultAccountId);
+                                      if (matchAcc.isNotEmpty) {
+                                        _selectedAccount = matchAcc.first.name;
+                                      }
+                                    }
+                                  }
+                                });
+                              },
+                              child: Container(
+                                width: 160,
+                                margin: const EdgeInsets.only(right: 8),
+                                child: GlassCard(
+                                  radius: 10,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  color: isLinked ? AppTheme.primary.withOpacity(0.15) : Colors.white.withOpacity(0.02),
+                                  borderOpacity: isLinked ? 0.25 : 0.05,
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        planned.title,
+                                        style: TextStyle(
+                                          color: isLinked ? Colors.white : AppTheme.textPrimary,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(
+                                            '${planned.amount} ₸',
+                                            style: const TextStyle(color: AppTheme.expense, fontSize: 10, fontWeight: FontWeight.bold),
+                                          ),
+                                          Text(
+                                            planned.categoryEmoji,
+                                            style: const TextStyle(fontSize: 12),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // Active debts
+                    if (appState.debts.where((d) => d.direction == 'out' && d.status == 'active').isNotEmpty) ...[
+                      const Text(
+                        '💳 Активные долги и кредиты (к выплате)',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 70,
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: appState.debts.where((d) => d.direction == 'out' && d.status == 'active').length,
+                          itemBuilder: (context, index) {
+                            final debt = appState.debts.where((d) => d.direction == 'out' && d.status == 'active').toList()[index];
+                            final isLinked = _selectedDebtId == debt.id;
+                            final nextPaymentText = debt.nextPaymentDate != null 
+                              ? DateFormat('dd.MM').format(DateTime.parse(debt.nextPaymentDate!))
+                              : null;
+                            
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _amountStr = debt.paymentAmount > 0 ? debt.paymentAmount.toString() : debt.remainingAmount.toString();
+                                  _selectedPlannedId = null;
+                                  _selectedDebtId = debt.id;
+                                  _linkedItemTitle = 'Долг: ${debt.title}';
+                                  _noteController.text = debt.title;
+                                  
+                                  // Find first matching category for debt payment
+                                  final match = appState.categories.where((c) => c.name.toLowerCase().contains('долг') || c.name.toLowerCase().contains('кредит') || c.emoji == '💳');
+                                  if (match.isNotEmpty) {
+                                    _selectedCategory = match.first.name;
+                                    final cat = match.first;
+                                    if (cat.defaultAccountId != null && cat.defaultAccountId! > 0) {
+                                      final matchAcc = appState.accounts.where((a) => a.id == cat.defaultAccountId);
+                                      if (matchAcc.isNotEmpty) {
+                                        _selectedAccount = matchAcc.first.name;
+                                      }
+                                    }
+                                  }
+                                });
+                              },
+                              child: Container(
+                                width: 170,
+                                margin: const EdgeInsets.only(right: 8),
+                                child: GlassCard(
+                                  radius: 10,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  color: isLinked ? AppTheme.primary.withOpacity(0.15) : Colors.white.withOpacity(0.02),
+                                  borderOpacity: isLinked ? 0.25 : 0.05,
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        debt.title,
+                                        style: TextStyle(
+                                          color: isLinked ? Colors.white : AppTheme.textPrimary,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(
+                                            '${debt.paymentAmount > 0 ? debt.paymentAmount : debt.remainingAmount} ₸',
+                                            style: const TextStyle(color: AppTheme.expense, fontSize: 10, fontWeight: FontWeight.bold),
+                                          ),
+                                          if (nextPaymentText != null)
+                                            Text(
+                                              'до $nextPaymentText',
+                                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9),
+                                            ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                  ],
 
                   // Auto-save settings shown only for income operations if savings accounts exist
                   if (_kind == 'income' && savingsAccounts.isNotEmpty) ...[

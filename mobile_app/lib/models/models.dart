@@ -39,6 +39,9 @@ class Category {
   final int? limitAmount;
   final int spentAmount;
   final String kind; // 'expense' or 'income'
+  final int? defaultAccountId;
+  final bool excludeFromAnalytics;
+  final double warnThreshold;
 
   Category({
     required this.id,
@@ -47,6 +50,9 @@ class Category {
     this.limitAmount,
     required this.spentAmount,
     this.kind = 'expense',
+    this.defaultAccountId,
+    this.excludeFromAnalytics = false,
+    this.warnThreshold = 0.70,
   });
 
   factory Category.fromJson(Map<String, dynamic> json) {
@@ -57,6 +63,9 @@ class Category {
       limitAmount: json['limitAmount'] as int? ?? json['limit_amount'] as int?,
       spentAmount: json['spentAmount'] as int? ?? json['spent_amount'] as int? ?? 0,
       kind: json['kind'] as String? ?? 'expense',
+      defaultAccountId: json['defaultAccountId'] as int? ?? json['default_account_id'] as int?,
+      excludeFromAnalytics: (json['excludeFromAnalytics'] == true || json['exclude_from_analytics'] == true || json['excludeFromAnalytics'] == 1 || json['exclude_from_analytics'] == 1),
+      warnThreshold: (json['warnThreshold'] as num? ?? json['warn_threshold'] as num? ?? 0.70).toDouble(),
     );
   }
 
@@ -67,6 +76,9 @@ class Category {
     'limit_amount': limitAmount,
     'spent_amount': spentAmount,
     'kind': kind,
+    'default_account_id': defaultAccountId,
+    'exclude_from_analytics': excludeFromAnalytics ? 1 : 0,
+    'warn_threshold': warnThreshold,
   };
 }
 

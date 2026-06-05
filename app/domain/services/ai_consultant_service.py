@@ -161,6 +161,7 @@ async def _fetch_rows(db: aiosqlite.Connection, user_id: int, start: datetime, e
         FROM transactions t
         LEFT JOIN categories c ON c.id = t.category_id
         WHERE t.user_id = ? AND t.ts >= ? AND t.ts < ? AND t.deleted_at IS NULL
+          AND (c.exclude_from_analytics IS NULL OR c.exclude_from_analytics = 0)
         ORDER BY t.ts ASC, t.id ASC
         """,
         (user_id, _iso(start), _iso(end)),
@@ -175,6 +176,7 @@ async def _fetch_expense_category_sums(db: aiosqlite.Connection, user_id: int, s
         FROM transactions t
         LEFT JOIN categories c ON c.id = t.category_id
         WHERE t.user_id = ? AND t.type = 'expense' AND t.ts >= ? AND t.ts < ? AND t.deleted_at IS NULL
+          AND (c.exclude_from_analytics IS NULL OR c.exclude_from_analytics = 0)
         GROUP BY COALESCE(c.name, 'Без категории')
         ORDER BY total DESC
         """,

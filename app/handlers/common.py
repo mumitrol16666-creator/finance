@@ -664,6 +664,7 @@ def _invoice_description(lang: str) -> str:
     return f"Полный доступ ко всем разделам бота на {days} дней."
 
 
+@router.message(Command("upgrade"))
 @router.message(lambda m: text_matches_key(getattr(m, "text", None), "BTN_UPGRADE_FULL") or (m.text and any(x in m.text for x in ["🌟 Полный режим", "🌟 Full Mode", "🌟 Толық режим", "💎 Продлить подписку", "💎 Upgrade / Renew", "💎 Жаңарту"])))
 async def upgrade_info_message(m: Message, state: FSMContext, db: aiosqlite.Connection):
     lang = await get_lang(db, m.from_user.id)

@@ -105,6 +105,9 @@ class CategoryUpdateRequest(BaseModel):
     name: Optional[str] = None
     emoji: Optional[str] = None
     limit_amount: Optional[int] = None
+    default_account_id: Optional[int] = None
+    exclude_from_analytics: Optional[int] = None
+    warn_threshold: Optional[float] = None
 
 def get_budget_cycle_bounds(ref_date: date, start_day: int) -> tuple[datetime, datetime, str]:
     # Returns (start_datetime_utc, end_datetime_utc, budget_month_str)
@@ -314,16 +317,20 @@ async def get_dashboard(
             
         # 2. Monthly Expenses inside current cycle
         cur = await db.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM transactions "
-            "WHERE user_id=? AND type='expense' AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+            "SELECT COALESCE(SUM(t.amount), 0) FROM transactions t "
+            "LEFT JOIN categories c ON c.id=t.category_id "
+            "WHERE t.user_id=? AND t.type='expense' AND t.deleted_at IS NULL AND t.ts >= ? AND t.ts < ? "
+            "AND (c.exclude_from_analytics IS NULL OR c.exclude_from_analytics = 0)",
             (user_id, start_str, end_str)
         )
         (monthly_expenses_row,) = await cur.fetchone()
 
         # 2b. Monthly Income inside current cycle
         cur_inc = await db.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM transactions "
-            "WHERE user_id=? AND type='income' AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+            "SELECT COALESCE(SUM(t.amount), 0) FROM transactions t "
+            "LEFT JOIN categories c ON c.id=t.category_id "
+            "WHERE t.user_id=? AND t.type='income' AND t.deleted_at IS NULL AND t.ts >= ? AND t.ts < ? "
+            "AND (c.exclude_from_analytics IS NULL OR c.exclude_from_analytics = 0)",
             (user_id, start_str, end_str)
         )
         (monthly_income_row,) = await cur_inc.fetchone()
@@ -398,7 +405,10 @@ async def get_dashboard(
                 "emoji": cat["emoji"],
                 "kind": "expense",
                 "limitAmount": limit_amount,
-                "spentAmount": abs(spent_val)
+                "spentAmount": abs(spent_val),
+                "defaultAccountId": cat["default_account_id"],
+                "excludeFromAnalytics": bool(cat["exclude_from_analytics"]),
+                "warnThreshold": cat["warn_threshold"] if cat["warn_threshold"] is not None else 0.70
             })
             
         for cat in income_cats:
@@ -415,7 +425,10 @@ async def get_dashboard(
                 "emoji": cat["emoji"],
                 "kind": "income",
                 "limitAmount": 0,
-                "spentAmount": abs(earned_val)
+                "spentAmount": abs(earned_val),
+                "defaultAccountId": cat["default_account_id"],
+                "excludeFromAnalytics": bool(cat["exclude_from_analytics"]),
+                "warnThreshold": cat["warn_threshold"] if cat["warn_threshold"] is not None else 0.70
             })
 
         # Calculate active days count in current cycle
@@ -864,6 +877,19 @@ async def add_planned_endpoint(req: PlannedCreateRequest, user_id: int = Depends
         await db.commit()
         return {"status": "success", "id": item_id}
 
+@app.post("/api/planned/{planned_id}/done")
+async def complete_planned_endpoint(planned_id: int, user_id: int = Depends(get_current_user)):
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        if not await can_use_feature(db, user_id, "planned"):
+            raise HTTPException(status_code=403, detail="Планируемые операции доступны только в Premium версии")
+        from app.db.repositories.planned_repo import mark_planned_done
+        row = await mark_planned_done(db, user_id, planned_id, now_str)
+        if not row:
+            raise HTTPException(status_code=404, detail="Planned transaction not found")
+        await db.commit()
+        return {"status": "success"}
+
 @app.post("/api/budgets")
 async def upsert_budget_endpoint(req: BudgetUpsertRequest, user_id: int = Depends(get_current_user)):
     month = req.month or datetime.now(timezone.utc).strftime("%Y-%m")
@@ -878,6 +904,13 @@ async def reset_user_data_endpoint(user_id: int = Depends(get_current_user)):
     async with get_db() as db:
         from app.db.repositories.reset_repo import wipe_user_data
         await wipe_user_data(db, user_id)
+        return {"status": "success"}
+
+@app.post("/api/auth/delete-account")
+async def delete_user_account_endpoint(user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        from app.db.repositories.reset_repo import delete_user_account
+        await delete_user_account(db, user_id)
         return {"status": "success"}
 
 @app.get("/api/reports/export")
@@ -1209,5 +1242,15 @@ async def update_category_endpoint(category_id: int, req: CategoryUpdateRequest,
                 (user_id, cycle_month_str, category_id, req.limit_amount, now_str, now_str)
             )
             
+        if req.default_account_id is not None:
+            val = req.default_account_id if req.default_account_id > 0 else None
+            await db.execute("UPDATE categories SET default_account_id=?, updated_at=? WHERE id=?", (val, now_str, category_id))
+
+        if req.exclude_from_analytics is not None:
+            await db.execute("UPDATE categories SET exclude_from_analytics=?, updated_at=? WHERE id=?", (req.exclude_from_analytics, now_str, category_id))
+
+        if req.warn_threshold is not None:
+            await db.execute("UPDATE categories SET warn_threshold=?, updated_at=? WHERE id=?", (req.warn_threshold, now_str, category_id))
+
         await db.commit()
         return {"status": "success"}

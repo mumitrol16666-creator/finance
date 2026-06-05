@@ -1777,6 +1777,93 @@ async def reset_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conne
     await c.answer()
 
 
+@router.callback_query(F.data == "st:delete_account")
+async def delete_account_ask_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await _clear_prompt(c, state)
+    await state.set_state(None)
+    await state.update_data(settings_return_to="settings_root", ui_scope=SETTINGS_SCOPE)
+
+    lang = await get_lang(db, c.from_user.id)
+    from app.ui.keyboards import delete_account_confirm_kb
+
+    if lang == "en":
+        text = (
+            "⚠️ <b>Delete Account completely</b>\n\n"
+            "<b>WARNING:</b> This will delete your entire profile and ALL data permanently. This includes:\n"
+            "• All transactions, accounts, and categories\n"
+            "• Your settings and customization\n"
+            "• <b>YOUR PREMIUM SUBSCRIPTION</b> (it will be permanently lost and cannot be recovered/refunded)\n\n"
+            "This action is absolutely irreversible. Are you sure you want to delete your account?"
+        )
+    elif lang == "kk":
+        text = (
+            "⚠️ <b>Аккаунтты толық жою</b>\n\n"
+            "<b>ЕСКЕРТУ:</b> Бұл сіздің профиліңіз бен БАРЛЫҚ деректеріңізді біржола өшіреді. Соның ішінде:\n"
+            "• Барлық транзакциялар, шоттар мен санаттар\n"
+            "• Сіздің параметрлеріңіз бен баптауларыңыз\n"
+            "• <b>СІЗДІҢ PREMIUM ЖАЗЫЛЫМЫҢЫЗ</b> (ол біржола жойылады, оны қалпына келтіру немесе қайтару мүмкін емес)\n\n"
+            "Бұл әрекетті қайтару мүмкін емес. Аккаунтты өшіргіңіз келетініне сенімдісіз бе?"
+        )
+    else:
+        text = (
+            "⚠️ <b>Полное удаление аккаунта</b>\n\n"
+            "<b>ВНИМАНИЕ:</b> Это действие навсегда удалит ваш профиль и ВСЕ данные под корень. В том числе будут удалены:\n"
+            "• Все транзакции, счета и категории\n"
+            "• Ваши настройки и кастомизация\n"
+            "• <b>ВАША PREMIUM-ПОДПИСКА</b> (она будет безвозвратно аннулирована без возможности восстановления или возврата)\n\n"
+            "Это действие абсолютно необратимо. Вы действительно хотите удалить свой аккаунт?"
+        )
+
+    await _render_screen(
+        c,
+        state,
+        text,
+        reply_markup=delete_account_confirm_kb(lang),
+    )
+    await c.answer()
+
+
+@router.callback_query(F.data == "st:delete_account:confirm")
+async def delete_account_confirm(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
+    try:
+        from app.db.repositories.reset_repo import delete_user_account
+        await delete_user_account(db, c.from_user.id)
+    except Exception:
+        await db.rollback()
+        raise
+
+    await _collapse_settings_ui(c, state)
+    await state.clear()
+
+    if lang == "en":
+        msg = (
+            "👋 <b>Your account has been deleted.</b>\n\n"
+            "All your data has been purged from our databases. Thank you for using FinTrack!"
+        )
+    elif lang == "kk":
+        msg = (
+            "👋 <b>Сіздің аккаунтыңыз жойылды.</b>\n\n"
+            "Барлық деректеріңіз дерекқордан өшірілді. FinTrack-ті пайдаланғаныңыз үшін рақмет!"
+        )
+    else:
+        msg = (
+            "👋 <b>Ваш аккаунт успешно удален.</b>\n\n"
+            "Все ваши данные были полностью стерты из наших баз данных. Спасибо, что пользовались FinTrack!"
+        )
+
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    markup = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="/start")]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    await c.message.answer(msg, reply_markup=markup, parse_mode=PARSE_MODE)
+    await c.answer()
+
+
+
 # =========================================================
 # Notifications flow
 # =========================================================

@@ -39,9 +39,9 @@ async def list_categories(db: aiosqlite.Connection, user_id: int, kind: str):
     window_start = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     cur = await db.execute(
         """
-        SELECT id, name, emoji
+        SELECT id, name, emoji, default_account_id, exclude_from_analytics, warn_threshold
         FROM (
-            SELECT c.id, c.name, c.emoji,
+            SELECT c.id, c.name, c.emoji, c.default_account_id, c.exclude_from_analytics, c.warn_threshold,
                    COALESCE(SUM(CASE WHEN t.ts >= ? AND t.deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS uses
             FROM categories c
             LEFT JOIN transactions t
@@ -49,7 +49,7 @@ async def list_categories(db: aiosqlite.Connection, user_id: int, kind: str):
              AND t.user_id = c.user_id
              AND t.type = c.kind
             WHERE c.user_id=? AND c.kind=? AND c.is_archived=0
-            GROUP BY c.id, c.name, c.emoji
+            GROUP BY c.id, c.name, c.emoji, c.default_account_id, c.exclude_from_analytics, c.warn_threshold
         )
         ORDER BY uses DESC, id ASC
         """,

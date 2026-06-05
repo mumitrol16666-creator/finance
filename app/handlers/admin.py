@@ -571,30 +571,13 @@ async def admin_delete_user(m: Message, db: aiosqlite.Connection):
     from loguru import logger
 
     try:
-        # Delete dependent rows first (using subqueries if no direct user_id is present)
-        await db.execute(
-            "DELETE FROM debt_notify_log WHERE debt_id IN (SELECT id FROM debts WHERE user_id = ?)",
-            (target_id,)
-        )
+        from app.db.repositories.reset_repo import delete_user_account
+        await delete_user_account(db, target_id)
         
-        # Delete from all tables that have user_id
-        cleaned_tables = []
-        for table in tables_with_user_id:
-            try:
-                await db.execute(f"DELETE FROM {table} WHERE user_id = ?", (target_id,))
-                cleaned_tables.append(table)
-            except Exception as table_err:
-                logger.warning(f"Could not delete from table {table}: {table_err}")
-
-        await db.commit()
-        
-        tables_str = ", ".join(cleaned_tables)
         await m.reply(
-            f"✅ Пользователь <code>{target_id}</code> успешно и полностью удален из базы данных.\n\n"
-            f"Очищено таблиц (всего {len(cleaned_tables)}): <code>{tables_str}</code>",
+            f"✅ Пользователь <code>{target_id}</code> успешно и полностью удален из базы данных.",
             parse_mode="HTML"
         )
     except Exception as e:
-        await db.rollback()
         await m.reply(f"❌ Ошибка при удалении пользователя: {e}")
 
