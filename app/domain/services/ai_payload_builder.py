@@ -43,6 +43,9 @@ def _build_core_metrics(context: dict[str, Any]) -> dict[str, Any]:
             "tx_count": current.get("tx_count", 0),
             "expense_tx_count": current.get("expense_tx_count", 0),
             "top_categories": current.get("top_categories", [])[:6],
+            "avg_per_day_normal": current.get("avg_per_day_normal"),
+            "spikes_sum": current.get("spikes_sum"),
+            "spikes_count": current.get("spikes_count"),
         },
         "previous": {
             "income": previous.get("income", 0),
