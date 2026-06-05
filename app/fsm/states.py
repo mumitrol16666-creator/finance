@@ -1,17 +1,18 @@
 from aiogram.fsm.state import StatesGroup, State
 
-class Onboarding(StatesGroup):
-    acc_name = State()
-    acc_balance = State()
-    daily_time_custom = State()
-
-
-class OnboardingInterview(StatesGroup):
-    stage_1_pain = State()
-    stage_2_regret = State()
-    stage_3_dream = State()
-    stage_4_limit = State()
-    stage_5_summary = State()
+class TelegramOnboarding(StatesGroup):
+    select_auth_type = State()
+    tg_link_login = State()
+    tg_link_password = State()
+    tg_reg_name = State()
+    tg_reg_login = State()
+    tg_reg_password = State()
+    ai_survey_invite = State()
+    ai_survey_q1 = State()
+    ai_survey_q2 = State()
+    ai_survey_q3 = State()
+    ai_survey_q4 = State()
+    waiting_legacy_password = State()
 
 
 class ExpenseFlow(StatesGroup):

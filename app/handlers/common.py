@@ -388,81 +388,35 @@ async def menu_any(m: Message, state: FSMContext, db: aiosqlite.Connection):
 
 
 @router.message(Command("login"))
-async def login_command(m: Message, db: aiosqlite.Connection):
-    import random
-    from datetime import datetime, timedelta, timezone
+async def login_command(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    from app.fsm.states import TelegramOnboarding
+    lang = await get_lang(db, m.from_user.id)
+    await state.clear()
     
-    try:
-        user_id = m.from_user.id
-        onboarded = await get_onboarded(db, user_id)
-        if not onboarded:
-            await m.answer("⚠️ Пожалуйста, пройдите сначала онбординг (команда /start)")
-            return
-            
-        lang = await get_lang(db, user_id)
+    # We update the database state to waiting_legacy_password
+    await db.execute("UPDATE users SET onboarding_state = 'waiting_legacy_password' WHERE id = ?", (m.from_user.id,))
+    await db.commit()
+    
+    # Set FSM state
+    await state.set_state(TelegramOnboarding.waiting_legacy_password)
+    
+    prompt = (
+        "🔑 <b>Установка пароля для мобильного приложения FinTrack</b>\n\n"
+        "Введите новый надежный пароль. Он понадобится вам для входа в мобильное приложение FinTrack с вашим логином."
+    )
+    if lang == "en":
+        prompt = (
+            "🔑 <b>Set Password for FinTrack Mobile App</b>\n\n"
+            "Enter a new secure password. You will need it to log in to the FinTrack mobile app with your username."
+        )
+    elif lang == "kk":
+        prompt = (
+            "🔑 <b>FinTrack мобильді қосымшасы үшін құпия сөз орнату</b>\n\n"
+            "Жаңа сенімді құпия сөзді енгізіңіз. Ол сізге мобильді қосымшаға өз логиніңізбен кіру үшін қажет болады."
+        )
         
-        # Check if code already exists
-        async with db.execute("SELECT code FROM login_codes WHERE user_id = ? LIMIT 1", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            
-        if row:
-            code = row[0]
-        else:
-            # Generate new persistent 6-digit code
-            code = f"{random.randint(100000, 999999)}"
-            # Set expiry far in the future
-            expires_at = (datetime.now(timezone.utc) + timedelta(days=365*10)).isoformat()
-            
-            await db.execute(
-                "INSERT INTO login_codes (code, user_id, expires_at) VALUES (?, ?, ?)",
-                (code, user_id, expires_at),
-            )
-            await db.commit()
-        
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-        
-        webapp_url = settings.webapp_url or "http://178.105.162.123/"
-        if not webapp_url.endswith("/"):
-            webapp_url += "/"
-        web_url_with_code = f"{webapp_url}?code={code}"
-        
-        # Localized message
-        if lang == "kk":
-            text = f"🔑 Қосымшаға кіру кодыңыз: <code>{code}</code>\nБұл код әрқашан жарамды."
-            btn_tg_text = "📱 Telegram-да ашу"
-            btn_browser_text = "🌐 Браузерде ашу"
-            btn_apk_text = "🤖 Android үшін жүктеу (APK)"
-        elif lang == "en":
-            text = f"🔑 Your app login code: <code>{code}</code>\nThis code is permanent."
-            btn_tg_text = "📱 Open in Telegram"
-            btn_browser_text = "🌐 Open in Browser"
-            btn_apk_text = "🤖 Download for Android (APK)"
-        else:
-            text = f"🔑 Ваш уникальный код для входа в приложение: <code>{code}</code>\nЭтот код постоянный и больше не меняется."
-            btn_tg_text = "📱 Открыть в Telegram"
-            btn_browser_text = "🌐 Открыть в браузере"
-            btn_apk_text = "🤖 Скачать для Android (APK)"
-            
-        apk_url = f"{webapp_url}app-release.apk"
-        
-        buttons = []
-        # Telegram WebApp requires HTTPS URL, otherwise it throws Bad Request
-        if web_url_with_code.startswith("https://"):
-            buttons.append([InlineKeyboardButton(text=btn_tg_text, web_app=WebAppInfo(url=web_url_with_code))])
-        
-        # Standard URL buttons can be HTTP or HTTPS
-        buttons.append([InlineKeyboardButton(text=btn_browser_text, url=web_url_with_code)])
-        buttons.append([InlineKeyboardButton(text=btn_apk_text, url=apk_url)])
-        
-        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        await m.answer(text, parse_mode="HTML", reply_markup=kb)
-    except Exception as e:
-        logger.exception(f"Error in login_command: {e}")
-        try:
-            # Fallback simple text response in case of any database or rendering crash
-            await m.answer("❌ Произошла ошибка при получении кода авторизации. Пожалуйста, попробуйте позже.")
-        except Exception:
-            pass
+    sent = await m.answer(prompt, parse_mode="HTML", reply_markup=cancel_kb(lang))
+    await state.update_data(prompt_message_id=sent.message_id)
 
 
 @router.message(Command("cancel"))

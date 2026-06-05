@@ -1,6 +1,5 @@
 from app.handlers.common import router as common_router
 from app.handlers.onboarding import router as onboarding_router
-from app.handlers.onboarding_interview import router as onboarding_interview_router
 from app.handlers.transactions import router as transactions_router
 from app.handlers.reports import router as reports_router
 from app.handlers.history import router as history_router
@@ -24,7 +23,6 @@ def get_routers():
     return [
         common_router,
         onboarding_router,
-        onboarding_interview_router,
         debts_router,
         ai_consultant_router,
         recurring_expenses_router,

@@ -51,7 +51,7 @@ async def wipe_user_data(db: aiosqlite.Connection, user_id: int) -> None:
             max_streak = 0, 
             progress_level = 0,
             last_activity_date = NULL 
-        WHERE user_id = ?
+        WHERE id = ?
         """,
         (user_id,),
     )
@@ -125,7 +125,7 @@ async def delete_user_account(db: aiosqlite.Connection, user_id: int) -> None:
         pass
 
     try:
-        await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     except Exception:
         pass
 
