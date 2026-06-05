@@ -348,6 +348,9 @@ class AppState extends ChangeNotifier {
     String? name,
     String? emoji,
     int? limitAmount,
+    int? defaultAccountId,
+    bool? excludeFromAnalytics,
+    double? warnThreshold,
   }) async {
     if (_token == null) return;
     _isLoading = true;
@@ -357,6 +360,15 @@ class AppState extends ChangeNotifier {
       if (name != null) bodyMap['name'] = name;
       if (emoji != null) bodyMap['emoji'] = emoji;
       if (limitAmount != null) bodyMap['limit_amount'] = limitAmount;
+      if (defaultAccountId != null) {
+        bodyMap['default_account_id'] = defaultAccountId;
+      }
+      if (excludeFromAnalytics != null) {
+        bodyMap['exclude_from_analytics'] = excludeFromAnalytics ? 1 : 0;
+      }
+      if (warnThreshold != null) {
+        bodyMap['warn_threshold'] = warnThreshold;
+      }
 
       final response = await http.put(
         Uri.parse('$_baseUrl/api/categories/$categoryId'),
@@ -1040,6 +1052,28 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<void> deleteUserAccount() async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/auth/delete-account'),
+        headers: {
+          'Authorization': 'Bearer $_token',
+        },
+      );
+      if (response.statusCode == 200) {
+        logout();
+      }
+    } catch (e) {
+      print('Delete user account error: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   // AI Chat
   Future<void> sendAiMessage(String text) async {
     if (text.trim().isEmpty) return;
@@ -1133,6 +1167,31 @@ class AppState extends ChangeNotifier {
       }
     } catch (e) {
       print('Update transaction error: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> completePlanned(int plannedId) async {
+    if (_token == null) return;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/planned/$plannedId/done'),
+        headers: {
+          'Authorization': 'Bearer $_token',
+        },
+      );
+      if (response.statusCode == 200) {
+        await loadDashboardData();
+      } else {
+        throw Exception('Failed to complete planned payment');
+      }
+    } catch (e) {
+      print('Complete planned error: $e');
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();

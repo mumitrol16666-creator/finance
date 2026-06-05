@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'categories_screen.dart';
 import 'all_transactions_screen.dart';
 import 'accounts_screen.dart';
@@ -248,7 +249,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               value: (spent / limit).clamp(0.0, 1.0),
                               backgroundColor: Colors.white.withOpacity(0.05),
                               valueColor: AlwaysStoppedAnimation<Color>(
-                                isOverlimit ? AppTheme.expense : AppTheme.primary,
+                                (spent / limit) >= 0.9
+                                    ? AppTheme.expense
+                                    : ((spent / limit) >= category.warnThreshold ? Colors.amber : AppTheme.income),
                               ),
                               minHeight: 6,
                             ),
@@ -797,6 +800,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                    IconButton(
+                    onPressed: () async {
+                      final url = Uri.parse('https://t.me/FinanceBo1_bot');
+                      if (await canLaunchUrl(url)) {
+                        await launchUrl(url, mode: LaunchMode.externalApplication);
+                      }
+                    },
+                    icon: const Icon(Icons.telegram_rounded, color: Color(0xFF229ED9), size: 26),
+                  ),
+                   IconButton(
                     onPressed: () {
                       Navigator.push(
                         context,
@@ -1010,65 +1022,104 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 )
               else
-                SizedBox(
+                 SizedBox(
                   height: 110,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: expenseCategories.length,
-                    itemBuilder: (context, index) {
-                      final cat = expenseCategories[index];
-                      final limit = cat.limitAmount ?? 0;
-                      final progress = limit > 0 ? (cat.spentAmount / limit).clamp(0.0, 1.0) : 0.0;
-                      
-                      return GestureDetector(
-                        onTap: () => _showCategoryDetailsBottomSheet(context, appState, cat),
-                        child: Container(
-                          width: 160,
-                          margin: const EdgeInsets.only(right: 12),
-                          child: GlassCard(
-                            radius: 14,
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                Row(
+                  child: Stack(
+                    children: [
+                      ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        itemCount: expenseCategories.length,
+                        itemBuilder: (context, index) {
+                          final cat = expenseCategories[index];
+                          final limit = cat.limitAmount ?? 0;
+                          final progress = limit > 0 ? (cat.spentAmount / limit).clamp(0.0, 1.0) : 0.0;
+                          
+                          return GestureDetector(
+                            onTap: () => _showCategoryDetailsBottomSheet(context, appState, cat),
+                            child: Container(
+                              width: 160,
+                              margin: const EdgeInsets.only(right: 12),
+                              child: GlassCard(
+                                radius: 14,
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                   children: [
-                                    Text(cat.emoji, style: const TextStyle(fontSize: 18)),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        cat.name,
-                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                        overflow: TextOverflow.ellipsis,
+                                    Row(
+                                      children: [
+                                        Text(cat.emoji, style: const TextStyle(fontSize: 18)),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            cat.name,
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      '${_formatKzt(cat.spentAmount)} / ${_formatKzt(limit)}',
+                                      style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: LinearProgressIndicator(
+                                        value: progress,
+                                        backgroundColor: Colors.white.withOpacity(0.05),
+                                        valueColor: AlwaysStoppedAnimation<Color>(
+                                          progress >= 0.9
+                                              ? AppTheme.expense
+                                              : (progress >= cat.warnThreshold ? Colors.amber : AppTheme.income),
+                                        ),
+                                        minHeight: 4,
                                       ),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  '${_formatKzt(cat.spentAmount)} / ${_formatKzt(limit)}',
-                                  style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                              ),
+                            ),
+                          ).animate().fade(delay: Duration(milliseconds: 300 + (index * 100))).slideX(begin: 0.1);
+                        },
+                      ),
+                      if (expenseCategories.length > 2)
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          child: IgnorePointer(
+                            child: Container(
+                              width: 40,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Colors.transparent,
+                                    AppTheme.background.withOpacity(0.85),
+                                  ],
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
                                 ),
-                                const SizedBox(height: 6),
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: LinearProgressIndicator(
-                                    value: progress,
-                                    backgroundColor: Colors.white.withOpacity(0.05),
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      progress >= 0.9 ? AppTheme.expense : AppTheme.primary,
-                                    ),
-                                    minHeight: 4,
-                                  ),
+                              ),
+                              alignment: Alignment.centerRight,
+                              child: const Padding(
+                                padding: EdgeInsets.only(right: 4.0),
+                                child: Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: AppTheme.primary,
+                                  size: 28,
                                 ),
-                              ],
+                              )
+                                  .animate(onPlay: (controller) => controller.repeat(reverse: true))
+                                  .fade(duration: 800.ms, begin: 0.3, end: 1.0)
+                                  .slideX(duration: 800.ms, begin: -0.2, end: 0.0),
                             ),
                           ),
                         ),
-                      ).animate().fade(delay: Duration(milliseconds: 300 + (index * 100))).slideX(begin: 0.1);
-                    },
+                    ],
                   ),
                 ),
               const SizedBox(height: 24),

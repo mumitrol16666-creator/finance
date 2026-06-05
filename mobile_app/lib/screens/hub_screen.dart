@@ -34,6 +34,197 @@ class HubScreen extends StatelessWidget {
     return 'Подписка активна до ${dt.day} ${months[dt.month - 1]} ${dt.year}г.';
   }
 
+  Widget _buildCard(Map<String, dynamic> item, AppState appState, BuildContext context, {bool isWide = false}) {
+    final isLocked = item['feature'] != null && !appState.hasFeature(item['feature'] as String);
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double layoutWidth = screenWidth > 1100.0 ? 1100.0 : screenWidth;
+    final double cardHeight = layoutWidth > 600.0 ? 115.0 : 105.0;
+
+    return SizedBox(
+      height: cardHeight,
+      child: GestureDetector(
+        onTap: () {
+          if (isLocked) {
+            AppTheme.showPremiumBlockDialog(context);
+            return;
+          }
+          if (item['target'] != null) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => item['target'] as Widget),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Раздел "${item['title']}" будет подключен в следующем релизе!'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          }
+        },
+        child: Container(
+          decoration: AppTheme.glassCardDecoration(radius: 14, borderOpacity: 0.05),
+          padding: const EdgeInsets.all(14),
+          child: isWide
+              ? Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: (isLocked ? AppTheme.textSecondary : item['color'] as Color).withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        item['icon'] as IconData,
+                        color: isLocked ? AppTheme.textSecondary : item['color'] as Color,
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            item['title'] as String,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            item['subtitle'] as String,
+                            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      isLocked ? Icons.lock_outline_rounded : Icons.chevron_right_rounded,
+                      color: isLocked ? AppTheme.secondary : AppTheme.textSecondary.withOpacity(0.5),
+                      size: 18,
+                    ),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Icon(
+                          item['icon'] as IconData,
+                          color: isLocked ? AppTheme.textSecondary : item['color'] as Color,
+                          size: 24,
+                        ),
+                        Icon(
+                          isLocked ? Icons.lock_outline_rounded : Icons.chevron_right_rounded,
+                          color: isLocked ? AppTheme.secondary : AppTheme.textSecondary.withOpacity(0.5),
+                          size: 16,
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Text(
+                      item['title'] as String,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      item['subtitle'] as String,
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildGridRows(
+    BuildContext context,
+    AppState appState,
+    List<Map<String, dynamic>> tools,
+    int crossAxisCount,
+  ) {
+    List<Widget> rows = [];
+    const spacing = 12.0;
+
+    if (crossAxisCount == 2) {
+      // Mobile Layout:
+      // Row 1: Smetas (Wide)
+      rows.add(_buildCard(tools[0], appState, context, isWide: true));
+      rows.add(const SizedBox(height: spacing));
+
+      // Row 2: Item 1 & 2
+      rows.add(
+        Row(
+          children: [
+            Expanded(child: _buildCard(tools[1], appState, context)),
+            const SizedBox(width: spacing),
+            Expanded(child: _buildCard(tools[2], appState, context)),
+          ],
+        ),
+      );
+      rows.add(const SizedBox(height: spacing));
+
+      // Row 3: Item 3 & 4
+      rows.add(
+        Row(
+          children: [
+            Expanded(child: _buildCard(tools[3], appState, context)),
+            const SizedBox(width: spacing),
+            Expanded(child: _buildCard(tools[4], appState, context)),
+          ],
+        ),
+      );
+    } else {
+      // Tablet/Desktop Layout (crossAxisCount == 3):
+      // Row 1: Smetas (Wide, takes 2/3 width) and Item 1 (takes 1/3 width)
+      rows.add(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final totalWidth = constraints.maxWidth;
+            final itemWidth = (totalWidth - spacing * 2) / 3;
+            final wideWidth = itemWidth * 2 + spacing;
+            return Row(
+              children: [
+                SizedBox(
+                  width: wideWidth,
+                  child: _buildCard(tools[0], appState, context, isWide: true),
+                ),
+                const SizedBox(width: spacing),
+                SizedBox(
+                  width: itemWidth,
+                  child: _buildCard(tools[1], appState, context),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+      rows.add(const SizedBox(height: spacing));
+
+      // Row 2: Item 2, Item 3, Item 4 (each takes 1/3 width)
+      rows.add(
+        Row(
+          children: [
+            Expanded(child: _buildCard(tools[2], appState, context)),
+            const SizedBox(width: spacing),
+            Expanded(child: _buildCard(tools[3], appState, context)),
+            const SizedBox(width: spacing),
+            Expanded(child: _buildCard(tools[4], appState, context)),
+          ],
+        ),
+      );
+    }
+
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
@@ -65,10 +256,10 @@ class HubScreen extends StatelessWidget {
       },
       {
         'title': 'Категории',
-        'subtitle': 'Лимиты по категориям',
-        'icon': Icons.pie_chart_rounded,
-        'color': AppTheme.income,
-        'target': const BudgetsScreen(),
+        'subtitle': 'Настройка трат, доходов и лимитов',
+        'icon': Icons.category_rounded,
+        'color': Colors.tealAccent,
+        'target': const CategoriesScreen(),
       },
       {
         'title': 'Планы трат',
@@ -78,25 +269,11 @@ class HubScreen extends StatelessWidget {
         'target': const PlannedScreen(),
         'feature': 'planned',
       },
-      {
-        'title': 'Категории расходов',
-        'subtitle': 'Управление категориями',
-        'icon': Icons.category_rounded,
-        'color': Colors.tealAccent,
-        'target': const CategoriesScreen(),
-      },
     ];
 
     final double screenWidth = MediaQuery.of(context).size.width;
     final double layoutWidth = screenWidth > 1100.0 ? 1100.0 : screenWidth;
-
-    final int crossAxisCount = layoutWidth > 900.0
-        ? 4
-        : (layoutWidth > 600.0 ? 3 : 2);
-
-    final double cardHeight = layoutWidth > 600.0 ? 115.0 : 105.0;
-    final double cardWidth = (layoutWidth - 40.0 - (crossAxisCount - 1) * 12.0) / crossAxisCount;
-    final double childAspectRatio = cardWidth / cardHeight;
+    final int crossAxisCount = layoutWidth > 600.0 ? 3 : 2;
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -165,79 +342,14 @@ class HubScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
 
-                  // Grid layout of tools
+                  // Custom responsive layout of tools
                   Expanded(
-                    child: GridView.builder(
+                    child: SingleChildScrollView(
                       physics: const BouncingScrollPhysics(),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: crossAxisCount,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: childAspectRatio,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: _buildGridRows(context, appState, tools, crossAxisCount),
                       ),
-                      itemCount: tools.length,
-                      itemBuilder: (context, index) {
-                        final item = tools[index];
-                        final isLocked = item['feature'] != null && !appState.hasFeature(item['feature'] as String);
-
-                        return GestureDetector(
-                          onTap: () {
-                            if (isLocked) {
-                              AppTheme.showPremiumBlockDialog(context);
-                              return;
-                            }
-                            if (item['target'] != null) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (context) => item['target'] as Widget),
-                              );
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Раздел "${item['title']}" будет подключен в следующем релизе!'),
-                                  duration: const Duration(seconds: 1),
-                                ),
-                              );
-                            }
-                          },
-                          child: Container(
-                            decoration: AppTheme.glassCardDecoration(radius: 14, borderOpacity: 0.05),
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Icon(
-                                      item['icon'] as IconData,
-                                      color: isLocked ? AppTheme.textSecondary : item['color'] as Color,
-                                      size: 26,
-                                    ),
-                                    Icon(
-                                      isLocked ? Icons.lock_outline_rounded : Icons.chevron_right_rounded,
-                                      color: isLocked ? AppTheme.secondary : AppTheme.textSecondary.withOpacity(0.5),
-                                      size: 16,
-                                    ),
-                                  ],
-                                ),
-                                const Spacer(),
-                                Text(
-                                  item['title'] as String,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  item['subtitle'] as String,
-                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
                     ),
                   ),
                 ],

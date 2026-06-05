@@ -23,6 +23,7 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
         BotCommand(command="undo", description="Отменить последнюю запись"),
         BotCommand(command="export", description="Экспорт XLSX за месяц"),
         BotCommand(command="cancel", description="Сбросить текущее действие"),
+        BotCommand(command="upgrade", description="💎 Полный доступ (Premium)"),
     ],
     "en": [
         BotCommand(command="start", description="Start"),
@@ -30,6 +31,7 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
         BotCommand(command="undo", description="Undo last entry"),
         BotCommand(command="export", description="Export XLSX for the month"),
         BotCommand(command="cancel", description="Cancel current action"),
+        BotCommand(command="upgrade", description="💎 Premium Access"),
     ],
     "kk": [
         BotCommand(command="start", description="Бастау"),
@@ -37,6 +39,7 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
         BotCommand(command="undo", description="Соңғы жазуды болдырмау"),
         BotCommand(command="export", description="Айдың XLSX-экспорты"),
         BotCommand(command="cancel", description="Ағымдағы әрекетті бас тарту"),
+        BotCommand(command="upgrade", description="💎 Толық режим (Premium)"),
     ],
 }
 

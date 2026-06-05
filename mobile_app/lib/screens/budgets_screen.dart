@@ -159,7 +159,9 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                               value: progress,
                               backgroundColor: Colors.white.withOpacity(0.05),
                               valueColor: AlwaysStoppedAnimation<Color>(
-                                progress >= 0.9 ? AppTheme.expense : AppTheme.primary,
+                                progress >= 0.9
+                                    ? AppTheme.expense
+                                    : (progress >= cat.warnThreshold ? Colors.amber : AppTheme.income),
                               ),
                               minHeight: 5,
                             ),

@@ -118,105 +118,197 @@ class CategoriesScreen extends StatelessWidget {
           : '',
     );
 
+    int? selectedAccountId = category.defaultAccountId;
+    bool excludeVal = category.excludeFromAnalytics;
+    double warnVal = category.warnThreshold;
+
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          backgroundColor: AppTheme.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: AppTheme.border),
-          ),
-          title: Text(
-            category.kind == 'expense' ? 'Настройка расхода' : 'Настройка дохода',
-            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: emojiController,
-                  maxLength: 2,
-                  style: const TextStyle(color: AppTheme.textPrimary, fontSize: 24),
-                  decoration: const InputDecoration(
-                    labelText: 'Эмодзи',
-                    counterText: '',
-                    labelStyle: TextStyle(color: AppTheme.textSecondary),
-                    enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: nameController,
-                  style: const TextStyle(color: AppTheme.textPrimary),
-                  decoration: const InputDecoration(
-                    labelText: 'Название категории',
-                    labelStyle: TextStyle(color: AppTheme.textSecondary),
-                    enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                  ),
-                ),
-                if (category.kind == 'expense') ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: limitController,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(color: AppTheme.textPrimary),
-                    decoration: const InputDecoration(
-                      labelText: 'Лимит на период (₸)',
-                      hintText: 'Без лимита',
-                      hintStyle: TextStyle(color: Colors.white24),
-                      labelStyle: TextStyle(color: AppTheme.textSecondary),
-                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.border),
+              ),
+              title: Text(
+                category.kind == 'expense' ? 'Настройка расхода' : 'Настройка дохода',
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: emojiController,
+                      maxLength: 2,
+                      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 24),
+                      decoration: const InputDecoration(
+                        labelText: 'Эмодзи',
+                        counterText: '',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
                     ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
-            ),
-            TextButton(
-              onPressed: () async {
-                final name = nameController.text.trim();
-                final emoji = emojiController.text.trim().isEmpty ? '📦' : emojiController.text.trim();
-                final limit = limitController.text.trim().isEmpty
-                    ? 0
-                    : (int.tryParse(limitController.text.trim()) ?? 0);
-                if (name.isEmpty) return;
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Название категории',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    if (category.kind == 'expense') ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: limitController,
+                        keyboardType: TextInputType.number,
+                        style: const TextStyle(color: AppTheme.textPrimary),
+                        decoration: const InputDecoration(
+                          labelText: 'Лимит на период (₸)',
+                          hintText: 'Без лимита',
+                          hintStyle: TextStyle(color: Colors.white24),
+                          labelStyle: TextStyle(color: AppTheme.textSecondary),
+                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                          focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Счёт по умолчанию', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceCard,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppTheme.border.withOpacity(0.5)),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<int?>(
+                          value: selectedAccountId,
+                          dropdownColor: AppTheme.background,
+                          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+                          isExpanded: true,
+                          items: [
+                            const DropdownMenuItem<int?>(
+                              value: null,
+                              child: Text('Не выбран', style: TextStyle(color: AppTheme.textSecondary)),
+                            ),
+                            ...appState.accounts.where((a) => !a.isSaving).map((a) {
+                              return DropdownMenuItem<int?>(
+                                value: a.id,
+                                child: Text(a.name),
+                              );
+                            }),
+                          ],
+                          onChanged: (val) {
+                            setDialogState(() {
+                              selectedAccountId = val;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      title: const Text(
+                        'Исключить из аналитики',
+                        style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: const Text(
+                        'Не учитывать в общем бюджете и ИИ-аудиторе',
+                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                      ),
+                      value: excludeVal,
+                      activeColor: AppTheme.primary,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (val) {
+                        setDialogState(() {
+                          excludeVal = val;
+                        });
+                      },
+                    ),
+                    if (category.kind == 'expense') ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Порог предупреждения:', style: TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                          Text('${(warnVal * 100).toStringAsFixed(0)}%', style: const TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      Slider(
+                        value: warnVal,
+                        min: 0.1,
+                        max: 1.0,
+                        divisions: 9,
+                        activeColor: AppTheme.primary,
+                        inactiveColor: AppTheme.border,
+                        onChanged: (val) {
+                          setDialogState(() {
+                            warnVal = val;
+                          });
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final name = nameController.text.trim();
+                    final emoji = emojiController.text.trim().isEmpty ? '📦' : emojiController.text.trim();
+                    final limit = limitController.text.trim().isEmpty
+                        ? 0
+                        : (int.tryParse(limitController.text.trim()) ?? 0);
+                    if (name.isEmpty) return;
 
-                try {
-                  Navigator.pop(context);
-                  await appState.updateCategory(
-                    category.id,
-                    name: name,
-                    emoji: emoji,
-                    limitAmount: category.kind == 'expense' ? limit : null,
-                  );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('✅ Изменения сохранены!'),
-                      backgroundColor: AppTheme.income,
-                    ),
-                  );
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('❌ Ошибка: ${e.toString().replaceAll("Exception: ", "")}'),
-                      backgroundColor: AppTheme.expense,
-                    ),
-                  );
-                }
-              },
-              child: const Text('Сохранить', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
-            ),
-          ],
+                    try {
+                      Navigator.pop(context);
+                      await appState.updateCategory(
+                        category.id,
+                        name: name,
+                        emoji: emoji,
+                        limitAmount: category.kind == 'expense' ? limit : null,
+                        defaultAccountId: selectedAccountId ?? 0,
+                        excludeFromAnalytics: excludeVal,
+                        warnThreshold: warnVal,
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('✅ Изменения сохранены!'),
+                          backgroundColor: AppTheme.income,
+                        ),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('❌ Ошибка: ${e.toString().replaceAll("Exception: ", "")}'),
+                          backgroundColor: AppTheme.expense,
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Сохранить', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
         );
       },
     );

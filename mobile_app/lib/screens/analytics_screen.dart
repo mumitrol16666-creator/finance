@@ -44,7 +44,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   void _previousPeriod() {
     setState(() {
-      _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month - 1, _currentRefDate.day);
+      if (_activeTimeframe == 0) { // Week
+        _currentRefDate = _currentRefDate.subtract(const Duration(days: 7));
+      } else if (_activeTimeframe == 1) { // Month
+        _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month - 1, 1);
+      } else { // Year
+        _currentRefDate = DateTime(_currentRefDate.year - 1, _currentRefDate.month, 1);
+      }
       _isCustomRangeActive = false;
       _customStartDate = null;
       _customEndDate = null;
@@ -54,7 +60,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   void _nextPeriod() {
     setState(() {
-      _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month + 1, _currentRefDate.day);
+      if (_activeTimeframe == 0) { // Week
+        _currentRefDate = _currentRefDate.add(const Duration(days: 7));
+      } else if (_activeTimeframe == 1) { // Month
+        _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month + 1, 1);
+      } else { // Year
+        _currentRefDate = DateTime(_currentRefDate.year + 1, _currentRefDate.month, 1);
+      }
       _isCustomRangeActive = false;
       _customStartDate = null;
       _customEndDate = null;
@@ -79,8 +91,22 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       final endStr = DateFormat('yyyy-MM-dd').format(_customEndDate!);
       appState.loadDashboardData(startDate: startStr, endDate: endStr);
     } else {
-      final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
-      appState.loadDashboardData(refDate: dateStr);
+      if (_activeTimeframe == 0) { // Week
+        final monday = _currentRefDate.subtract(Duration(days: _currentRefDate.weekday - 1));
+        final sunday = _currentRefDate.add(Duration(days: 7 - _currentRefDate.weekday));
+        final startStr = DateFormat('yyyy-MM-dd').format(monday);
+        final endStr = DateFormat('yyyy-MM-dd').format(sunday);
+        appState.loadDashboardData(startDate: startStr, endDate: endStr);
+      } else if (_activeTimeframe == 1) { // Month
+        final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
+        appState.loadDashboardData(refDate: dateStr);
+      } else { // Year
+        final jan1 = DateTime(_currentRefDate.year, 1, 1);
+        final dec31 = DateTime(_currentRefDate.year, 12, 31);
+        final startStr = DateFormat('yyyy-MM-dd').format(jan1);
+        final endStr = DateFormat('yyyy-MM-dd').format(dec31);
+        appState.loadDashboardData(startDate: startStr, endDate: endStr);
+      }
     }
     setState(() {
       _aiAuditText = null;
@@ -196,7 +222,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     }
   }
 
-  List<FlSpot> _getDailyTrendSpots(List<Transaction> transactions, int daysCount) {
+  List<FlSpot> _getDailyTrendSpots(BuildContext context, List<Transaction> transactions, int daysCount) {
+    final appState = Provider.of<AppState>(context, listen: false);
     final Map<int, double> dailyTotals = {};
     for (int i = 1; i <= daysCount; i++) {
       dailyTotals[i] = 0;
@@ -206,6 +233,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     for (var tx in transactions) {
       if (tx.kind != targetKind) continue;
+      final cat = appState.categories.firstWhere(
+        (c) => c.name == tx.categoryName,
+        orElse: () => Category(id: -1, name: '', emoji: '', spentAmount: 0),
+      );
+      if (cat.excludeFromAnalytics) continue;
       final day = tx.timestamp.day;
       if (day >= 1 && day <= daysCount) {
         dailyTotals[day] = (dailyTotals[day] ?? 0) + tx.amount.toDouble();
@@ -258,7 +290,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final isActive = _activeTimeframe == index;
     return Expanded(
       child: GestureDetector(
-        onTap: () => setState(() => _activeTimeframe = index),
+        onTap: () {
+          setState(() => _activeTimeframe = index);
+          _reloadPeriodData();
+        },
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
@@ -291,8 +326,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final bool isCurrentPeriod = !_isCustomRangeActive && DateTime.now().year == _currentRefDate.year && DateTime.now().month == _currentRefDate.month;
 
     // Filter categories based on Expenses vs Incomes
-    final expensesCategories = allCategories.where((c) => c.kind == 'expense').toList();
-    final incomesCategories = allCategories.where((c) => c.kind == 'income').toList();
+    final expensesCategories = allCategories.where((c) => c.kind == 'expense' && !c.excludeFromAnalytics).toList();
+    final incomesCategories = allCategories.where((c) => c.kind == 'income' && !c.excludeFromAnalytics).toList();
 
     final activeCategoriesList = _activeTab == 0 ? expensesCategories : incomesCategories;
     final int activeSum = _activeTab == 0 ? appState.cycleExpenses : appState.cycleIncome;
@@ -666,7 +701,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                 borderData: FlBorderData(show: false),
                                 lineBarsData: [
                                   LineChartBarData(
-                                    spots: _getDailyTrendSpots(transactions, appState.totalCycleDays),
+                                    spots: _getDailyTrendSpots(context, transactions, appState.totalCycleDays),
                                     isCurved: true,
                                     gradient: LinearGradient(
                                       colors: _activeTab == 0
@@ -783,9 +818,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         // Check limit consumption if expense
                         final hasLimit = _activeTab == 0 && cat.limitAmount != null && cat.limitAmount! > 0;
                         final double limitProgress = hasLimit ? (cat.spentAmount / cat.limitAmount!).clamp(0.0, 1.0) : 0.0;
-                        final limitColor = limitProgress >= 1.0
+                        final limitColor = limitProgress >= 0.9
                             ? AppTheme.expense
-                            : (limitProgress >= 0.85 ? Colors.orangeAccent : AppTheme.primary);
+                            : (limitProgress >= cat.warnThreshold ? Colors.amber : AppTheme.income);
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),

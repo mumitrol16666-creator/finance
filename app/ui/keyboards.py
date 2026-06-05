@@ -286,7 +286,8 @@ def settings_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     kb.button(text=t(lang, "BTN_SETTINGS_TX_MANAGE"), callback_data="st:tx_manage")
     kb.button(text=t(lang, "BTN_LANGUAGE"), callback_data="st:lang")
     kb.button(text=t(lang, "BTN_SETTINGS_RESET"), callback_data="st:reset")
-    kb.adjust(1, 1, 1, 1, 1)
+    kb.button(text=t(lang, "BTN_SETTINGS_DELETE_ACCOUNT"), callback_data="st:delete_account")
+    kb.adjust(1)
     return kb.as_markup()
 
 def settings_accounts_kb(lang: str = "ru") -> InlineKeyboardMarkup:
@@ -392,6 +393,13 @@ def reports_kb(lang: str = "ru") -> InlineKeyboardMarkup:
 def reset_confirm_kb(lang: str = "ru"):
     kb = InlineKeyboardBuilder()
     kb.button(text=t(lang, "BTN_SETTINGS_RESET"), callback_data="st:reset:confirm")
+    kb.button(text=t(lang, "BTN_BACK"), callback_data="st:root")
+    kb.adjust(1, 1)
+    return kb.as_markup()
+
+def delete_account_confirm_kb(lang: str = "ru"):
+    kb = InlineKeyboardBuilder()
+    kb.button(text=t(lang, "BTN_SETTINGS_DELETE_ACCOUNT"), callback_data="st:delete_account:confirm")
     kb.button(text=t(lang, "BTN_BACK"), callback_data="st:root")
     kb.adjust(1, 1)
     return kb.as_markup()

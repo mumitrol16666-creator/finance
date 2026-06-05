@@ -198,20 +198,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 const SizedBox(height: 20),
 
-                // 3. Wipe account data
-                ElevatedButton.icon(
-                  onPressed: () {
-                    _showDeleteWarningDialog(context);
-                  },
-                  icon: const Icon(Icons.delete_forever_rounded, color: Colors.white),
-                  label: const Text('Сбросить все данные', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    backgroundColor: AppTheme.expense,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 0,
+                const SizedBox(height: 24),
+                _buildSectionHeader('ОПАСНАЯ ЗОНА'),
+                const SizedBox(height: 10),
+                Container(
+                  decoration: AppTheme.glassCardDecoration(radius: 16),
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    children: [
+                      // Reset data tile
+                      ListTile(
+                        leading: const Icon(Icons.delete_sweep_rounded, color: Colors.orangeAccent, size: 24),
+                        title: const Text('Сбросить данные', style: TextStyle(fontSize: 14, color: AppTheme.textPrimary, fontWeight: FontWeight.bold)),
+                        subtitle: const Text('Стереть всю финансовую историю', style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+                        trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+                        onTap: () => _showResetWarningDialog(context),
+                      ),
+                      const Divider(color: AppTheme.border, height: 1),
+                      // Delete account tile
+                      ListTile(
+                        leading: const Icon(Icons.delete_forever_rounded, color: AppTheme.expense, size: 24),
+                        title: const Text('Удалить аккаунт', style: TextStyle(fontSize: 14, color: AppTheme.expense, fontWeight: FontWeight.bold)),
+                        subtitle: const Text('Полностью удалить профиль и Premium', style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+                        trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+                        onTap: () => _showDeleteAccountWarningDialog(context),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -339,35 +351,113 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showDeleteWarningDialog(BuildContext context) {
+  void _showResetWarningDialog(BuildContext context) {
     final appState = Provider.of<AppState>(context, listen: false);
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
           backgroundColor: AppTheme.surface,
-          title: const Text('Сбросить данные?', style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.expense)),
-          content: const Text(
-            'Это действие полностью удалит все ваши операции, лимиты и счета как в приложении, так и на сервере. Восстановить данные будет невозможно.',
-            style: TextStyle(color: AppTheme.textPrimary),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 28),
+              SizedBox(width: 10),
+              Text('Сбросить данные?', style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+            ],
+          ),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Это действие полностью удалит все ваши операции, лимиты, счета и долги.',
+                style: TextStyle(color: AppTheme.textPrimary),
+              ),
+              SizedBox(height: 12),
+              Text(
+                '🌟 Ваша Premium-подписка останется активной!',
+                style: TextStyle(color: AppTheme.income, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
             ),
-            TextButton(
+            ElevatedButton(
               onPressed: () async {
                 Navigator.pop(context);
                 await appState.wipeUserData();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Данные очищены. Вы вышли из аккаунта.'),
+                    content: Text('Все финансовые данные сброшены.'),
+                    backgroundColor: Colors.orangeAccent,
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orangeAccent,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: const Text('Сбросить', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showDeleteAccountWarningDialog(BuildContext context) {
+    final appState = Provider.of<AppState>(context, listen: false);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          title: const Row(
+            children: [
+              Icon(Icons.gpp_bad_rounded, color: AppTheme.expense, size: 28),
+              SizedBox(width: 10),
+              Text('Удалить аккаунт?', style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+            ],
+          ),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Вы собираетесь безвозвратно удалить свой профиль и все данные из FinTrack.',
+                style: TextStyle(color: AppTheme.textPrimary),
+              ),
+              SizedBox(height: 12),
+              Text(
+                '⚠️ Внимание: Ваша Premium-подписка будет аннулирована навсегда без возможности восстановления или возврата!',
+                style: TextStyle(color: AppTheme.expense, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await appState.deleteUserAccount();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Аккаунт и все данные успешно удалены.'),
                     backgroundColor: AppTheme.expense,
                   ),
                 );
               },
-              child: const Text('Сбросить', style: TextStyle(color: AppTheme.expense, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.expense,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: const Text('Удалить', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ],
         );
