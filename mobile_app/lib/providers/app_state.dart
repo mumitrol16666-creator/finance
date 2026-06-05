@@ -189,41 +189,31 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<bool> verifyLoginCode(String code, {bool saveLogin = true}) async {
+  Future<bool> login(String username, String password, {bool saveLogin = true}) async {
     _isLoading = true;
     _needsOnboardingName = false;
     notifyListeners();
 
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/auth/verify'),
+        Uri.parse('$_baseUrl/api/auth/login'),
         headers: {'Content-Type': 'application/json'},
-        body: json.encode({'code': code}),
+        body: json.encode({
+          'username': username,
+          'password': password,
+        }),
       );
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final token = data['token'] as String;
         final userId = data['user_id'] as int;
-        final name = data['name'] as String?;
+        final name = data['name'] as String;
 
-        if (name == null || name.trim().isEmpty) {
-          // Onboarding Name needed!
-          _tempToken = token;
-          _tempUserId = userId;
-          _tempSaveLogin = saveLogin;
-          _needsOnboardingName = true;
-          _isLoading = false;
-          notifyListeners();
-          return true; // verified code, but needs name
-        }
-
-        // Complete authentication immediately
         _token = token;
         _isAuthenticated = true;
         _isLoading = false;
         
-        // Clear mock data before loading real data
         _accounts = [];
         _categories = [];
         _transactions = [];
@@ -240,8 +230,8 @@ class AppState extends ChangeNotifier {
             _savedSessions.add(newSession);
           }
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('saved_sessions', json.encode(_savedSessions.map((s) => s.toJson()).toList()));
           await prefs.setString('active_token', token);
+          await prefs.setString('saved_sessions', json.encode(_savedSessions.map((s) => s.toJson()).toList()));
         }
         
         notifyListeners();
@@ -249,37 +239,39 @@ class AppState extends ChangeNotifier {
         return true;
       }
     } catch (e) {
-      print('Verification error: $e');
+      print('Login error: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
-
-    _isLoading = false;
-    notifyListeners();
     return false;
   }
 
-  Future<bool> submitOnboardingName(String name) async {
-    if (_tempToken == null || _tempUserId == null) return false;
-    
+  Future<String?> register(String displayName, String username, String password, String confirmPassword, {bool saveLogin = true}) async {
     _isLoading = true;
+    _needsOnboardingName = false;
     notifyListeners();
 
     try {
       final response = await http.post(
-        Uri.parse('$_baseUrl/api/user/profile'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $_tempToken',
-        },
-        body: json.encode({'name': name}),
+        Uri.parse('$_baseUrl/api/auth/register'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'display_name': displayName,
+          'username': username,
+          'password': password,
+          'confirm_password': confirmPassword,
+        }),
       );
 
       if (response.statusCode == 200) {
-        final token = _tempToken!;
-        final userId = _tempUserId!;
-        
+        final data = json.decode(response.body);
+        final token = data['token'] as String;
+        final userId = data['user_id'] as int;
+        final name = data['name'] as String;
+
         _token = token;
         _isAuthenticated = true;
-        _needsOnboardingName = false;
         _isLoading = false;
         
         _accounts = [];
@@ -288,8 +280,8 @@ class AppState extends ChangeNotifier {
         _debts = [];
         _recurringTemplates = [];
         _plannedEvents = [];
-
-        if (_tempSaveLogin == true) {
+        
+        if (saveLogin) {
           final existingIndex = _savedSessions.indexWhere((s) => s.userId == userId);
           final newSession = UserSession(token: token, userId: userId, name: name);
           if (existingIndex >= 0) {
@@ -298,20 +290,39 @@ class AppState extends ChangeNotifier {
             _savedSessions.add(newSession);
           }
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('saved_sessions', json.encode(_savedSessions.map((s) => s.toJson()).toList()));
           await prefs.setString('active_token', token);
+          await prefs.setString('saved_sessions', json.encode(_savedSessions.map((s) => s.toJson()).toList()));
         }
-
+        
         notifyListeners();
         await loadDashboardData();
-        return true;
+        return null;
+      } else {
+        final data = json.decode(response.body);
+        return data['detail'] ?? 'Ошибка регистрации';
       }
     } catch (e) {
-      print('Onboarding name error: $e');
+      print('Register error: $e');
+      return 'Сетевая ошибка при регистрации';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
+  }
 
-    _isLoading = false;
-    notifyListeners();
+  Future<bool> isUsernameAvailable(String username) async {
+    if (username.trim().isEmpty) return false;
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/auth/check-username?username=${Uri.encodeComponent(username.trim())}'),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['available'] as bool;
+      }
+    } catch (e) {
+      print('Check username error: $e');
+    }
     return false;
   }
 

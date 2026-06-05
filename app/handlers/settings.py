@@ -459,11 +459,17 @@ async def _go_settings_root(target: Message | CallbackQuery, state: FSMContext, 
     await state.set_state(None)
     await state.update_data(settings_return_to="settings_root")
 
+    show_password_btn = False
+    if db is not None:
+        cur = await db.execute("SELECT password_hash FROM users WHERE id = ?", (target.from_user.id,))
+        row = await cur.fetchone()
+        show_password_btn = bool(row and row[0] == 'LEGACY_PLACEHOLDER')
+
     await _render_screen(
         target,
         state,
         await _settings_root_text(db, target.from_user.id, await get_lang(db, target.from_user.id) if db else "ru"),
-        reply_markup=settings_kb(await get_lang(db, target.from_user.id) if db else "ru"),
+        reply_markup=settings_kb(await get_lang(db, target.from_user.id) if db else "ru", show_password_btn=show_password_btn),
     )
 
 async def _accounts_overview_text(db: aiosqlite.Connection, user_id: int, lang: str) -> str:
@@ -2518,4 +2524,37 @@ async def st_tx_set_acc_process(c: CallbackQuery, state: FSMContext, db: aiosqli
         raise
         
     await _go_tx_manage_menu(c, state, db)
+
+
+@router.callback_query(F.data == "st:set_password")
+async def set_password_callback(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    from app.fsm.states import TelegramOnboarding
+    lang = await get_lang(db, c.from_user.id)
+    await state.clear()
+    
+    # We update the database state to waiting_legacy_password
+    await db.execute("UPDATE users SET onboarding_state = 'waiting_legacy_password' WHERE id = ?", (c.from_user.id,))
+    await db.commit()
+    
+    # Set FSM state
+    await state.set_state(TelegramOnboarding.waiting_legacy_password)
+    
+    prompt = (
+        "🔑 <b>Установка пароля для мобильного приложения FinTrack</b>\n\n"
+        "Введите новый надежный пароль. Он понадобится вам для входа в мобильное приложение FinTrack с вашим логином."
+    )
+    if lang == "en":
+        prompt = (
+            "🔑 <b>Set Password for FinTrack Mobile App</b>\n\n"
+            "Enter a new secure password. You will need it to log in to the FinTrack mobile app with your username."
+        )
+    elif lang == "kk":
+        prompt = (
+            "🔑 <b>FinTrack мобильді қосымшасы үшін құпия сөз орнату</b>\n\n"
+            "Жаңа сенімді құпия сөзді енгізіңіз. Ол сізге мобильді қосымшаға өз логиніңізбен кіру үшін қажет болады."
+        )
+        
+    sent = await c.message.answer(prompt, parse_mode="HTML", reply_markup=cancel_kb(lang))
+    await state.update_data(prompt_message_id=sent.message_id)
+    await c.answer()
 

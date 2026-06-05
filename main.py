@@ -83,6 +83,12 @@ async def main():
     dp.callback_query.middleware(throttling)
     dp.message.middleware(throttling)
 
+    # Onboarding locking and FSM auto-restoration
+    from app.middlewares.onboarding_lock import OnboardingLockMiddleware
+    onboarding_lock_mw = OnboardingLockMiddleware()
+    dp.message.outer_middleware(onboarding_lock_mw)
+    dp.callback_query.outer_middleware(onboarding_lock_mw)
+
     # Graceful FSM escape for stuck users
     fsm_escape_mw = FsmEscapeMiddleware()
     dp.message.outer_middleware(fsm_escape_mw)

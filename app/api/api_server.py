@@ -16,6 +16,7 @@ from app.db.repositories.accounts_repo import list_accounts, apply_balance_delta
 from app.db.repositories.categories_repo import list_categories
 from app.db.repositories.tx_repo import create_tx, create_transfer
 from app.domain.services.access_service import can_use_feature
+from app.domain.auth import hash_password, verify_password
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -89,8 +90,15 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> int:
         )
     return user_id
 
-class VerifyRequest(BaseModel):
-    code: str
+class RegisterRequest(BaseModel):
+    display_name: str
+    username: str
+    password: str
+    confirm_password: str
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 class ProfileUpdateRequest(BaseModel):
     name: str
@@ -141,7 +149,7 @@ async def get_budget_cycle_start_day(db: aiosqlite.Connection, user_id: int) -> 
     return 1
 
 async def get_user_name(db: aiosqlite.Connection, user_id: int) -> str | None:
-    cur = await db.execute("SELECT name FROM users WHERE user_id=?", (user_id,))
+    cur = await db.execute("SELECT display_name FROM users WHERE id=?", (user_id,))
     row = await cur.fetchone()
     if row:
         return row[0]
@@ -221,36 +229,101 @@ class BudgetUpsertRequest(BaseModel):
     amount: int
     month: Optional[str] = None
 
-@app.post("/api/auth/verify")
-async def verify_code(req: VerifyRequest):
-    code = req.code.strip()
+@app.post("/api/auth/register")
+async def register_user(req: RegisterRequest):
+    display_name = req.display_name.strip()
+    username = req.username.strip().lower()
+    password = req.password
+    confirm_password = req.confirm_password
+    
+    if not username:
+        raise HTTPException(status_code=400, detail="Логин не может быть пустым")
+    if not password:
+        raise HTTPException(status_code=400, detail="Пароль не может быть пустым")
+    if password != confirm_password:
+        raise HTTPException(status_code=400, detail="Пароли не совпадают")
+        
+    import re
+    if not re.match(r"^[a-zA-Z0-9_]+$", username):
+        raise HTTPException(status_code=400, detail="Логин должен содержать только латинские буквы, цифры и подчеркивания")
+        
+    password_hash = hash_password(password)
     now_str = datetime.now(timezone.utc).isoformat()
+    
+    async with get_db() as db:
+        cur = await db.execute("SELECT 1 FROM users WHERE LOWER(username) = ?", (username,))
+        if await cur.fetchone():
+            raise HTTPException(status_code=400, detail="Этот логин уже занят, попробуйте другой")
+            
+        try:
+            cur = await db.execute(
+                "INSERT INTO users (username, password_hash, display_name, onboarding_state, created_at, onboarded) "
+                "VALUES (?, ?, ?, 'completed', ?, 1)",
+                (username, password_hash, display_name, now_str)
+            )
+            user_id = cur.lastrowid
+            
+            await db.execute(
+                "INSERT INTO settings (user_id, created_at, updated_at) VALUES (?, ?, ?)",
+                (user_id, now_str, now_str)
+            )
+            
+            from app.db.repositories.categories_repo import ensure_default_categories
+            await ensure_default_categories(db, user_id, now_str)
+            
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=500, detail=f"Ошибка при создании аккаунта: {e}")
+            
+        token = generate_token(user_id)
+        return {"token": token, "user_id": user_id, "name": display_name}
+
+@app.post("/api/auth/login")
+async def login_user(req: LoginRequest):
+    username = req.username.strip().lower()
+    password = req.password
+    
     async with get_db() as db:
         cur = await db.execute(
-            "SELECT user_id, expires_at FROM login_codes WHERE code=? LIMIT 1",
-            (code,)
+            "SELECT id, password_hash, display_name FROM users WHERE LOWER(username) = ? LIMIT 1",
+            (username,)
         )
         row = await cur.fetchone()
         if not row:
-            raise HTTPException(status_code=400, detail="Invalid verification code")
+            raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+            
+        user_id, hashed_pass, display_name = row[0], row[1], row[2]
         
-        user_id = row[0]
-        
-        # Check if user settings exists, if not create default settings row
+        # Hard check for password placeholder legacy security
+        if hashed_pass == 'LEGACY_PLACEHOLDER':
+            raise HTTPException(
+                status_code=400,
+                detail="Для входа в приложение установите пароль внутри Telegram-бота"
+            )
+            
+        if not verify_password(password, hashed_pass):
+            raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+            
+        # Ensure settings exist
         cur_settings = await db.execute("SELECT 1 FROM settings WHERE user_id=?", (user_id,))
         if not await cur_settings.fetchone():
+            now_str = datetime.now(timezone.utc).isoformat()
             await db.execute(
                 "INSERT INTO settings (user_id, created_at, updated_at) VALUES (?, ?, ?)",
                 (user_id, now_str, now_str)
             )
             await db.commit()
             
-        cur_user = await db.execute("SELECT name FROM users WHERE user_id=?", (user_id,))
-        user_row = await cur_user.fetchone()
-        name = user_row[0] if user_row else None
-            
         token = generate_token(user_id)
-        return {"token": token, "user_id": user_id, "name": name}
+        return {"token": token, "user_id": user_id, "name": display_name or username}
+
+@app.get("/api/auth/check-username")
+async def check_username(username: str):
+    async with get_db() as db:
+        cur = await db.execute("SELECT 1 FROM users WHERE LOWER(username) = ?", (username.strip().lower(),))
+        row = await cur.fetchone()
+        return {"available": row is None}
 
 @app.get("/api/dashboard")
 async def get_dashboard(

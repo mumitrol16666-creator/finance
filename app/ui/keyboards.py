@@ -279,8 +279,15 @@ def categories_kb_with_add(cats: list[tuple[int,str,str|None]], prefix: str, add
     kb.adjust(2)
     return kb.as_markup()
 
-def settings_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+def settings_kb(lang: str = "ru", show_password_btn: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    if show_password_btn:
+        btn_text = {
+            "ru": "🔑 Установить пароль приложения",
+            "en": "🔑 Set App Password",
+            "kk": "🔑 Қолданба құпия сөзін орнату"
+        }.get(lang, "🔑 Установить пароль приложения")
+        kb.button(text=btn_text, callback_data="st:set_password")
     kb.button(text=t(lang, "BTN_SETTINGS_CAT_LIMITS"), callback_data="st:catlim")
     kb.button(text=t(lang, "BTN_SETTINGS_NOTIFS"), callback_data="st:notifs")
     kb.button(text=t(lang, "BTN_SETTINGS_TX_MANAGE"), callback_data="st:tx_manage")

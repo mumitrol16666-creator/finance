@@ -3,7 +3,12 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (
-  user_id           INTEGER PRIMARY KEY,
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  telegram_id       BIGINT UNIQUE,
+  username          VARCHAR UNIQUE NOT NULL,
+  password_hash     VARCHAR NOT NULL,
+  display_name      VARCHAR,
+  onboarding_state  VARCHAR,
   created_at        TEXT    NOT NULL,
   onboarded         INTEGER NOT NULL DEFAULT 0,
   current_streak    INTEGER NOT NULL DEFAULT 0,
@@ -12,8 +17,10 @@ CREATE TABLE IF NOT EXISTS users (
   mode              TEXT    NOT NULL DEFAULT 'newbie',
   progress_level    INTEGER NOT NULL DEFAULT 0,
   full_access       INTEGER NOT NULL DEFAULT 0,
+  full_access_until TEXT,
   free_exports_used INTEGER NOT NULL DEFAULT 0,
-  promo_used        INTEGER NOT NULL DEFAULT 0
+  promo_used        INTEGER NOT NULL DEFAULT 0,
+  trial_3d_claimed  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -34,7 +41,7 @@ CREATE TABLE IF NOT EXISTS settings (
   budget_cycle_start_day INTEGER NOT NULL DEFAULT 1,
   created_at            TEXT    NOT NULL,
   updated_at            TEXT    NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
@@ -49,7 +56,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at       TEXT    NOT NULL,
   updated_at       TEXT    NOT NULL,
   UNIQUE(user_id, name),
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
 
@@ -63,7 +70,7 @@ CREATE TABLE IF NOT EXISTS categories (
   created_at       TEXT    NOT NULL,
   updated_at       TEXT    NOT NULL,
   UNIQUE(user_id, kind, name),
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_categories_user_kind ON categories(user_id, kind);
 
@@ -78,7 +85,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   note               TEXT,
   related_tx_id      INTEGER,
   created_at         TEXT    NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT,
   FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
   FOREIGN KEY (related_tx_id) REFERENCES transactions(id) ON DELETE SET NULL
@@ -96,7 +103,7 @@ CREATE TABLE IF NOT EXISTS budgets (
   created_at    TEXT    NOT NULL,
   updated_at    TEXT    NOT NULL,
   UNIQUE(user_id, month, category_id),
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_budgets_user_month ON budgets(user_id, month);
@@ -110,7 +117,7 @@ CREATE TABLE IF NOT EXISTS daily_stats (
   created_at     TEXT    NOT NULL,
   updated_at     TEXT    NOT NULL,
   PRIMARY KEY (user_id, date),
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS debts (
@@ -129,7 +136,7 @@ CREATE TABLE IF NOT EXISTS debts (
   created_at         TEXT    NOT NULL,
   updated_at         TEXT    NOT NULL,
   closed_at          TEXT,
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_debts_user_active ON debts(user_id, is_active, direction);
 CREATE INDEX IF NOT EXISTS idx_debts_user_due ON debts(user_id, next_payment_date);
@@ -145,7 +152,7 @@ CREATE TABLE IF NOT EXISTS debt_payments (
   comment       TEXT,
   created_at    TEXT    NOT NULL,
   FOREIGN KEY (debt_id) REFERENCES debts(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (tx_id) REFERENCES transactions(id) ON DELETE SET NULL,
   FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
 );

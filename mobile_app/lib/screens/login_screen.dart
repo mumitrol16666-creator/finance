@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -14,7 +13,6 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-// Particle model for dynamic background
 class Particle {
   double x;
   double y;
@@ -51,11 +49,18 @@ class ParticlePainter extends CustomPainter {
 }
 
 class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin {
-  final TextEditingController _codeController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
-  final FocusNode _focusNode = FocusNode();
+  final TextEditingController _confirmPasswordController = TextEditingController();
+  
   String _errorMessage = '';
   bool _saveLogin = true;
+  bool _isLoginMode = true;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
 
   late final AnimationController _backgroundController;
   final List<Particle> _particles = [];
@@ -73,7 +78,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   void initState() {
     super.initState();
 
-    // 1. Particle setup & background loop
     _backgroundController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 10),
@@ -106,7 +110,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       });
     });
 
-    // 2. Logo breath animation
     _logoController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 4),
@@ -120,10 +123,9 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       CurvedAnimation(parent: _logoController, curve: Curves.easeInOut),
     );
 
-    // 3. Page slide & fade entrance
     _entranceController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
+      duration: const Duration(milliseconds: 800),
     );
 
     _entranceFade = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -131,188 +133,106 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     );
 
     _entranceSlide = Tween<Offset>(
-      begin: const Offset(0.0, 0.1),
+      begin: const Offset(0.0, 0.08),
       end: Offset.zero,
     ).animate(
       CurvedAnimation(parent: _entranceController, curve: const Interval(0.0, 0.8, curve: Curves.easeOutCubic)),
     );
 
     _entranceController.forward();
-
-    // Auto-focus OTP field
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
-      _checkUrlParameters();
-    });
-  }
-
-  void _checkUrlParameters() {
-    try {
-      String? codeParam = Uri.base.queryParameters['code'];
-      if (codeParam == null) {
-        final fragment = Uri.base.fragment;
-        if (fragment.contains('code=')) {
-          final uri = Uri.parse('http://dummy.com$fragment');
-          codeParam = uri.queryParameters['code'];
-        }
-      }
-      if (codeParam != null && codeParam.length == 6 && RegExp(r'^\d{6}$').hasMatch(codeParam)) {
-        setState(() {
-          _codeController.text = codeParam!;
-          _errorMessage = '';
-        });
-        _submitCode();
-      }
-    } catch (e) {
-      debugPrint('Error reading URL params: $e');
-    }
   }
 
   @override
   void dispose() {
-    _codeController.dispose();
+    _usernameController.dispose();
+    _passwordController.dispose();
     _nameController.dispose();
-    _focusNode.dispose();
+    _confirmPasswordController.dispose();
     _backgroundController.dispose();
     _logoController.dispose();
     _entranceController.dispose();
     super.dispose();
   }
 
-  Future<void> _submitCode() async {
-    final appState = Provider.of<AppState>(context, listen: false);
-    final code = _codeController.text.trim();
+  Future<void> _submit() async {
+    setState(() {
+      _errorMessage = '';
+    });
 
-    if (code.length != 6) {
-      setState(() {
-        _errorMessage = 'Введите 6-значный код из Telegram бота';
-      });
+    if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    final success = await appState.verifyLoginCode(code, saveLogin: _saveLogin);
-    if (!success) {
-      setState(() {
-        _errorMessage = 'Неверный код. Проверьте правильность ввода.';
-      });
-    }
-  }
+    final appState = Provider.of<AppState>(context, listen: false);
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text;
 
-  Future<void> _pasteFromClipboard() async {
-    try {
-      final ClipboardData? data = await Clipboard.getData(Clipboard.kTextPlain);
-      if (data != null && data.text != null) {
-        final pastedText = data.text!.replaceAll(RegExp(r'\D'), '').trim();
-        if (pastedText.isNotEmpty) {
-          final digits = pastedText.length > 6 ? pastedText.substring(0, 6) : pastedText;
-          setState(() {
-            _codeController.text = digits;
-            _errorMessage = '';
-          });
-          if (digits.length == 6) {
-            _submitCode();
-          }
-        }
+    if (_isLoginMode) {
+      final success = await appState.login(username, password, saveLogin: _saveLogin);
+      if (!success) {
+        setState(() {
+          _errorMessage = 'Неверный логин или пароль.';
+        });
       }
-    } catch (e) {
-      debugPrint('Clipboard error: $e');
-      setState(() {
-        _errorMessage = 'Не удалось получить данные из буфера обмена. Проверьте разрешения браузера или используйте HTTPS.';
-      });
+    } else {
+      final displayName = _nameController.text.trim();
+      final confirmPassword = _confirmPasswordController.text;
+
+      final regError = await appState.register(
+        displayName,
+        username,
+        password,
+        confirmPassword,
+        saveLogin: _saveLogin,
+      );
+
+      if (regError != null) {
+        setState(() {
+          _errorMessage = regError;
+        });
+      }
     }
   }
 
-  // Modern digital OTP digit grid layout
-  Widget _buildOTPInput() {
-    return GestureDetector(
-      onTap: () {
-        _focusNode.requestFocus();
-      },
-      child: Stack(
-        children: [
-          // Hidden actual text field
-          Opacity(
-            opacity: 0,
-            child: SizedBox(
-              height: 0,
-              width: 0,
-              child: TextField(
-                controller: _codeController,
-                focusNode: _focusNode,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                enableInteractiveSelection: false,
-                onChanged: (val) {
-                  setState(() {
-                    _errorMessage = '';
-                  });
-                  if (val.length == 6) {
-                    _submitCode();
-                  }
-                },
-              ),
-            ),
-          ),
-          // 6 Glassmorphic interactive digital digit containers
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(6, (index) {
-              final codeText = _codeController.text;
-              String digit = '';
-              if (index < codeText.length) {
-                digit = codeText[index];
-              }
-              final isFocused = _focusNode.hasFocus && index == codeText.length;
-              final isFilled = index < codeText.length;
-
-              return Expanded(
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 5),
-                  height: 62,
-                  decoration: BoxDecoration(
-                    color: isFocused
-                        ? AppTheme.primary.withOpacity(0.08)
-                        : Colors.white.withOpacity(0.015),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: isFocused
-                          ? AppTheme.primary
-                          : (isFilled ? AppTheme.secondary.withOpacity(0.6) : Colors.white.withOpacity(0.08)),
-                      width: isFocused ? 2.2 : 1.2,
-                    ),
-                    boxShadow: isFocused
-                        ? [
-                            BoxShadow(
-                              color: AppTheme.primary.withOpacity(0.35),
-                              blurRadius: 10,
-                              spreadRadius: 1,
-                            )
-                          ]
-                        : [],
-                  ),
-                  alignment: Alignment.center,
-                  child: digit.isNotEmpty
-                      ? Text(
-                          digit,
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.textPrimary,
-                          ),
-                        )
-                      : Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isFocused ? AppTheme.primary : Colors.white24,
-                          ),
-                        ),
-                ),
-              );
-            }),
-          ),
-        ],
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool obscureText = false,
+    Widget? suffixIcon,
+    String? Function(String?)? validator,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscureText,
+      keyboardType: keyboardType,
+      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 15),
+      validator: validator,
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+        prefixIcon: Icon(icon, color: AppTheme.accentBlue, size: 20),
+        suffixIcon: suffixIcon,
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.015),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AppTheme.primary, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AppTheme.expense, width: 1),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: AppTheme.expense, width: 2),
+        ),
       ),
     );
   }
@@ -325,16 +245,15 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     final isDesktop = size.width > 850;
 
     return Scaffold(
+      backgroundColor: AppTheme.background,
       body: Stack(
         children: [
-          // Dynamic Floating Particles background
           Positioned.fill(
             child: CustomPaint(
               painter: ParticlePainter(_particles),
             ),
           ),
           
-          // Nebula glow blobs
           const Positioned(
             top: -120,
             left: -120,
@@ -357,16 +276,14 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        appState.needsOnboardingName
-                            ? _buildNameOnboardingPanel(appState)
-                            : (isDesktop
-                                ? _buildSplitLayout(isLoading)
-                                : _buildMobileLayout(isLoading)),
-                        if (!appState.needsOnboardingName && appState.savedSessions.isNotEmpty) ...[
+                        isDesktop
+                            ? _buildSplitLayout(isLoading)
+                            : _buildMobileLayout(isLoading),
+                        if (_isLoginMode && appState.savedSessions.isNotEmpty) ...[
                           const SizedBox(height: 32),
                           const Text(
-                            'Сохраненные аккаунты',
-                            style: TextStyle(color: AppTheme.textSecondary, fontSize: 14, fontWeight: FontWeight.bold),
+                            'Сохраненные сессии',
+                            style: TextStyle(color: AppTheme.textSecondary, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 0.5),
                           ),
                           const SizedBox(height: 12),
                           Container(
@@ -381,7 +298,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                                   color: AppTheme.surfaceCard,
                                   margin: const EdgeInsets.symmetric(vertical: 6),
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
+                                    borderRadius: BorderRadius.circular(14),
                                     side: const BorderSide(color: AppTheme.border),
                                   ),
                                   child: ListTile(
@@ -389,17 +306,17 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                                       backgroundColor: AppTheme.primary.withOpacity(0.2),
                                       child: const Icon(Icons.person_rounded, color: AppTheme.primary),
                                     ),
-                                    title: Text(session.name, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                                    title: Text(session.name, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
                                     subtitle: Text('ID: ${session.userId}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
                                     trailing: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         IconButton(
-                                          icon: const Icon(Icons.login_rounded, color: AppTheme.income),
+                                          icon: const Icon(Icons.login_rounded, color: AppTheme.income, size: 20),
                                           onPressed: () => appState.switchSession(session),
                                         ),
                                         IconButton(
-                                          icon: const Icon(Icons.delete_outline_rounded, color: AppTheme.expense),
+                                          icon: const Icon(Icons.delete_outline_rounded, color: AppTheme.expense, size: 20),
                                           onPressed: () => appState.removeSession(session),
                                         ),
                                       ],
@@ -423,12 +340,10 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     );
   }
 
-  // 1. Splitted Premium layout for web/desktop screen width
   Widget _buildSplitLayout(bool isLoading) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // Left side: 3D rotating card showcase & brand info
         Expanded(
           flex: 12,
           child: Column(
@@ -436,8 +351,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
             children: [
               const NeonCardShowcase(),
               const SizedBox(height: 48),
-              
-              // Key Features
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 40.0),
                 child: Column(
@@ -453,29 +366,24 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
             ],
           ),
         ),
-        
-        // Vertical spacer
         Container(
-          height: 450,
+          height: 500,
           width: 1.5,
           color: Colors.white.withOpacity(0.08),
           margin: const EdgeInsets.symmetric(horizontal: 40),
         ),
-
-        // Right side: Login Panel
         Expanded(
           flex: 10,
-          child: _buildLoginPanel(isLoading, true),
+          child: _buildAuthPanel(isLoading, true),
         ),
       ],
     );
   }
 
-  // 2. Focused layout for mobile screen width
   Widget _buildMobileLayout(bool isLoading) {
     return Container(
       constraints: const BoxConstraints(maxWidth: 420),
-      child: _buildLoginPanel(isLoading, false),
+      child: _buildAuthPanel(isLoading, false),
     );
   }
 
@@ -512,291 +420,179 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildLoginPanel(bool isLoading, bool isDesktop) {
+  Widget _buildAuthPanel(bool isLoading, bool isDesktop) {
+    final appState = Provider.of<AppState>(context, listen: false);
     return GlassCard(
       borderOpacity: 0.12,
       padding: EdgeInsets.symmetric(horizontal: isDesktop ? 36 : 24, vertical: 40),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Bouncing/glowing logo
-          Center(
-            child: AnimatedBuilder(
-              animation: _logoController,
-              builder: (context, child) {
-                return Transform.scale(
-                  scale: _logoScale.value,
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: AppTheme.primaryGradient,
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppTheme.primary.withOpacity(0.4),
-                          blurRadius: _logoGlow.value,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.account_balance_wallet_rounded,
-                      size: 40,
-                      color: Colors.white,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 24),
-          
-          const Center(
-            child: Text(
-              'Finance Tracker',
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Center(
-            child: Text(
-              'Введите код из Telegram бота для синхронизации',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13.5),
-              textAlign: TextAlign.center,
-            ),
-          ),
-          
-          const SizedBox(height: 36),
-
-          // Digital code grid
-          _buildOTPInput(),
-          
-          const SizedBox(height: 10),
-
-          // Paste from clipboard button
-          Center(
-            child: TextButton.icon(
-              onPressed: isLoading ? null : _pasteFromClipboard,
-              icon: const Icon(Icons.paste_rounded, size: 16, color: AppTheme.secondary),
-              label: const Text(
-                'Вставить скопированное',
-                style: TextStyle(
-                  color: AppTheme.secondary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 8),
-
-          // Save login checkbox
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Checkbox(
-                value: _saveLogin,
-                onChanged: (val) {
-                  if (val != null) {
-                    setState(() => _saveLogin = val);
-                  }
-                },
-                activeColor: AppTheme.primary,
-                checkColor: Colors.white,
-              ),
-              const Text(
-                'Сохранить вход на устройстве',
-                style: TextStyle(color: AppTheme.textPrimary, fontSize: 12.5),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          // Error display
-          if (_errorMessage.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16.0),
-              child: Text(
-                _errorMessage,
-                style: const TextStyle(color: AppTheme.expense, fontSize: 13, fontWeight: FontWeight.w500),
-                textAlign: TextAlign.center,
-              ),
-            ),
-
-          // Action button
-          ElevatedButton(
-            onPressed: isLoading ? null : _submitCode,
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              backgroundColor: Colors.transparent,
-              shadowColor: Colors.transparent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            child: Ink(
-              decoration: BoxDecoration(
-                gradient: AppTheme.primaryGradient,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Container(
-                alignment: Alignment.center,
-                constraints: const BoxConstraints(minHeight: 52),
-                child: isLoading
-                    ? const SpinKitThreeBounce(
-                        color: Colors.white,
-                        size: 24,
-                      )
-                    : const Text(
-                        'Войти в аккаунт',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-              ),
-            ),
-          ),
-          
-          const SizedBox(height: 24),
-          
-          // Registration guide section
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.02),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withOpacity(0.05)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  '💡 Как получить код для входа?',
-                  style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  '1. Откройте нашего Telegram бота @FinanceBo1_bot\n'
-                  '2. Нажмите Запустить (/start) или напишите /login\n'
-                  '3. Скопируйте сгенерированный 6-значный код и вставьте его выше.',
-                  style: TextStyle(color: Colors.white30, fontSize: 11.5, height: 1.4),
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    final url = Uri.parse('https://t.me/FinanceBo1_bot');
-                    if (await canLaunchUrl(url)) {
-                      await launchUrl(url, mode: LaunchMode.externalApplication);
-                    }
-                  },
-                  icon: const Icon(Icons.telegram_rounded, size: 18, color: Colors.white),
-                  label: const Text(
-                    'Открыть Telegram Бота',
-                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 12),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF24A1DE), // Telegram color
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNameOnboardingPanel(AppState appState) {
-    final isLoading = appState.isLoading;
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 420),
-      child: GlassCard(
-        borderOpacity: 0.12,
-        padding: const EdgeInsets.all(32),
+      child: Form(
+        key: _formKey,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Center(
-              child: Icon(
-                Icons.face_rounded,
-                size: 64,
-                color: AppTheme.secondary,
+            Center(
+              child: AnimatedBuilder(
+                animation: _logoController,
+                builder: (context, child) {
+                  return Transform.scale(
+                    scale: _logoScale.value,
+                    child: Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: AppTheme.primaryGradient,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.primary.withOpacity(0.4),
+                            blurRadius: _logoGlow.value,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.account_balance_wallet_rounded,
+                        size: 38,
+                        color: Colors.white,
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
-            const SizedBox(height: 24),
-            const Center(
+            const SizedBox(height: 20),
+            Center(
               child: Text(
-                'Добро пожаловать!',
-                style: TextStyle(
-                  fontSize: 22,
+                _isLoginMode ? 'Вход в аккаунт' : 'Регистрация',
+                style: const TextStyle(
+                  fontSize: 24,
                   fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                  letterSpacing: 0.5,
+                  color: AppTheme.textPrimary,
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            const Center(
+            const SizedBox(height: 6),
+            Center(
               child: Text(
-                'Как к вам обращаться в приложении?',
-                style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+                _isLoginMode 
+                    ? 'Войдите под своими учетными данными' 
+                    : 'Заполните поля для создания аккаунта',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
                 textAlign: TextAlign.center,
               ),
             ),
-            const SizedBox(height: 24),
-            TextField(
-              controller: _nameController,
-              style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: InputDecoration(
-                labelText: 'Ваше имя',
-                labelStyle: const TextStyle(color: AppTheme.textSecondary),
-                hintText: 'Иван',
-                hintStyle: const TextStyle(color: Colors.white24),
-                filled: true,
-                fillColor: AppTheme.surfaceCard,
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: AppTheme.border),
+            const SizedBox(height: 28),
+
+            if (!_isLoginMode) ...[
+              _buildTextField(
+                controller: _nameController,
+                label: 'Ваше имя',
+                icon: Icons.face_rounded,
+                validator: (val) {
+                  if (val == null || val.trim().isEmpty) return 'Введите имя';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            _buildTextField(
+              controller: _usernameController,
+              label: 'Логин (латиница)',
+              icon: Icons.alternate_email_rounded,
+              validator: (val) {
+                if (val == null || val.trim().isEmpty) return 'Введите логин';
+                if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(val)) {
+                  return 'Только латинские буквы, цифры и подчеркивания';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            _buildTextField(
+              controller: _passwordController,
+              label: 'Пароль',
+              icon: Icons.lock_outline_rounded,
+              obscureText: _obscurePassword,
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  color: AppTheme.textSecondary,
+                  size: 20,
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: AppTheme.primary, width: 2),
+                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+              ),
+              validator: (val) {
+                if (val == null || val.isEmpty) return 'Введите пароль';
+                if (val.length < 6) return 'Минимум 6 символов';
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            if (!_isLoginMode) ...[
+              _buildTextField(
+                controller: _confirmPasswordController,
+                label: 'Повторите пароль',
+                icon: Icons.lock_rounded,
+                obscureText: _obscureConfirmPassword,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscureConfirmPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                    color: AppTheme.textSecondary,
+                    size: 20,
+                  ),
+                  onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                ),
+                validator: (val) {
+                  if (val == null || val.isEmpty) return 'Повторите пароль';
+                  if (val != _passwordController.text) return 'Пароли не совпадают';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: Checkbox(
+                    value: _saveLogin,
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => _saveLogin = val);
+                      }
+                    },
+                    activeColor: AppTheme.primary,
+                    checkColor: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Сохранить вход на устройстве',
+                  style: TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            if (_errorMessage.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16.0),
+                child: Text(
+                  _errorMessage,
+                  style: const TextStyle(color: AppTheme.expense, fontSize: 13, fontWeight: FontWeight.w500),
+                  textAlign: TextAlign.center,
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
+
             ElevatedButton(
-              onPressed: isLoading
-                  ? null
-                  : () async {
-                      final name = _nameController.text.trim();
-                      if (name.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Введите имя')),
-                        );
-                        return;
-                      }
-                      await appState.submitOnboardingName(name);
-                    },
+              onPressed: isLoading ? null : _submit,
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 backgroundColor: Colors.transparent,
@@ -818,9 +614,9 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                           color: Colors.white,
                           size: 24,
                         )
-                      : const Text(
-                          'Продолжить',
-                          style: TextStyle(
+                      : Text(
+                          _isLoginMode ? 'Войти в аккаунт' : 'Создать аккаунт',
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
@@ -830,6 +626,76 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                 ),
               ),
             ),
+            const SizedBox(height: 20),
+            
+            Center(
+              child: TextButton(
+                onPressed: () {
+                  setState(() {
+                    _isLoginMode = !_isLoginMode;
+                    _errorMessage = '';
+                  });
+                },
+                child: Text(
+                  _isLoginMode 
+                      ? 'Нет аккаунта? Зарегистрироваться' 
+                      : 'Уже есть аккаунт? Войти',
+                  style: const TextStyle(
+                    color: AppTheme.secondary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            
+            const Divider(color: AppTheme.border, height: 32),
+            
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.015),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.04)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    '🤖 Хотите подключить Telegram?',
+                    style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Вы можете создать аккаунт прямо здесь или зарегистрироваться в нашем Telegram-боте.\n'
+                    'Если вы уже зарегистрированы в Telegram-боте, введите ваш логин и пароль в форме входа выше для синхронизации.',
+                    style: TextStyle(color: Colors.white30, fontSize: 11, height: 1.4),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      final url = Uri.parse('https://t.me/FinanceBo1_bot');
+                      if (await canLaunchUrl(url)) {
+                        await launchUrl(url, mode: LaunchMode.externalApplication);
+                      }
+                    },
+                    icon: const Icon(Icons.telegram_rounded, size: 18, color: Colors.white),
+                    label: const Text(
+                      'Открыть Telegram Бота',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 12),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF24A1DE),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -837,7 +703,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   }
 }
 
-// 3D card display widget
 class NeonCardShowcase extends StatefulWidget {
   const NeonCardShowcase({super.key});
 
@@ -883,7 +748,7 @@ class _NeonCardShowcaseState extends State<NeonCardShowcase> with SingleTickerPr
       builder: (context, child) {
         return Transform(
           transform: Matrix4.identity()
-            ..setEntry(3, 2, 0.001) // perspective
+            ..setEntry(3, 2, 0.001)
             ..translate(0.0, _translateY.value, 0.0)
             ..rotateY(_rotationY.value)
             ..rotateX(_rotationX.value),
@@ -920,7 +785,6 @@ class _NeonCardShowcaseState extends State<NeonCardShowcase> with SingleTickerPr
             ),
             child: Stack(
               children: [
-                // Glowing background shine inside card
                 Positioned.fill(
                   child: Container(
                     decoration: BoxDecoration(
@@ -937,7 +801,6 @@ class _NeonCardShowcaseState extends State<NeonCardShowcase> with SingleTickerPr
                     ),
                   ),
                 ),
-                // Card Details
                 Padding(
                   padding: const EdgeInsets.all(24.0),
                   child: Column(
