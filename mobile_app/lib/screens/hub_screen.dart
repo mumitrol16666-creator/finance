@@ -87,146 +87,162 @@ class HubScreen extends StatelessWidget {
       },
     ];
 
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double layoutWidth = screenWidth > 1100.0 ? 1100.0 : screenWidth;
+
+    final int crossAxisCount = layoutWidth > 900.0
+        ? 4
+        : (layoutWidth > 600.0 ? 3 : 2);
+
+    final double cardHeight = layoutWidth > 600.0 ? 115.0 : 105.0;
+    final double cardWidth = (layoutWidth - 40.0 - (crossAxisCount - 1) * 12.0) / crossAxisCount;
+    final double childAspectRatio = cardWidth / cardHeight;
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Premium Profile Badge
-              Container(
-                decoration: AppTheme.glassCardDecoration(
-                  color: AppTheme.surfaceCard.withOpacity(0.7),
-                  radius: 16,
-                ),
-                padding: const EdgeInsets.all(18),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: appState.isPremium ? AppTheme.primaryGradient : null,
-                        color: appState.isPremium ? null : AppTheme.surfaceCard,
-                      ),
-                      child: Icon(
-                        appState.isPremium ? Icons.star_rounded : Icons.star_border_rounded,
-                        color: appState.isPremium ? Colors.white : AppTheme.textSecondary,
-                        size: 24,
-                      ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1100.0),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Premium Profile Badge
+                  Container(
+                    decoration: AppTheme.glassCardDecoration(
+                      color: AppTheme.surfaceCard.withOpacity(0.7),
+                      radius: 16,
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            appState.isPremium ? 'FinTrack Premium' : 'FinTrack Free',
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
+                    padding: const EdgeInsets.all(18),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: appState.isPremium ? AppTheme.primaryGradient : null,
+                            color: appState.isPremium ? null : AppTheme.surfaceCard,
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            appState.isPremium
-                                ? _formatExpiryDate(appState.premiumExpirationDate)
-                                : 'Активируйте Premium в боте (/upgrade)',
-                            style: TextStyle(
-                              color: appState.isPremium ? AppTheme.income : AppTheme.textSecondary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          child: Icon(
+                            appState.isPremium ? Icons.star_rounded : Icons.star_border_rounded,
+                            color: appState.isPremium ? Colors.white : AppTheme.textSecondary,
+                            size: 24,
                           ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              const Text(
-                'Инструменты и отчёты',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-              ),
-              const SizedBox(height: 14),
-
-              // Grid layout of tools
-              Expanded(
-                child: GridView.builder(
-                  physics: const BouncingScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                    childAspectRatio: 1.35,
-                  ),
-                  itemCount: tools.length,
-                  itemBuilder: (context, index) {
-                    final item = tools[index];
-                    final isLocked = item['feature'] != null && !appState.hasFeature(item['feature'] as String);
-
-                    return GestureDetector(
-                      onTap: () {
-                        if (isLocked) {
-                          AppTheme.showPremiumBlockDialog(context);
-                          return;
-                        }
-                        if (item['target'] != null) {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => item['target'] as Widget),
-                          );
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Раздел "${item['title']}" будет подключен в следующем релизе!'),
-                              duration: const Duration(seconds: 1),
-                            ),
-                          );
-                        }
-                      },
-                      child: Container(
-                        decoration: AppTheme.glassCardDecoration(radius: 14, borderOpacity: 0.05),
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Icon(
-                                  item['icon'] as IconData,
-                                  color: isLocked ? AppTheme.textSecondary : item['color'] as Color,
-                                  size: 26,
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                appState.isPremium ? 'FinTrack Premium' : 'FinTrack Free',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                appState.isPremium
+                                    ? _formatExpiryDate(appState.premiumExpirationDate)
+                                    : 'Активируйте Premium в боте (/upgrade)',
+                                style: TextStyle(
+                                  color: appState.isPremium ? AppTheme.income : AppTheme.textSecondary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                                Icon(
-                                  isLocked ? Icons.lock_outline_rounded : Icons.chevron_right_rounded,
-                                  color: isLocked ? AppTheme.secondary : AppTheme.textSecondary.withOpacity(0.5),
-                                  size: 16,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  const Text(
+                    'Инструменты и отчёты',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Grid layout of tools
+                  Expanded(
+                    child: GridView.builder(
+                      physics: const BouncingScrollPhysics(),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: childAspectRatio,
+                      ),
+                      itemCount: tools.length,
+                      itemBuilder: (context, index) {
+                        final item = tools[index];
+                        final isLocked = item['feature'] != null && !appState.hasFeature(item['feature'] as String);
+
+                        return GestureDetector(
+                          onTap: () {
+                            if (isLocked) {
+                              AppTheme.showPremiumBlockDialog(context);
+                              return;
+                            }
+                            if (item['target'] != null) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => item['target'] as Widget),
+                              );
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Раздел "${item['title']}" будет подключен в следующем релизе!'),
+                                  duration: const Duration(seconds: 1),
+                                ),
+                              );
+                            }
+                          },
+                          child: Container(
+                            decoration: AppTheme.glassCardDecoration(radius: 14, borderOpacity: 0.05),
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Icon(
+                                      item['icon'] as IconData,
+                                      color: isLocked ? AppTheme.textSecondary : item['color'] as Color,
+                                      size: 26,
+                                    ),
+                                    Icon(
+                                      isLocked ? Icons.lock_outline_rounded : Icons.chevron_right_rounded,
+                                      color: isLocked ? AppTheme.secondary : AppTheme.textSecondary.withOpacity(0.5),
+                                      size: 16,
+                                    ),
+                                  ],
+                                ),
+                                const Spacer(),
+                                Text(
+                                  item['title'] as String,
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  item['subtitle'] as String,
+                                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ],
                             ),
-                            const Spacer(),
-                            Text(
-                              item['title'] as String,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              item['subtitle'] as String,
-                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
