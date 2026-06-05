@@ -1063,8 +1063,38 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
             
         # 2. Update balance
         if req.balance is not None:
-            from app.db.repositories.accounts_repo import set_account_balance
-            await set_account_balance(db, user_id, acc_id, req.balance, now_str)
+            from app.db.repositories.accounts_repo import get_account, set_account_balance
+            acc = await get_account(db, user_id, acc_id)
+            if acc:
+                old_balance = acc[2]
+                delta = req.balance - old_balance
+                if delta != 0:
+                    await set_account_balance(db, user_id, acc_id, req.balance, now_str)
+                    
+                    cur_lang = await db.execute("SELECT lang FROM settings WHERE user_id=? LIMIT 1", (user_id,))
+                    lang_row = await cur_lang.fetchone()
+                    lang = lang_row[0] if lang_row else 'ru'
+                    
+                    sign = "+" if delta > 0 else ""
+                    note = {
+                        "ru": f"Корректировка баланса ({sign}{delta} ₸)",
+                        "en": f"Balance adjustment ({sign}{delta} ₸)",
+                        "kk": f"Балансты түзету ({sign}{delta} ₸)"
+                    }.get(lang, f"Корректировка баланса ({sign}{delta} ₸)")
+                    
+                    tx_type = 'income' if delta > 0 else 'expense'
+                    from app.db.repositories.tx_repo import create_tx
+                    await create_tx(
+                        db=db,
+                        user_id=user_id,
+                        ts_iso=now_str,
+                        tx_type=tx_type,
+                        amount=delta,
+                        account_id=acc_id,
+                        category_id=None,
+                        note=note,
+                        created_at=now_str
+                    )
             
         # 3. Toggle saving type
         if req.is_saving is not None:
