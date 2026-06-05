@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 
@@ -23,6 +24,11 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   bool _autoSave = false;
   String? _selectedSavingAccount;
   int _autoSavePercent = 10; // Default 10%
+
+  String _formatKzt(num amount) {
+    final format = NumberFormat.currency(locale: 'ru_KZ', symbol: '₸', decimalDigits: 0);
+    return format.format(amount).trim();
+  }
 
   @override
   void initState() {
@@ -442,7 +448,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                     ),
                     const SizedBox(height: 6),
                     SizedBox(
-                      height: 40,
+                      height: 120, // Taller to fit all details
                       child: ListView.builder(
                         scrollDirection: Axis.horizontal,
                         physics: const BouncingScrollPhysics(),
@@ -450,30 +456,131 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                         itemBuilder: (context, index) {
                           final cat = filteredCategories[index];
                           final isSelected = _selectedCategory == cat.name;
+                          
+                          // Parse currently typed amount preview
+                          final currentTypedAmount = int.tryParse(_amountStr) ?? 0;
+                          final limit = cat.limitAmount;
+                          final spent = cat.spentAmount;
+                          
+                          // Check if current type is expense (limits only make sense for expenses)
+                          final showLimitInfo = limit != null && _kind == 'expense';
+                          
+                          // Calculate warning text and progress
+                          String? warningText;
+                          double progressVal = 0.0;
+                          
+                          if (showLimitInfo && limit > 0) {
+                            final totalPredicted = spent + (isSelected ? currentTypedAmount : 0);
+                            progressVal = totalPredicted / limit;
+                            if (progressVal > 1.0) {
+                              warningText = '⚠️ Превысит лимит!';
+                            } else if (progressVal > 0.8) {
+                              warningText = '⚠️ Близко к лимиту';
+                            }
+                          }
+                          
                           return GestureDetector(
                             onTap: () => setState(() => _selectedCategory = cat.name),
                             child: Container(
-                              margin: const EdgeInsets.only(right: 8),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: isSelected ? AppTheme.primary : AppTheme.surfaceCard,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: isSelected ? Colors.white24 : Colors.transparent,
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Text(cat.emoji),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    cat.name,
-                                    style: TextStyle(
-                                      color: isSelected ? Colors.white : AppTheme.textSecondary,
-                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                              width: 170,
+                              margin: const EdgeInsets.only(right: 10),
+                              child: GlassCard(
+                                padding: const EdgeInsets.all(10),
+                                radius: 12,
+                                color: isSelected 
+                                    ? AppTheme.primary.withOpacity(0.12)
+                                    : Colors.white.withOpacity(0.02),
+                                borderOpacity: isSelected ? 0.25 : 0.06,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    // Emoji + Name
+                                    Row(
+                                      children: [
+                                        Text(cat.emoji, style: const TextStyle(fontSize: 16)),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            cat.name,
+                                            style: TextStyle(
+                                              color: isSelected ? Colors.white : AppTheme.textPrimary,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 12,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                ],
+                                    
+                                    // Spent / Limit status
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          limit != null && limit > 0
+                                              ? 'Лимит: ${_formatKzt(limit)}'
+                                              : 'Без лимита',
+                                          style: const TextStyle(
+                                            color: AppTheme.textSecondary,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          currentTypedAmount > 0 && isSelected && _kind == 'expense'
+                                              ? '${_formatKzt(spent)} + ${_formatKzt(currentTypedAmount)}'
+                                              : 'Потрачено: ${_formatKzt(spent)}',
+                                          style: TextStyle(
+                                            color: isSelected ? Colors.white70 : AppTheme.textSecondary,
+                                            fontSize: 10,
+                                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                    
+                                    // Progress bar & Warning text
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        if (showLimitInfo) ...[
+                                          const SizedBox(height: 2),
+                                          ClipRRect(
+                                            borderRadius: BorderRadius.circular(4),
+                                            child: LinearProgressIndicator(
+                                              value: progressVal.clamp(0.0, 1.0),
+                                              backgroundColor: Colors.white10,
+                                              valueColor: AlwaysStoppedAnimation<Color>(
+                                                progressVal > 1.0 
+                                                    ? AppTheme.expense 
+                                                    : (progressVal > 0.8 ? Colors.orange : AppTheme.income)
+                                              ),
+                                              minHeight: 4,
+                                            ),
+                                          ),
+                                        ],
+                                        if (warningText != null && isSelected) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            warningText,
+                                            style: TextStyle(
+                                              color: progressVal > 1.0 ? AppTheme.expense : Colors.orange,
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           );

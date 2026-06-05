@@ -707,6 +707,32 @@ def _summarize(rows: list[aiosqlite.Row], tz_name: str) -> dict:
     active_days = max(1, len(daily_expense_map)) if expense > 0 else 1
     avg_per_active_day = int(round(expense / active_days)) if expense else 0
 
+    # Calculate spikes and normal average excluding spikes
+    cat_expenses = defaultdict(list)
+    for local_dt, exp_amt, category_name, note in expense_rows:
+        cat_expenses[category_name].append(exp_amt)
+    
+    cat_avgs = {}
+    for cat_name, amts in cat_expenses.items():
+        if amts:
+            cat_avgs[cat_name] = sum(amts) / len(amts)
+            
+    spikes_sum = 0
+    spikes_count = 0
+    normal_daily_expense_map = defaultdict(int)
+    
+    for local_dt, exp_amt, category_name, note in expense_rows:
+        cat_avg = cat_avgs.get(category_name, 0)
+        if cat_avg > 0 and exp_amt >= 3 * cat_avg and exp_amt >= 10000:
+            spikes_sum += exp_amt
+            spikes_count += 1
+        else:
+            normal_daily_expense_map[local_dt.date().isoformat()] += exp_amt
+            
+    normal_expense = expense - spikes_sum
+    normal_active_days = max(1, len(normal_daily_expense_map)) if normal_expense > 0 else 1
+    avg_per_day_normal = int(round(normal_expense / normal_active_days)) if normal_expense else 0
+
     return {
         "income": income,
         "expense": expense,
@@ -719,6 +745,9 @@ def _summarize(rows: list[aiosqlite.Row], tz_name: str) -> dict:
         "biggest": biggest,
         "avg_expense": avg_expense,
         "avg_per_active_day": avg_per_active_day,
+        "avg_per_day_normal": avg_per_day_normal,
+        "spikes_sum": spikes_sum,
+        "spikes_count": spikes_count,
         "weekday_expense": weekday_expense,
         "weekend_expense": weekend_expense,
         "evening_expense": evening_expense,

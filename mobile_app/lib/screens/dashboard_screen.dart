@@ -7,6 +7,7 @@ import '../providers/app_state.dart';
 import '../models/models.dart';
 import 'categories_screen.dart';
 import 'all_transactions_screen.dart';
+import 'accounts_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -21,6 +22,308 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
     return formatter.format(amountMinor);
+  }
+
+  void _showPremiumStatusDialog(BuildContext context, AppState appState) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final isPremium = appState.isPremium;
+        DateTime? expDate = appState.premiumExpirationDate != null
+            ? DateTime.tryParse(appState.premiumExpirationDate!)
+            : null;
+        
+        String expiryText = '';
+        if (expDate != null) {
+          final formattedDate = DateFormat('dd.MM.yyyy').format(expDate);
+          final daysLeft = expDate.difference(DateTime.now()).inDays;
+          if (daysLeft > 0) {
+            expiryText = '\n\nПодписка активна до: $formattedDate\nОсталось дней: $daysLeft';
+          } else {
+            expiryText = '\n\nПодписка активна до: $formattedDate';
+          }
+        } else if (appState.premiumExpirationDate != null) {
+          expiryText = '\n\nПодписка активна до: ${appState.premiumExpirationDate}';
+        }
+
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppTheme.border),
+          ),
+          title: Row(
+            children: [
+              Icon(
+                isPremium ? Icons.verified_rounded : Icons.star_rounded,
+                color: isPremium ? AppTheme.income : AppTheme.secondary,
+                size: 28,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isPremium ? 'Премиум подписка' : 'FinTrack Premium',
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 18),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isPremium) ...[
+                Text(
+                  'У вас активен Premium статус! 🎉$expiryText',
+                  style: const TextStyle(color: Colors.white, height: 1.4),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Вам доступны все продвинутые функции:\n'
+                  '• Умный финансовый ИИ-ассистент\n'
+                  '• Голосовой ввод транзакций\n'
+                  '• Лимиты категорий и планирование\n'
+                  '• Переводы между счетами',
+                  style: TextStyle(color: AppTheme.textSecondary, height: 1.4, fontSize: 13),
+                ),
+              ] else ...[
+                const Text(
+                  'Активируйте Premium статус, чтобы разблокировать все функции приложения:',
+                  style: TextStyle(color: Colors.white, height: 1.4),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '• 🤖 ИИ-Аналитик: персональный разбор бюджета\n'
+                  '• 🎙️ Голосовой ввод: запись расходов голосом\n'
+                  '• 💳 Переводы: свободное перемещение между счетами\n'
+                  '• 📈 Лимиты и планирование бюджетов без ограничений',
+                  style: TextStyle(color: AppTheme.textSecondary, height: 1.4, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Для активации перейдите в наш Telegram бот и выберите команду /upgrade.',
+                  style: TextStyle(color: Colors.white70, fontStyle: FontStyle.italic, fontSize: 13),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Хорошо', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showCategoryDetailsBottomSheet(BuildContext context, AppState appState, Category category) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        final limit = category.limitAmount ?? 0;
+        final spent = category.spentAmount;
+        final diff = limit - spent;
+        final isOverlimit = diff < 0;
+        
+        final categoryTxs = appState.transactions
+            .where((tx) => tx.categoryName == category.name)
+            .toList();
+        categoryTxs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        final recentTxs = categoryTxs.take(5).toList();
+
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.85,
+          expand: false,
+          builder: (context, scrollController) {
+            return Container(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(category.emoji, style: const TextStyle(fontSize: 28)),
+                      const SizedBox(width: 8),
+                      Text(
+                        category.name,
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  
+                  GlassCard(
+                    radius: 16,
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Потрачено:', style: TextStyle(color: AppTheme.textSecondary)),
+                            Text(
+                              _formatKzt(spent),
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                        if (limit > 0) ...[
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Лимит:', style: TextStyle(color: AppTheme.textSecondary)),
+                              Text(
+                                _formatKzt(limit),
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                isOverlimit ? 'Превышение:' : 'Осталось лимита:',
+                                style: TextStyle(color: isOverlimit ? AppTheme.expense : AppTheme.income),
+                              ),
+                              Text(
+                                _formatKzt(diff.abs()),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: isOverlimit ? AppTheme.expense : AppTheme.income,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: (spent / limit).clamp(0.0, 1.0),
+                              backgroundColor: Colors.white.withOpacity(0.05),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                isOverlimit ? AppTheme.expense : AppTheme.primary,
+                              ),
+                              minHeight: 6,
+                            ),
+                          ),
+                        ] else ...[
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: const [
+                              Text('Лимит:', style: TextStyle(color: AppTheme.textSecondary)),
+                              Text(
+                                'Без лимита',
+                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 16),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Последние операции категории',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  Expanded(
+                    child: recentTxs.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'Нет операций в этой категории за период',
+                            style: TextStyle(color: AppTheme.textSecondary),
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: scrollController,
+                          itemCount: recentTxs.length,
+                          itemBuilder: (context, index) {
+                            final tx = recentTxs[index];
+                            final isExpense = tx.kind == 'expense';
+                            
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              child: GlassCard(
+                                radius: 12,
+                                padding: const EdgeInsets.all(12),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            tx.note ?? tx.categoryName,
+                                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            tx.accountName,
+                                            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          '${isExpense ? '-' : '+'}${_formatKzt(tx.amount)}',
+                                          style: TextStyle(
+                                            color: isExpense ? AppTheme.expense : AppTheme.income,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          DateFormat('dd.MM, HH:mm').format(tx.timestamp),
+                                          style: const TextStyle(color: Colors.white24, fontSize: 10),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showAccountSwitcherBottomSheet(BuildContext context, AppState appState) {
@@ -430,19 +733,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
                             ),
                             const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                              decoration: BoxDecoration(
-                                gradient: appState.isPremium ? AppTheme.primaryGradient : null,
-                                color: appState.isPremium ? null : AppTheme.border,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                appState.isPremium ? 'PREMIUM' : 'БАЗОВЫЙ',
-                                style: const TextStyle(
-                                  fontSize: 7.5,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                             GestureDetector(
+                              onTap: () => _showPremiumStatusDialog(context, appState),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                decoration: BoxDecoration(
+                                  gradient: appState.isPremium ? AppTheme.primaryGradient : null,
+                                  color: appState.isPremium ? null : AppTheme.border,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  appState.isPremium ? 'PREMIUM' : 'БАЗОВЫЙ',
+                                  style: const TextStyle(
+                                    fontSize: 7.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               ),
                             ),
@@ -486,28 +792,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'ОБЩИЙ БАЛАНС',
-                              style: TextStyle(
-                                color: AppTheme.textSecondary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 1.2,
-                              ),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const AccountsScreen()),
+                            );
+                          },
+                          child: Container(
+                            color: Colors.transparent,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'ОБЩИЙ БАЛАНС',
+                                  style: TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 1.2,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _formatKzt(totalBal),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _formatKzt(totalBal),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 26,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
@@ -673,47 +990,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       final limit = cat.limitAmount ?? 0;
                       final progress = limit > 0 ? (cat.spentAmount / limit).clamp(0.0, 1.0) : 0.0;
                       
-                      return Container(
-                        width: 160,
-                        margin: const EdgeInsets.only(right: 12),
-                        child: GlassCard(
-                          radius: 14,
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              Row(
-                                children: [
-                                  Text(cat.emoji, style: const TextStyle(fontSize: 18)),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      cat.name,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                      overflow: TextOverflow.ellipsis,
+                      return GestureDetector(
+                        onTap: () => _showCategoryDetailsBottomSheet(context, appState, cat),
+                        child: Container(
+                          width: 160,
+                          margin: const EdgeInsets.only(right: 12),
+                          child: GlassCard(
+                            radius: 14,
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(cat.emoji, style: const TextStyle(fontSize: 18)),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        cat.name,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                '${_formatKzt(cat.spentAmount)} / ${_formatKzt(limit)}',
-                                style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-                              ),
-                              const SizedBox(height: 6),
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: LinearProgressIndicator(
-                                  value: progress,
-                                  backgroundColor: Colors.white.withOpacity(0.05),
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    progress >= 0.9 ? AppTheme.expense : AppTheme.primary,
-                                  ),
-                                  minHeight: 4,
+                                  ],
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 6),
+                                Text(
+                                  '${_formatKzt(cat.spentAmount)} / ${_formatKzt(limit)}',
+                                  style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                                ),
+                                const SizedBox(height: 6),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: LinearProgressIndicator(
+                                    value: progress,
+                                    backgroundColor: Colors.white.withOpacity(0.05),
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      progress >= 0.9 ? AppTheme.expense : AppTheme.primary,
+                                    ),
+                                    minHeight: 4,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ).animate().fade(delay: Duration(milliseconds: 300 + (index * 100))).slideX(begin: 0.1);
