@@ -27,165 +27,9 @@ class _RecurringScreenState extends State<RecurringScreen> {
   }
 
   void _showAddTemplateDialog(BuildContext context, AppState appState) {
-    final titleController = TextEditingController();
-    final amountController = TextEditingController();
-    final dayController = TextEditingController(text: '1');
-    final commentController = TextEditingController();
-    String kind = 'expense';
-    int? selectedCategoryId = appState.categories.isNotEmpty ? appState.categories.first.id : null;
-    int? selectedAccountId = appState.accounts.isNotEmpty ? appState.accounts.first.id : null;
-
     showDialog(
       context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              backgroundColor: AppTheme.surface,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: AppTheme.border),
-              ),
-              title: const Text('Новый регулярный платёж', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      value: kind,
-                      dropdownColor: AppTheme.surface,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Тип операции',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 'expense', child: Text('Расход')),
-                        DropdownMenuItem(value: 'income', child: Text('Доход')),
-                      ],
-                      onChanged: (val) {
-                        if (val != null) setState(() => kind = val);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: titleController,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Название шаблона',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: amountController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Сумма',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        suffixText: '₸',
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (appState.categories.isNotEmpty)
-                      DropdownButtonFormField<int>(
-                        value: selectedCategoryId,
-                        dropdownColor: AppTheme.surface,
-                        style: const TextStyle(color: AppTheme.textPrimary),
-                        decoration: const InputDecoration(
-                          labelText: 'Категория',
-                          labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        ),
-                        items: appState.categories.map((cat) {
-                          return DropdownMenuItem(value: cat.id, child: Text('${cat.emoji} ${cat.name}'));
-                        }).toList(),
-                        onChanged: (val) {
-                          if (val != null) setState(() => selectedCategoryId = val);
-                        },
-                      ),
-                    const SizedBox(height: 12),
-                    if (appState.accounts.isNotEmpty)
-                      DropdownButtonFormField<int>(
-                        value: selectedAccountId,
-                        dropdownColor: AppTheme.surface,
-                        style: const TextStyle(color: AppTheme.textPrimary),
-                        decoration: const InputDecoration(
-                          labelText: 'Счёт списания / зачисления',
-                          labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        ),
-                        items: appState.accounts.map((acc) {
-                          return DropdownMenuItem(value: acc.id, child: Text(acc.name));
-                        }).toList(),
-                        onChanged: (val) {
-                          if (val != null) setState(() => selectedAccountId = val);
-                        },
-                      ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: dayController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'День месяца (1-31)',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: commentController,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Комментарий',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    final title = titleController.text.trim();
-                    final amount = int.tryParse(amountController.text) ?? 0;
-                    final day = int.tryParse(dayController.text) ?? 1;
-                    if (title.isEmpty || amount <= 0 || selectedCategoryId == null || selectedAccountId == null) return;
-                    Navigator.pop(context);
-                    await appState.addRecurring(
-                      title: title,
-                      amount: amount,
-                      categoryId: selectedCategoryId!,
-                      accountId: selectedAccountId!,
-                      dayOfMonth: day,
-                      kind: kind,
-                      comment: commentController.text.trim().isEmpty ? null : commentController.text.trim(),
-                    );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('✅ Шаблон "$title" успешно создан!'),
-                        backgroundColor: AppTheme.income,
-                      ),
-                    );
-                  },
-                  child: const Text('Создать', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (context) => _AddTemplateDialog(appState: appState),
     );
   }
 
@@ -309,6 +153,220 @@ class _RecurringScreenState extends State<RecurringScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AddTemplateDialog extends StatefulWidget {
+  final AppState appState;
+  const _AddTemplateDialog({required this.appState});
+
+  @override
+  State<_AddTemplateDialog> createState() => _AddTemplateDialogState();
+}
+
+class _AddTemplateDialogState extends State<_AddTemplateDialog> {
+  late final TextEditingController titleController;
+  late final TextEditingController amountController;
+  late final TextEditingController dayController;
+  late final TextEditingController commentController;
+  String kind = 'expense';
+  int? selectedCategoryId;
+  int? selectedAccountId;
+
+  @override
+  void initState() {
+    super.initState();
+    titleController = TextEditingController();
+    amountController = TextEditingController();
+    dayController = TextEditingController(text: '1');
+    commentController = TextEditingController();
+
+    titleController.addListener(_updateState);
+    amountController.addListener(_updateState);
+    dayController.addListener(_updateState);
+  }
+
+  void _updateState() {
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    titleController.dispose();
+    amountController.dispose();
+    dayController.dispose();
+    commentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredCategories = widget.appState.categories.where((cat) => cat.kind == kind).toList();
+    final title = titleController.text.trim();
+    final amount = int.tryParse(amountController.text) ?? 0;
+    final day = int.tryParse(dayController.text) ?? 1;
+    final isButtonEnabled = title.isNotEmpty &&
+        amount > 0 &&
+        selectedCategoryId != null &&
+        selectedAccountId != null &&
+        day >= 1 &&
+        day <= 31;
+
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppTheme.border),
+      ),
+      title: const Text('Новый регулярный платёж', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              value: kind,
+              dropdownColor: AppTheme.surface,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Тип операции',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'expense', child: Text('Расход')),
+                DropdownMenuItem(value: 'income', child: Text('Доход')),
+              ],
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() {
+                    kind = val;
+                    selectedCategoryId = null; // Reset category selection
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: titleController,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Название шаблона',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Сумма',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+                suffixText: '₸',
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              value: selectedCategoryId,
+              dropdownColor: AppTheme.surface,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Категория',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+              ),
+              hint: const Text('Выберите категорию', style: TextStyle(color: AppTheme.textSecondary)),
+              items: filteredCategories.map((cat) {
+                return DropdownMenuItem(value: cat.id, child: Text('${cat.emoji} ${cat.name}'));
+              }).toList(),
+              onChanged: (val) {
+                setState(() => selectedCategoryId = val);
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              value: selectedAccountId,
+              dropdownColor: AppTheme.surface,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Счёт списания / зачисления',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+              ),
+              hint: const Text('Выберите счёт', style: TextStyle(color: AppTheme.textSecondary)),
+              items: widget.appState.accounts.map((acc) {
+                return DropdownMenuItem(value: acc.id, child: Text(acc.name));
+              }).toList(),
+              onChanged: (val) {
+                setState(() => selectedAccountId = val);
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: dayController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'День месяца (1-31)',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: commentController,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Комментарий',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+        ),
+        TextButton(
+          onPressed: isButtonEnabled
+              ? () async {
+                  final title = titleController.text.trim();
+                  final amount = int.tryParse(amountController.text) ?? 0;
+                  final day = int.tryParse(dayController.text) ?? 1;
+                  Navigator.pop(context);
+                  await widget.appState.addRecurring(
+                    title: title,
+                    amount: amount,
+                    categoryId: selectedCategoryId!,
+                    accountId: selectedAccountId!,
+                    dayOfMonth: day,
+                    kind: kind,
+                    comment: commentController.text.trim().isEmpty ? null : commentController.text.trim(),
+                  );
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('✅ Шаблон "$title" успешно создан!'),
+                      backgroundColor: AppTheme.income,
+                    ),
+                  );
+                }
+              : null,
+          child: Text(
+            'Создать',
+            style: TextStyle(
+              color: isButtonEnabled ? AppTheme.primary : AppTheme.textSecondary.withOpacity(0.5),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

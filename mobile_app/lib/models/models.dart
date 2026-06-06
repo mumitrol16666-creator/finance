@@ -4,6 +4,10 @@ class Account {
   final int balance;
   final String currency;
   final bool isSaving;
+  final String accType; // 'regular', 'saving', 'deposit'
+  final double interestRate;
+  final String accrualPeriod; // 'month', 'year'
+  final bool isBusiness;
 
   Account({
     required this.id,
@@ -11,6 +15,10 @@ class Account {
     required this.balance,
     this.currency = 'KZT',
     this.isSaving = false,
+    this.accType = 'regular',
+    this.interestRate = 0.0,
+    this.accrualPeriod = 'month',
+    this.isBusiness = false,
   });
 
   factory Account.fromJson(Map<String, dynamic> json) {
@@ -20,6 +28,10 @@ class Account {
       balance: json['balance'] as int,
       currency: json['currency'] as String? ?? 'KZT',
       isSaving: json['is_saving'] == true || json['is_saving'] == 1,
+      accType: json['acc_type'] as String? ?? 'regular',
+      interestRate: (json['interest_rate'] as num? ?? 0.0).toDouble(),
+      accrualPeriod: json['accrual_period'] as String? ?? 'month',
+      isBusiness: json['is_business'] == true || json['is_business'] == 1,
     );
   }
 
@@ -29,6 +41,10 @@ class Account {
     'balance': balance,
     'currency': currency,
     'is_saving': isSaving,
+    'acc_type': accType,
+    'interest_rate': interestRate,
+    'accrual_period': accrualPeriod,
+    'is_business': isBusiness,
   };
 }
 
@@ -42,6 +58,7 @@ class Category {
   final int? defaultAccountId;
   final bool excludeFromAnalytics;
   final double warnThreshold;
+  final bool isBusiness;
 
   Category({
     required this.id,
@@ -53,6 +70,7 @@ class Category {
     this.defaultAccountId,
     this.excludeFromAnalytics = false,
     this.warnThreshold = 0.70,
+    this.isBusiness = false,
   });
 
   factory Category.fromJson(Map<String, dynamic> json) {
@@ -66,6 +84,7 @@ class Category {
       defaultAccountId: json['defaultAccountId'] as int? ?? json['default_account_id'] as int?,
       excludeFromAnalytics: (json['excludeFromAnalytics'] == true || json['exclude_from_analytics'] == true || json['excludeFromAnalytics'] == 1 || json['exclude_from_analytics'] == 1),
       warnThreshold: (json['warnThreshold'] as num? ?? json['warn_threshold'] as num? ?? 0.70).toDouble(),
+      isBusiness: json['is_business'] == true || json['is_business'] == 1,
     );
   }
 
@@ -79,6 +98,7 @@ class Category {
     'default_account_id': defaultAccountId,
     'exclude_from_analytics': excludeFromAnalytics ? 1 : 0,
     'warn_threshold': warnThreshold,
+    'is_business': isBusiness ? 1 : 0,
   };
 }
 

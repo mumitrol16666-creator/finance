@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS settings (
   debts_enabled         INTEGER NOT NULL DEFAULT 1,
   debts_days_before     INTEGER NOT NULL DEFAULT 3,
   budget_cycle_start_day INTEGER NOT NULL DEFAULT 1,
+  ai_chat_daily_date    TEXT,
+  ai_chat_daily_used    INTEGER NOT NULL DEFAULT 0,
   created_at            TEXT    NOT NULL,
   updated_at            TEXT    NOT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -55,6 +57,11 @@ CREATE TABLE IF NOT EXISTS accounts (
   is_archived      INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT    NOT NULL,
   updated_at       TEXT    NOT NULL,
+  acc_type         TEXT    NOT NULL DEFAULT 'regular',
+  interest_rate    REAL    DEFAULT 0.0,
+  accrual_period   TEXT    DEFAULT 'month',
+  last_interest_accrued_at TEXT,
+  is_business      INTEGER NOT NULL DEFAULT 0,
   UNIQUE(user_id, name),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -69,6 +76,7 @@ CREATE TABLE IF NOT EXISTS categories (
   is_archived      INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT    NOT NULL,
   updated_at       TEXT    NOT NULL,
+  is_business      INTEGER NOT NULL DEFAULT 0,
   UNIQUE(user_id, kind, name),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -167,5 +175,11 @@ CREATE TABLE IF NOT EXISTS debt_notify_log (
   created_at TEXT NOT NULL,
   UNIQUE(debt_id, remind_kind, remind_date),
   FOREIGN KEY (debt_id) REFERENCES debts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS exchange_rates (
+  currency TEXT PRIMARY KEY,
+  rate_to_usd REAL NOT NULL,
+  updated_at TEXT NOT NULL
 );
 '''
