@@ -6,6 +6,7 @@ import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'categories_screen.dart';
 import 'all_transactions_screen.dart';
 import 'accounts_screen.dart';
@@ -20,6 +21,202 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _showSavings = false;
+  int _tourStep = 0; // 0 = inactive, 1 = balance card, 2 = accounts, 3 = add button, 4 = ai chat
+
+  @override
+  void initState() {
+    super.initState();
+    _checkOnboarding();
+  }
+
+  void _checkOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    final tourShown = prefs.getBool('onboarding_tutorial_shown') ?? false;
+    if (!tourShown) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showStartTourDialog();
+      });
+    }
+  }
+
+  void _showStartTourDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppTheme.border),
+          ),
+          title: const Text('👋 Добро пожаловать!', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          content: const Text(
+            'Хотите пройти быстрое обучение по основным возможностям нашего приложения?',
+            style: TextStyle(color: AppTheme.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('onboarding_tutorial_shown', true);
+              },
+              child: const Text('Пропустить', style: TextStyle(color: AppTheme.textSecondary)),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                setState(() {
+                  _tourStep = 1;
+                });
+              },
+              child: const Text('Начать обучение', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTourOverlay() {
+    String title = '';
+    String description = '';
+    
+    if (_tourStep == 1) {
+      title = '💳 Карточка баланса';
+      description = 'Здесь отображается ваш общий баланс, а также остаток в копилке и на депозитах.';
+    } else if (_tourStep == 2) {
+      title = '💼 Ваши Счета';
+      description = 'Нажмите на кнопку "Мои Счета" или на любую строку, чтобы отредактировать кошелёк, изменить баланс или заархивировать его.';
+    } else if (_tourStep == 3) {
+      title = '➕ Добавление транзакций';
+      description = 'Нажмите центральную кнопку "+" внизу экрана, чтобы быстро записать новый расход, доход или сделать перевод.';
+    } else if (_tourStep == 4) {
+      title = '🤖 ИИ-Консультант';
+      description = 'Перейдите на третью вкладку внизу, чтобы спросить совета у искусственного интеллекта или получить финансовый аудит.';
+    }
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_tourStep <= 2)
+              const Icon(Icons.arrow_upward_rounded, color: AppTheme.primary, size: 48)
+                  .animate(onPlay: (controller) => controller.repeat(reverse: true))
+                  .slideY(begin: 0.0, end: 0.15, duration: 600.ms),
+            
+            Container(
+              margin: EdgeInsets.only(top: _tourStep <= 2 ? 16 : 0, bottom: _tourStep > 2 ? 16 : 0),
+              decoration: AppTheme.glassCardDecoration(radius: 20),
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    description,
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14, height: 1.4),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextButton(
+                        onPressed: () async {
+                          setState(() => _tourStep = 0);
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.setBool('onboarding_tutorial_shown', true);
+                        },
+                        child: const Text('Пропустить', style: TextStyle(color: AppTheme.textSecondary)),
+                      ),
+                      ElevatedButton(
+                        onPressed: () async {
+                          if (_tourStep < 4) {
+                            setState(() => _tourStep++);
+                          } else {
+                            setState(() => _tourStep = 0);
+                            final prefs = await SharedPreferences.getInstance();
+                            await prefs.setBool('onboarding_tutorial_shown', true);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('🎉 Обучение завершено! Начните управлять финансами.'),
+                                backgroundColor: AppTheme.income,
+                              ),
+                            );
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primary,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        ),
+                        child: Text(
+                          _tourStep < 4 ? 'Далее' : 'Готово',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            
+            if (_tourStep > 2)
+              const Icon(Icons.arrow_downward_rounded, color: AppTheme.primary, size: 48)
+                  .animate(onPlay: (controller) => controller.repeat(reverse: true))
+                  .slideY(begin: 0.0, end: -0.15, duration: 600.ms),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _quickAdd(BuildContext context, AppState appState, _QuickAddTemplate template) async {
+    if (appState.accounts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ Пожалуйста, создайте сначала хотя бы один счёт!'),
+          backgroundColor: AppTheme.expense,
+        ),
+      );
+      return;
+    }
+    final activeAccounts = appState.accounts.where((a) => !a.isSaving && a.accType != 'deposit').toList();
+    final targetAccount = activeAccounts.isNotEmpty ? activeAccounts.first : appState.accounts.first;
+
+    try {
+      await appState.addTransaction(
+        amount: template.amount,
+        kind: 'expense',
+        categoryName: template.categoryName,
+        categoryEmoji: template.categoryEmoji,
+        accountName: targetAccount.name,
+        note: template.title,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ Добавлен расход: ${template.title} — ${template.amount} ₸'),
+          backgroundColor: AppTheme.income,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Ошибка добавления: $e'),
+          backgroundColor: AppTheme.expense,
+        ),
+      );
+    }
+  }
 
   String _formatKzt(int amountMinor) {
     final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
@@ -730,7 +927,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Filter to only show expense categories on limits overview
     final expenseCategories = categories.where((c) => c.kind == 'expense').toList();
 
-    return RefreshIndicator(
+    final quickAddTemplates = const [
+      _QuickAddTemplate(title: 'Кофе', amount: 800, categoryName: 'Еда и рестораны', categoryEmoji: '🍔'),
+      _QuickAddTemplate(title: 'Такси', amount: 1500, categoryName: 'Транспорт', categoryEmoji: '🚗'),
+      _QuickAddTemplate(title: 'Обед', amount: 2500, categoryName: 'Еда и рестораны', categoryEmoji: '🍔'),
+      _QuickAddTemplate(title: 'Подписка', amount: 2000, categoryName: 'Услуги', categoryEmoji: '🛠️'),
+    ];
+
+    // Calculate 30-day forecast (Planned & Recurring)
+    final now = DateTime.now();
+    final thirtyDaysLater = now.add(const Duration(days: 30));
+    int forecastChange = 0;
+
+    for (final p in appState.plannedEvents) {
+      if (p.status.toLowerCase() == 'done' || p.status.toLowerCase() == 'completed') {
+        continue;
+      }
+      try {
+        final pDate = DateTime.parse(p.date);
+        if (pDate.isAfter(now) && pDate.isBefore(thirtyDaysLater)) {
+          if (p.kind == 'expense') {
+            forecastChange -= p.amount;
+          } else {
+            forecastChange += p.amount;
+          }
+        }
+      } catch (_) {}
+    }
+
+    for (final r in appState.recurringTemplates) {
+      DateTime? nextRun;
+      if (r.nextRunDate != null && r.nextRunDate!.isNotEmpty) {
+        nextRun = DateTime.tryParse(r.nextRunDate!);
+      }
+      if (nextRun == null) {
+        nextRun = DateTime(now.year, now.month, r.intervalValue);
+        if (nextRun.isBefore(now)) {
+          nextRun = DateTime(now.year, now.month + 1, r.intervalValue);
+        }
+      }
+      var currentRun = nextRun;
+      while (currentRun.isBefore(thirtyDaysLater)) {
+        if (currentRun.isAfter(now) || currentRun.isAtSameMomentAs(now)) {
+          if (r.kind == 'expense') {
+            forecastChange -= r.amount;
+          } else {
+            forecastChange += r.amount;
+          }
+        }
+        if (r.intervalType == 'daily') {
+          currentRun = currentRun.add(const Duration(days: 1));
+        } else if (r.intervalType == 'weekly') {
+          currentRun = currentRun.add(const Duration(days: 7));
+        } else {
+          currentRun = DateTime(currentRun.year, currentRun.month + 1, currentRun.day);
+        }
+      }
+    }
+
+    final forecastedBalance = totalBal + forecastChange;
+    final hasCashGap = forecastedBalance < 0;
+
+    return Stack(
+      children: [
+        RefreshIndicator(
       onRefresh: () async {
         await appState.refreshAllData();
       },
@@ -821,6 +1081,73 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ).animate().fade(duration: 400.ms).slideY(begin: -0.2),
               const SizedBox(height: 24),
 
+              // Personal/Business sliding toggle chip row
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppTheme.border),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () {
+                                appState.toggleBusinessMode(false);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: !appState.isBusinessMode ? AppTheme.primary : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  'Личный кабинет',
+                                  style: TextStyle(
+                                    color: !appState.isBusinessMode ? Colors.white : AppTheme.textSecondary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () {
+                                appState.toggleBusinessMode(true);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: appState.isBusinessMode ? AppTheme.primary : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  'Бизнес-кабинет',
+                                  style: TextStyle(
+                                    color: appState.isBusinessMode ? Colors.white : AppTheme.textSecondary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ).animate().fade(duration: 400.ms),
+              const SizedBox(height: 16),
+
               // Glassmorphic Balance Card
               GlassCard(
                 color: AppTheme.surfaceCard.withOpacity(0.4),
@@ -831,6 +1158,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         GestureDetector(
                           onTap: () {
@@ -848,9 +1176,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   'ОБЩИЙ БАЛАНС',
                                   style: TextStyle(
                                     color: AppTheme.textSecondary,
-                                    fontSize: 11,
+                                    fontSize: 10,
                                     fontWeight: FontWeight.w600,
-                                    letterSpacing: 1.2,
+                                    letterSpacing: 1.1,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
@@ -858,7 +1186,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   _formatKzt(totalBal),
                                   style: const TextStyle(
                                     color: Colors.white,
-                                    fontSize: 26,
+                                    fontSize: 18,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -867,26 +1195,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                         Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
                                 const Text(
                                   'КОПИЛКА',
                                   style: TextStyle(
                                     color: AppTheme.textSecondary,
-                                    fontSize: 11,
+                                    fontSize: 10,
                                     fontWeight: FontWeight.w600,
-                                    letterSpacing: 1.2,
+                                    letterSpacing: 1.1,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
+                                const SizedBox(width: 4),
                                 GestureDetector(
                                   onTap: () => setState(() => _showSavings = !_showSavings),
                                   child: Icon(
                                     _showSavings ? Icons.visibility_rounded : Icons.visibility_off_rounded,
                                     color: AppTheme.textSecondary,
-                                    size: 14,
+                                    size: 13,
                                   ),
                                 ),
                               ],
@@ -896,7 +1225,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               _showSavings ? _formatKzt(appState.savingsBalance) : '•••• ₸',
                               style: const TextStyle(
                                 color: AppTheme.secondary,
-                                fontSize: 22,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            const Text(
+                              'ДЕПОЗИТЫ',
+                              style: TextStyle(
+                                color: AppTheme.textSecondary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 1.1,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _formatKzt(appState.depositBalance),
+                              style: const TextStyle(
+                                color: AppTheme.income,
+                                fontSize: 16,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -931,6 +1283,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ).animate().fade(delay: 100.ms).slideY(begin: 0.2),
+              const SizedBox(height: 20),
+
+              // Horizontal scroll row for quick-add widgets
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Быстрый расход',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 70,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      itemCount: quickAddTemplates.length,
+                      itemBuilder: (context, index) {
+                        final template = quickAddTemplates[index];
+                        return GestureDetector(
+                          onTap: () => _quickAdd(context, appState, template),
+                          child: Container(
+                            margin: const EdgeInsets.only(right: 12),
+                            child: GlassCard(
+                              radius: 14,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              child: Row(
+                                children: [
+                                  Text(template.categoryEmoji, style: const TextStyle(fontSize: 20)),
+                                  const SizedBox(width: 8),
+                                  Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        template.title,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '${template.amount} ₸',
+                                        style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ).animate().fade(delay: 150.ms).slideY(begin: 0.2),
               const SizedBox(height: 20),
 
               // Streak tracker visual bar
@@ -1124,6 +1531,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               const SizedBox(height: 24),
 
+              // Cash Gap Forecast Card
+              _buildCashGapCard(forecastedBalance, forecastChange, hasCashGap),
+              const SizedBox(height: 24),
+
               // Recent Transactions header
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1219,8 +1630,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
       ),
-    );
-  }
+    ),
+    if (_tourStep > 0)
+      Positioned.fill(
+        child: Container(
+          color: Colors.black.withOpacity(0.6),
+          child: _buildTourOverlay(),
+        ),
+      ),
+    ],
+  );
+}
 
   Widget _buildMiniMetric({required String label, required String value, required Color color}) {
     return Column(
@@ -1242,4 +1662,83 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ],
     );
   }
+
+  Widget _buildCashGapCard(int forecastedBal, int forecastChange, bool hasGap) {
+    return GlassCard(
+      color: hasGap ? AppTheme.expense.withOpacity(0.15) : AppTheme.surfaceCard.withOpacity(0.4),
+      radius: 20,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                hasGap ? Icons.warning_amber_rounded : Icons.trending_up_rounded,
+                color: hasGap ? AppTheme.expense : AppTheme.income,
+                size: 24,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                hasGap ? '⚠️ ОБНАРУЖЕН КАССОВЫЙ РАЗРЫВ!' : '📈 Прогноз баланса (30 дней)',
+                style: TextStyle(
+                  color: hasGap ? AppTheme.expense : Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            hasGap
+                ? 'Через 30 дней ваш баланс может опуститься ниже нуля и составить ${_formatKzt(forecastedBal)}. Рекомендуем сократить расходы или запланировать дополнительные доходы.'
+                : 'Ваш прогнозируемый баланс через 30 дней составит ${_formatKzt(forecastedBal)} (изменение: ${forecastChange >= 0 ? '+' : ''}${_formatKzt(forecastChange)}).',
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+          if (hasGap) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.expense.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.expense.withOpacity(0.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: AppTheme.expense, size: 16),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Внимание: Будьте осторожны с крупными тратами!',
+                      style: TextStyle(color: AppTheme.expense, fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickAddTemplate {
+  final String title;
+  final int amount;
+  final String categoryName;
+  final String categoryEmoji;
+
+  const _QuickAddTemplate({
+    required this.title,
+    required this.amount,
+    required this.categoryName,
+    required this.categoryEmoji,
+  });
 }

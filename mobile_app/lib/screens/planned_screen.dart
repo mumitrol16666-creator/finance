@@ -27,176 +27,9 @@ class _PlannedScreenState extends State<PlannedScreen> {
   }
 
   void _showAddPlannedDialog(BuildContext context, AppState appState) {
-    final titleController = TextEditingController();
-    final amountController = TextEditingController();
-    final dateController = TextEditingController();
-    final commentController = TextEditingController();
-    String kind = 'expense';
-    int? selectedCategoryId = appState.categories.isNotEmpty ? appState.categories.first.id : null;
-    int? selectedAccountId = appState.accounts.isNotEmpty ? appState.accounts.first.id : null;
-
     showDialog(
       context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              backgroundColor: AppTheme.surface,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: AppTheme.border),
-              ),
-              title: const Text('Новое планируемое событие', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      value: kind,
-                      dropdownColor: AppTheme.surface,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Тип операции',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 'expense', child: Text('Расход')),
-                        DropdownMenuItem(value: 'income', child: Text('Доход')),
-                      ],
-                      onChanged: (val) {
-                        if (val != null) setState(() => kind = val);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: titleController,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Название события',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: amountController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Сумма',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        suffixText: '₸',
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (appState.categories.isNotEmpty)
-                      DropdownButtonFormField<int>(
-                        value: selectedCategoryId,
-                        dropdownColor: AppTheme.surface,
-                        style: const TextStyle(color: AppTheme.textPrimary),
-                        decoration: const InputDecoration(
-                          labelText: 'Категория',
-                          labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        ),
-                        items: appState.categories.map((cat) {
-                          return DropdownMenuItem(value: cat.id, child: Text('${cat.emoji} ${cat.name}'));
-                        }).toList(),
-                        onChanged: (val) {
-                          if (val != null) setState(() => selectedCategoryId = val);
-                        },
-                      ),
-                    const SizedBox(height: 12),
-                    if (appState.accounts.isNotEmpty)
-                      DropdownButtonFormField<int>(
-                        value: selectedAccountId,
-                        dropdownColor: AppTheme.surface,
-                        style: const TextStyle(color: AppTheme.textPrimary),
-                        decoration: const InputDecoration(
-                          labelText: 'Счёт',
-                          labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        ),
-                        items: appState.accounts.map((acc) {
-                          return DropdownMenuItem(value: acc.id, child: Text(acc.name));
-                        }).toList(),
-                        onChanged: (val) {
-                          if (val != null) setState(() => selectedAccountId = val);
-                        },
-                      ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: dateController,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Ожидаемая дата (ГГГГ-ММ-ДД)',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                      ),
-                      onTap: () async {
-                        FocusScope.of(context).requestFocus(FocusNode());
-                        final date = await showDatePicker(
-                          context: context,
-                          initialDate: DateTime.now(),
-                          firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                          lastDate: DateTime.now().add(const Duration(days: 3650)),
-                        );
-                        if (date != null) {
-                          dateController.text = DateFormat('yyyy-MM-dd').format(date);
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: commentController,
-                      style: const TextStyle(color: AppTheme.textPrimary),
-                      decoration: const InputDecoration(
-                        labelText: 'Комментарий',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    final title = titleController.text.trim();
-                    final amount = int.tryParse(amountController.text) ?? 0;
-                    final plannedDate = dateController.text.trim();
-                    if (title.isEmpty || amount <= 0 || plannedDate.isEmpty || selectedCategoryId == null || selectedAccountId == null) return;
-                    Navigator.pop(context);
-                    await appState.addPlanned(
-                      title: title,
-                      amount: amount,
-                      categoryId: selectedCategoryId!,
-                      accountId: selectedAccountId!,
-                      plannedDate: plannedDate,
-                      kind: kind,
-                      comment: commentController.text.trim().isEmpty ? null : commentController.text.trim(),
-                    );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('✅ Событие "$title" успешно запланировано!'),
-                        backgroundColor: AppTheme.income,
-                      ),
-                    );
-                  },
-                  child: const Text('Запланировать', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (context) => _AddPlannedDialog(appState: appState),
     );
   }
 
@@ -314,6 +147,228 @@ class _PlannedScreenState extends State<PlannedScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AddPlannedDialog extends StatefulWidget {
+  final AppState appState;
+  const _AddPlannedDialog({required this.appState});
+
+  @override
+  State<_AddPlannedDialog> createState() => _AddPlannedDialogState();
+}
+
+class _AddPlannedDialogState extends State<_AddPlannedDialog> {
+  late final TextEditingController titleController;
+  late final TextEditingController amountController;
+  late final TextEditingController dateController;
+  late final TextEditingController commentController;
+  String kind = 'expense';
+  int? selectedCategoryId;
+  int? selectedAccountId;
+
+  @override
+  void initState() {
+    super.initState();
+    titleController = TextEditingController();
+    amountController = TextEditingController();
+    dateController = TextEditingController();
+    commentController = TextEditingController();
+
+    titleController.addListener(_updateState);
+    amountController.addListener(_updateState);
+    dateController.addListener(_updateState);
+  }
+
+  void _updateState() {
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    titleController.dispose();
+    amountController.dispose();
+    dateController.dispose();
+    commentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredCategories = widget.appState.categories.where((cat) => cat.kind == kind).toList();
+    final title = titleController.text.trim();
+    final amount = int.tryParse(amountController.text) ?? 0;
+    final plannedDate = dateController.text.trim();
+    final isButtonEnabled = title.isNotEmpty &&
+        amount > 0 &&
+        plannedDate.isNotEmpty &&
+        selectedCategoryId != null &&
+        selectedAccountId != null;
+
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppTheme.border),
+      ),
+      title: const Text('Новое планируемое событие', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              value: kind,
+              dropdownColor: AppTheme.surface,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Тип операции',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'expense', child: Text('Расход')),
+                DropdownMenuItem(value: 'income', child: Text('Доход')),
+              ],
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() {
+                    kind = val;
+                    selectedCategoryId = null; // Reset category
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: titleController,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Название события',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Сумма',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+                suffixText: '₸',
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              value: selectedCategoryId,
+              dropdownColor: AppTheme.surface,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Категория',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+              ),
+              hint: const Text('Выберите категорию', style: TextStyle(color: AppTheme.textSecondary)),
+              items: filteredCategories.map((cat) {
+                return DropdownMenuItem(value: cat.id, child: Text('${cat.emoji} ${cat.name}'));
+              }).toList(),
+              onChanged: (val) {
+                setState(() => selectedCategoryId = val);
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              value: selectedAccountId,
+              dropdownColor: AppTheme.surface,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Счёт',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+              ),
+              hint: const Text('Выберите счёт', style: TextStyle(color: AppTheme.textSecondary)),
+              items: widget.appState.accounts.map((acc) {
+                return DropdownMenuItem(value: acc.id, child: Text(acc.name));
+              }).toList(),
+              onChanged: (val) {
+                setState(() => selectedAccountId = val);
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: dateController,
+              readOnly: true,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Ожидаемая дата (ГГГГ-ММ-ДД)',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+              ),
+              onTap: () async {
+                FocusScope.of(context).requestFocus(FocusNode());
+                final date = await showDatePicker(
+                  context: context,
+                  initialDate: DateTime.now(),
+                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDate: DateTime.now().add(const Duration(days: 3650)),
+                );
+                if (date != null) {
+                  dateController.text = DateFormat('yyyy-MM-dd').format(date);
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: commentController,
+              style: const TextStyle(color: AppTheme.textPrimary),
+              decoration: const InputDecoration(
+                labelText: 'Комментарий',
+                labelStyle: TextStyle(color: AppTheme.textSecondary),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+        ),
+        TextButton(
+          onPressed: isButtonEnabled
+              ? () async {
+                  Navigator.pop(context);
+                  await widget.appState.addPlanned(
+                    title: title,
+                    amount: amount,
+                    categoryId: selectedCategoryId!,
+                    accountId: selectedAccountId!,
+                    plannedDate: plannedDate,
+                    kind: kind,
+                    comment: commentController.text.trim().isEmpty ? null : commentController.text.trim(),
+                  );
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('✅ Событие "$title" успешно запланировано!'),
+                      backgroundColor: AppTheme.income,
+                    ),
+                  );
+                }
+              : null,
+          child: Text(
+            'Запланировать',
+            style: TextStyle(
+              color: isButtonEnabled ? AppTheme.primary : AppTheme.textSecondary.withOpacity(0.5),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -39,9 +39,9 @@ async def list_categories(db: aiosqlite.Connection, user_id: int, kind: str):
     window_start = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     cur = await db.execute(
         """
-        SELECT id, name, emoji, default_account_id, exclude_from_analytics, warn_threshold
+        SELECT id, name, emoji, default_account_id, exclude_from_analytics, warn_threshold, is_business
         FROM (
-            SELECT c.id, c.name, c.emoji, c.default_account_id, c.exclude_from_analytics, c.warn_threshold,
+            SELECT c.id, c.name, c.emoji, c.default_account_id, c.exclude_from_analytics, c.warn_threshold, c.is_business,
                    COALESCE(SUM(CASE WHEN t.ts >= ? AND t.deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS uses
             FROM categories c
             LEFT JOIN transactions t
@@ -49,7 +49,7 @@ async def list_categories(db: aiosqlite.Connection, user_id: int, kind: str):
              AND t.user_id = c.user_id
              AND t.type = c.kind
             WHERE c.user_id=? AND c.kind=? AND c.is_archived=0
-            GROUP BY c.id, c.name, c.emoji, c.default_account_id, c.exclude_from_analytics, c.warn_threshold
+            GROUP BY c.id, c.name, c.emoji, c.default_account_id, c.exclude_from_analytics, c.warn_threshold, c.is_business
         )
         ORDER BY uses DESC, id ASC
         """,
@@ -179,15 +179,30 @@ async def find_category_by_name_ci(
 async def name_exists_any_kind(db: aiosqlite.Connection, user_id: int, name: str) -> bool:
     n = (name or "").strip().lower()
     cur = await db.execute(
-        "SELECT 1 FROM categories WHERE user_id=? AND lower(name)=? LIMIT 1",
+        "SELECT 1 FROM categories WHERE user_id=? AND lower(name)=? AND is_archived=0 LIMIT 1",
         (user_id, n),
     )
     return (await cur.fetchone()) is not None
 
-async def create_category(db: aiosqlite.Connection, user_id: int, name: str, emoji: str | None, kind: str, ts: str):
+async def create_category(db: aiosqlite.Connection, user_id: int, name: str, emoji: str | None, kind: str, ts: str, is_business: int = 0):
+    n = name.strip()
+    # Check if there is an archived category with this name and kind
     cur = await db.execute(
-        "INSERT INTO categories(user_id,name,emoji,kind,is_archived,created_at,updated_at) VALUES(?,?,?,?,0,?,?)",
-        (user_id, name.strip(), (emoji or None), kind, ts, ts),
+        "SELECT id FROM categories WHERE user_id=? AND kind=? AND lower(name)=? AND is_archived=1 LIMIT 1",
+        (user_id, kind, n.lower()),
+    )
+    row = await cur.fetchone()
+    if row:
+        cat_id = row[0]
+        await db.execute(
+            "UPDATE categories SET is_archived=0, emoji=COALESCE(?, emoji), updated_at=?, is_business=? WHERE id=?",
+            (emoji or None, ts, is_business, cat_id)
+        )
+        return cat_id
+
+    cur = await db.execute(
+        "INSERT INTO categories(user_id,name,emoji,kind,is_archived,created_at,updated_at,is_business) VALUES(?,?,?,?,0,?,?,?)",
+        (user_id, n, (emoji or None), kind, ts, ts, is_business),
     )
     return int(cur.lastrowid)
 

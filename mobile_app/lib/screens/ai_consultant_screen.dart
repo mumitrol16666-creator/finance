@@ -52,8 +52,54 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
     _messageController.clear();
     final appState = Provider.of<AppState>(context, listen: false);
     
-    await appState.sendAiMessage(text);
+    try {
+      await appState.sendAiMessage(text);
+    } catch (e) {
+      if (e.toString().contains('limit_exceeded')) {
+        _showPremiumPaywall();
+      }
+    }
     _scrollToBottom();
+  }
+
+  void _showPremiumPaywall() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final appState = Provider.of<AppState>(context, listen: false);
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppTheme.border),
+          ),
+          title: const Text('👑 Лимит сообщений исчерпан', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          content: const Text(
+            'Вы отправили 50 сообщений за сегодня. Чтобы продолжить общаться с ИИ без ограничений, перейдите на Premium версию.',
+            style: TextStyle(color: AppTheme.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Позже', style: TextStyle(color: AppTheme.textSecondary)),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                appState.upgradeToPremium();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('👑 Спасибо за покупку Premium подписки!'),
+                    backgroundColor: AppTheme.primary,
+                  ),
+                );
+              },
+              child: const Text('Купить Premium', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override

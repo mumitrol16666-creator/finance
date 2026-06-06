@@ -9,7 +9,7 @@ async def count_accounts(db: aiosqlite.Connection, user_id: int) -> int:
 
 
 async def list_accounts(db: aiosqlite.Connection, user_id: int, include_archived: bool = False):
-    q = "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts WHERE user_id=?"
+    q = "SELECT id, name, balance, is_archived, currency, is_saving, acc_type, interest_rate, accrual_period, last_interest_accrued_at, is_business FROM accounts WHERE user_id=?"
     if not include_archived:
         q += " AND is_archived=0"
     q += " ORDER BY is_saving, is_archived, id"
@@ -19,7 +19,7 @@ async def list_accounts(db: aiosqlite.Connection, user_id: int, include_archived
 
 async def list_archived_accounts(db: aiosqlite.Connection, user_id: int):
     cur = await db.execute(
-        "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts WHERE user_id=? AND is_archived=1 ORDER BY id",
+        "SELECT id, name, balance, is_archived, currency, is_saving, acc_type, interest_rate, accrual_period, last_interest_accrued_at, is_business FROM accounts WHERE user_id=? AND is_archived=1 ORDER BY id",
         (user_id,),
     )
     return await cur.fetchall()
@@ -27,7 +27,7 @@ async def list_archived_accounts(db: aiosqlite.Connection, user_id: int):
 
 async def get_account(db: aiosqlite.Connection, user_id: int, account_id: int):
     cur = await db.execute(
-        "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts WHERE user_id=? AND id=?",
+        "SELECT id, name, balance, is_archived, currency, is_saving, acc_type, interest_rate, accrual_period, last_interest_accrued_at, is_business FROM accounts WHERE user_id=? AND id=?",
         (user_id, account_id),
     )
     return await cur.fetchone()
@@ -36,7 +36,7 @@ async def get_account(db: aiosqlite.Connection, user_id: int, account_id: int):
 async def get_default_account(db: aiosqlite.Connection, user_id: int):
     # Try to find a regular (non-saving) active account first
     cur = await db.execute(
-        "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts "
+        "SELECT id, name, balance, is_archived, currency, is_saving, acc_type, interest_rate, accrual_period, last_interest_accrued_at, is_business FROM accounts "
         "WHERE user_id=? AND is_archived=0 AND is_saving=0 ORDER BY id LIMIT 1",
         (user_id,)
     )
@@ -46,7 +46,7 @@ async def get_default_account(db: aiosqlite.Connection, user_id: int):
         
     # If not found, try to find any active account (including saving)
     cur = await db.execute(
-        "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts "
+        "SELECT id, name, balance, is_archived, currency, is_saving, acc_type, interest_rate, accrual_period, last_interest_accrued_at, is_business FROM accounts "
         "WHERE user_id=? AND is_archived=0 ORDER BY id LIMIT 1",
         (user_id,)
     )
@@ -55,7 +55,7 @@ async def get_default_account(db: aiosqlite.Connection, user_id: int):
 
 async def get_account_by_name(db: aiosqlite.Connection, user_id: int, name: str):
     cur = await db.execute(
-        "SELECT id, name, balance, is_archived, currency, is_saving FROM accounts WHERE user_id=? AND lower(name)=lower(?) LIMIT 1",
+        "SELECT id, name, balance, is_archived, currency, is_saving, acc_type, interest_rate, accrual_period, last_interest_accrued_at, is_business FROM accounts WHERE user_id=? AND lower(name)=lower(?) LIMIT 1",
         (user_id, name),
     )
     return await cur.fetchone()
@@ -72,14 +72,27 @@ async def has_active_account_with_name(db: aiosqlite.Connection, user_id: int, n
     return await cur.fetchone() is not None
 
 
-async def create_account(db: aiosqlite.Connection, user_id: int, name: str, balance: int, ts: str, currency: str = 'KZT', is_saving: int = 0):
+async def create_account(
+    db: aiosqlite.Connection,
+    user_id: int,
+    name: str,
+    balance: int,
+    ts: str,
+    currency: str = 'KZT',
+    is_saving: int = 0,
+    acc_type: str = 'regular',
+    interest_rate: float = 0.0,
+    accrual_period: str = 'month',
+    is_business: int = 0,
+):
     existing = await get_account_by_name(db, user_id, name)
     if existing:
-        acc_id, _name, _balance, is_archived, _curr, _saving = existing
+        acc_id = existing[0]
+        is_archived = existing[3]
         if int(is_archived or 0) == 1:
             await db.execute(
-                "UPDATE accounts SET balance=?, starting_balance=?, is_archived=0, updated_at=?, currency=?, is_saving=? WHERE user_id=? AND id=?",
-                (balance, balance, ts, currency, is_saving, user_id, acc_id),
+                "UPDATE accounts SET balance=?, starting_balance=?, is_archived=0, updated_at=?, currency=?, is_saving=?, acc_type=?, interest_rate=?, accrual_period=?, last_interest_accrued_at=NULL, is_business=? WHERE user_id=? AND id=?",
+                (balance, balance, ts, currency, is_saving, acc_type, interest_rate, accrual_period, is_business, user_id, acc_id),
             )
             if balance != 0:
                 cur_lang = await db.execute("SELECT lang FROM settings WHERE user_id=? LIMIT 1", (user_id,))
@@ -100,8 +113,8 @@ async def create_account(db: aiosqlite.Connection, user_id: int, name: str, bala
         raise ValueError('active_name_exists')
 
     cur = await db.execute(
-        "INSERT INTO accounts(user_id, name, balance, starting_balance, is_archived, created_at, updated_at, currency, is_saving) VALUES(?,?,?,?,0,?,?,?,?)",
-        (user_id, name, balance, balance, ts, ts, currency, is_saving),
+        "INSERT INTO accounts(user_id, name, balance, starting_balance, is_archived, created_at, updated_at, currency, is_saving, acc_type, interest_rate, accrual_period, last_interest_accrued_at, is_business) VALUES(?,?,?,?,0,?,?,?,?,?,?,?,NULL,?)",
+        (user_id, name, balance, balance, ts, ts, currency, is_saving, acc_type, interest_rate, accrual_period, is_business),
     )
     acc_id = cur.lastrowid
 
@@ -145,7 +158,7 @@ async def restore_account(db: aiosqlite.Connection, user_id: int, account_id: in
     acc = await get_account(db, user_id, account_id)
     if not acc:
         raise ValueError('account_not_found')
-    _acc_id, name, _balance, _is_archived, _curr, _saving = acc
+    _acc_id, name, _balance, _is_archived, _curr, _saving = acc[:6]
     if await has_active_account_with_name(db, user_id, str(name), exclude_account_id=account_id):
         raise ValueError('active_name_exists')
     await db.execute(

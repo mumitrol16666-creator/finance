@@ -179,12 +179,20 @@ class AccountCreateRequest(BaseModel):
     balance: int
     currency: Optional[str] = "KZT"
     is_saving: Optional[int] = 0
+    acc_type: Optional[str] = "regular"
+    interest_rate: Optional[float] = 0.0
+    accrual_period: Optional[str] = "month"
+    is_business: Optional[int] = 0
 
 class AccountUpdateRequest(BaseModel):
     name: Optional[str] = None
     balance: Optional[int] = None
     is_saving: Optional[int] = None
     is_archived: Optional[int] = None
+    acc_type: Optional[str] = None
+    interest_rate: Optional[float] = None
+    accrual_period: Optional[str] = None
+    is_business: Optional[int] = None
 
 class DebtCreateRequest(BaseModel):
     direction: str  # 'out' or 'in'
@@ -221,6 +229,7 @@ class CategoryCreateRequest(BaseModel):
     name: str
     emoji: Optional[str] = "📦"
     kind: Optional[str] = "expense"
+    is_business: Optional[bool] = False
 
     is_required: Optional[int] = 1
 
@@ -380,18 +389,30 @@ async def get_dashboard(
         end_str = end_dt.isoformat()
 
         # 1. Accounts & balances
+        from app.services.deposit_service import accrue_deposit_interests
+        await accrue_deposit_interests(db, user_id)
         accounts = await list_accounts(db, user_id)
         accounts_data = []
         total_balance = 0
+        savings_balance = 0
+        deposit_balance = 0
         for acc in accounts:
             accounts_data.append({
                 "id": acc["id"],
                 "name": acc["name"],
                 "balance": acc["balance"],
                 "currency": acc["currency"],
-                "is_saving": bool(acc["is_saving"])
+                "is_saving": bool(acc["is_saving"]),
+                "acc_type": acc["acc_type"],
+                "interest_rate": acc["interest_rate"],
+                "accrual_period": acc["accrual_period"],
+                "is_business": bool(acc["is_business"])
             })
-            if not acc["is_saving"]:
+            if acc["acc_type"] == 'deposit':
+                deposit_balance += acc["balance"]
+            elif acc["is_saving"]:
+                savings_balance += acc["balance"]
+            else:
                 total_balance += acc["balance"]
             
         # 2. Monthly Expenses inside current cycle
@@ -487,7 +508,8 @@ async def get_dashboard(
                 "spentAmount": abs(spent_val),
                 "defaultAccountId": cat["default_account_id"],
                 "excludeFromAnalytics": bool(cat["exclude_from_analytics"]),
-                "warnThreshold": cat["warn_threshold"] if cat["warn_threshold"] is not None else 0.70
+                "warnThreshold": cat["warn_threshold"] if cat["warn_threshold"] is not None else 0.70,
+                "is_business": bool(cat["is_business"])
             })
             
         for cat in income_cats:
@@ -507,7 +529,8 @@ async def get_dashboard(
                 "spentAmount": abs(earned_val),
                 "defaultAccountId": cat["default_account_id"],
                 "excludeFromAnalytics": bool(cat["exclude_from_analytics"]),
-                "warnThreshold": cat["warn_threshold"] if cat["warn_threshold"] is not None else 0.70
+                "warnThreshold": cat["warn_threshold"] if cat["warn_threshold"] is not None else 0.70,
+                "is_business": bool(cat["is_business"])
             })
 
         # Calculate active days count in current cycle
@@ -521,6 +544,8 @@ async def get_dashboard(
 
         return {
             "totalBalance": total_balance,
+            "savingsBalance": savings_balance,
+            "depositBalance": deposit_balance,
             "monthlyExpenses": abs(monthly_expenses_row),
             "cycleIncome": abs(monthly_income_row),
             "cycleExpenses": abs(monthly_expenses_row),
@@ -545,13 +570,19 @@ async def get_dashboard(
 @app.get("/api/accounts")
 async def get_accounts(user_id: int = Depends(get_current_user)):
     async with get_db() as db:
+        from app.services.deposit_service import accrue_deposit_interests
+        await accrue_deposit_interests(db, user_id)
         accounts = await list_accounts(db, user_id)
         return [{
             "id": acc["id"],
             "name": acc["name"],
             "balance": acc["balance"],
             "currency": acc["currency"],
-            "is_saving": bool(acc["is_saving"])
+            "is_saving": bool(acc["is_saving"]),
+            "acc_type": acc["acc_type"],
+            "interest_rate": acc["interest_rate"],
+            "accrual_period": acc["accrual_period"],
+            "is_business": bool(acc["is_business"])
         } for acc in accounts]
 
 @app.get("/api/categories")
@@ -561,7 +592,8 @@ async def get_categories(kind: str = "expense", user_id: int = Depends(get_curre
         return [{
             "id": cat["id"],
             "name": cat["name"],
-            "emoji": cat["emoji"]
+            "emoji": cat["emoji"],
+            "is_business": bool(cat["is_business"])
         } for cat in categories]
 
 @app.post("/api/categories")
@@ -571,7 +603,7 @@ async def add_category(req: CategoryCreateRequest, user_id: int = Depends(get_cu
         from app.db.repositories.categories_repo import create_category, name_exists_any_kind
         if await name_exists_any_kind(db, user_id, req.name):
             raise HTTPException(status_code=400, detail="Категория с таким именем уже существует")
-        cat_id = await create_category(db, user_id, req.name, req.emoji, req.kind, now_str)
+        cat_id = await create_category(db, user_id, req.name, req.emoji, req.kind, now_str, 1 if req.is_business else 0)
         await db.commit()
         return {"status": "created", "id": cat_id}
 
@@ -590,13 +622,40 @@ async def add_transaction(req: TransactionCreateRequest, user_id: int = Depends(
     now_str = datetime.now(timezone.utc).isoformat()
     async with get_db() as db:
         if req.kind == "transfer":
-            from app.domain.services.access_service import can_use_feature
+            from app.domain.services.access_service import can_use_feature, get_user_context
             if not await can_use_feature(db, user_id, "transfer"):
                 raise HTTPException(status_code=403, detail="Функция перевода доступна только в Premium версии")
             if not req.to_account_id:
                 raise HTTPException(status_code=400, detail="to_account_id is required for transfers")
+
+            # Currency exchange logic
+            from app.db.repositories.accounts_repo import get_account
+            from_acc_row = await get_account(db, user_id, req.account_id)
+            to_acc_row = await get_account(db, user_id, req.to_account_id)
+            if not from_acc_row or not to_acc_row:
+                raise HTTPException(status_code=404, detail="Счёт не найден")
+
+            from_curr = from_acc_row[4]  # currency is index 4
+            to_curr = to_acc_row[4]
+
+            ctx = await get_user_context(db, user_id)
+            if (from_curr != to_curr or from_curr != "KZT" or to_curr != "KZT") and ctx.mode != "full":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Мультивалютные переводы доступны только в Premium версии"
+                )
+
+            if from_curr != to_curr:
+                from app.services.currency_service import get_exchange_rate
+                rate = await get_exchange_rate(db, from_curr, to_curr)
+                to_amount = int(round(req.amount * rate))
+                conversion_note = f"{req.note or ''} (Курс: {rate:.4f})".strip()
+            else:
+                to_amount = req.amount
+                conversion_note = req.note
+
             await create_transfer(
-                db, user_id, now_str, req.account_id, req.to_account_id, req.amount, req.note, now_str
+                db, user_id, now_str, req.account_id, req.to_account_id, req.amount, conversion_note, now_str, to_amount
             )
         else:
             amount_val = -req.amount if req.kind == "expense" else req.amount
@@ -730,6 +789,40 @@ async def chat_with_ai(req: ChatRequest, user_id: int = Depends(get_current_user
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "ai"):
             raise HTTPException(status_code=403, detail="ИИ-консультант доступен только в Premium версии")
+        
+        # Check daily limit for non-premium users
+        from app.domain.services.access_service import get_user_context
+        ctx = await get_user_context(db, user_id)
+        if ctx.mode != "full":
+            from datetime import date
+            today_str = date.today().isoformat()
+            
+            # Fetch daily AI chat usage
+            cur = await db.execute("SELECT ai_chat_daily_date, ai_chat_daily_used FROM settings WHERE user_id=?", (user_id,))
+            row = await cur.fetchone()
+            if row:
+                daily_date, daily_used = row
+                daily_used = daily_used or 0
+            else:
+                daily_date, daily_used = None, 0
+                
+            if daily_date == today_str:
+                if daily_used >= 50:
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Вы превысили дневной лимит в 50 сообщений ИИ. Перейдите на Premium, чтобы снять ограничения."
+                    )
+                new_used = daily_used + 1
+            else:
+                new_used = 1
+                
+            # Update settings
+            await db.execute(
+                "UPDATE settings SET ai_chat_daily_date=?, ai_chat_daily_used=?, updated_at=? WHERE user_id=?",
+                (today_str, new_used, datetime.now(timezone.utc).isoformat(), user_id)
+            )
+            await db.commit()
+
         try:
             from app.domain.services.ai_llm_service import chat_with_user_ai
             response = await chat_with_user_ai(db, user_id, text)
@@ -826,10 +919,25 @@ async def post_analytics_audit(
 async def add_account(req: AccountCreateRequest, user_id: int = Depends(get_current_user)):
     now_str = datetime.now(timezone.utc).isoformat()
     async with get_db() as db:
+        # Check premium logic for non-KZT currency
+        from app.domain.services.access_service import get_user_context
+        ctx = await get_user_context(db, user_id)
+        if (req.currency and req.currency.upper() != "KZT") and ctx.mode != "full":
+            raise HTTPException(
+                status_code=403,
+                detail="Создание валютных счетов доступно только в Premium версии"
+            )
+
         try:
             from app.db.repositories.accounts_repo import create_account
             acc_id, status = await create_account(
-                db, user_id, req.name, req.balance, now_str, req.currency or "KZT", req.is_saving or 0
+                db, user_id, req.name, req.balance, now_str,
+                currency=req.currency or "KZT",
+                is_saving=req.is_saving or 0,
+                acc_type=req.acc_type or "regular",
+                interest_rate=req.interest_rate or 0.0,
+                accrual_period=req.accrual_period or "month",
+                is_business=req.is_business or 0
             )
             await db.commit()
             return {"status": status, "id": acc_id}

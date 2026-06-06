@@ -98,14 +98,25 @@ class AppState extends ChangeNotifier {
   bool? _tempSaveLogin;
 
   // Real data — loaded from server after login
+  bool _isBusinessMode = false;
+  bool get isBusinessMode => _isBusinessMode;
+
+  void toggleBusinessMode(bool val) {
+    _isBusinessMode = val;
+    notifyListeners();
+  }
+
   List<Account> _accounts = [];
-  List<Account> get accounts => _accounts;
+  List<Account> get accounts => _accounts.where((acc) => acc.isBusiness == _isBusinessMode).toList();
 
   List<Category> _categories = [];
-  List<Category> get categories => _categories;
+  List<Category> get categories => _categories.where((cat) => cat.isBusiness == _isBusinessMode).toList();
 
   List<Transaction> _transactions = [];
-  List<Transaction> get transactions => _transactions;
+  List<Transaction> get transactions {
+    final activeAccNames = accounts.map((a) => a.name).toSet();
+    return _transactions.where((tx) => activeAccNames.contains(tx.accountName)).toList();
+  }
 
   List<bool> _weeklyStreak = [false, false, false, false, false, false, false];
   List<bool> get weeklyStreak => _weeklyStreak;
@@ -113,10 +124,11 @@ class AppState extends ChangeNotifier {
   List<ChatMessage> _chatHistory = [];
   List<ChatMessage> get chatHistory => _chatHistory;
 
-  int get totalBalance => _accounts.where((acc) => !acc.isSaving).fold(0, (sum, acc) => sum + acc.balance);
-  int get savingsBalance => _accounts.where((acc) => acc.isSaving).fold(0, (sum, acc) => sum + acc.balance);
-  int get monthlyExpenses => _categories.where((c) => c.kind == 'expense').fold(0, (sum, cat) => sum + cat.spentAmount);
-  int get monthlyIncome => _categories.where((c) => c.kind == 'income').fold(0, (sum, cat) => sum + cat.spentAmount);
+  int get totalBalance => _accounts.where((acc) => acc.isBusiness == _isBusinessMode && !acc.isSaving && acc.accType != 'deposit').fold(0, (sum, acc) => sum + acc.balance);
+  int get savingsBalance => _accounts.where((acc) => acc.isBusiness == _isBusinessMode && acc.isSaving && acc.accType != 'deposit').fold(0, (sum, acc) => sum + acc.balance);
+  int get depositBalance => _accounts.where((acc) => acc.isBusiness == _isBusinessMode && acc.accType == 'deposit').fold(0, (sum, acc) => sum + acc.balance);
+  int get monthlyExpenses => categories.where((c) => c.kind == 'expense').fold(0, (sum, cat) => sum + cat.spentAmount);
+  int get monthlyIncome => categories.where((c) => c.kind == 'income').fold(0, (sum, cat) => sum + cat.spentAmount);
 
   List<Debt> _debts = [];
   List<Debt> get debts => _debts;
@@ -591,6 +603,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> upgradeToPremium() async {
+    _isPremium = true;
+    notifyListeners();
+  }
+
   void logout() async {
     _token = null;
     _isAuthenticated = false;
@@ -712,6 +729,10 @@ class AppState extends ChangeNotifier {
     required int balance,
     String currency = 'KZT',
     int isSaving = 0,
+    String accType = 'regular',
+    double interestRate = 0.0,
+    String accrualPeriod = 'month',
+    int isBusiness = 0,
   }) async {
     if (_token == null) return;
     _isLoading = true;
@@ -728,6 +749,10 @@ class AppState extends ChangeNotifier {
           'balance': balance,
           'currency': currency,
           'is_saving': isSaving,
+          'acc_type': accType,
+          'interest_rate': interestRate,
+          'accrual_period': accrualPeriod,
+          'is_business': isBusiness,
         }),
       );
       if (response.statusCode == 200) {
@@ -749,6 +774,10 @@ class AppState extends ChangeNotifier {
     int? balance,
     int? isSaving,
     int? isArchived,
+    String? accType,
+    double? interestRate,
+    String? accrualPeriod,
+    int? isBusiness,
   }) async {
     if (_token == null) return;
     _isLoading = true;
@@ -759,6 +788,10 @@ class AppState extends ChangeNotifier {
       if (balance != null) bodyMap['balance'] = balance;
       if (isSaving != null) bodyMap['is_saving'] = isSaving;
       if (isArchived != null) bodyMap['is_archived'] = isArchived;
+      if (accType != null) bodyMap['acc_type'] = accType;
+      if (interestRate != null) bodyMap['interest_rate'] = interestRate;
+      if (accrualPeriod != null) bodyMap['accrual_period'] = accrualPeriod;
+      if (isBusiness != null) bodyMap['is_business'] = isBusiness;
 
       final response = await http.put(
         Uri.parse('$_baseUrl/api/accounts/$accountId'),
@@ -1110,6 +1143,13 @@ class AppState extends ChangeNotifier {
         final data = json.decode(response.body);
         final reply = data['text'] as String;
         _chatHistory.add(ChatMessage(text: reply, isUser: false, timestamp: DateTime.now()));
+      } else if (response.statusCode == 429) {
+        _chatHistory.add(ChatMessage(
+          text: 'Вы превысили дневной лимит в 50 сообщений ИИ. Перейдите на Premium, чтобы снять ограничения.',
+          isUser: false,
+          timestamp: DateTime.now(),
+        ));
+        throw Exception('limit_exceeded');
       } else {
         _chatHistory.add(ChatMessage(
           text: 'Ошибка связи с сервером. Пожалуйста, попробуйте позже.',
