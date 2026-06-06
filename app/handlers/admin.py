@@ -27,16 +27,19 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
     # 2. SQL Queries (validated and correct fields)
     users_query = """
         SELECT 
-            u.user_id, 
+            u.id, 
             u.full_access, 
             u.created_at,
             s.lang, 
             s.timezone,
-            (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.user_id AND a.is_archived = 0) as accounts_count,
-            (SELECT COUNT(*) FROM transactions t WHERE t.user_id = u.user_id AND t.deleted_at IS NULL) as tx_count,
-            (SELECT COUNT(*) FROM debts d WHERE d.user_id = u.user_id AND d.closed_at IS NULL) as active_debts
+            (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.id AND a.is_archived = 0) as accounts_count,
+            (SELECT COUNT(*) FROM transactions t WHERE t.user_id = u.id AND t.deleted_at IS NULL) as tx_count,
+            (SELECT COUNT(*) FROM debts d WHERE d.user_id = u.id AND d.closed_at IS NULL) as active_debts,
+            u.telegram_id,
+            u.username,
+            u.display_name
         FROM users u
-        LEFT JOIN settings s ON u.user_id = s.user_id
+        LEFT JOIN settings s ON u.id = s.user_id
         ORDER BY u.created_at DESC
     """
     
@@ -65,20 +68,33 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
     # 3. Resolve Usernames and Names dynamically from Telegram Bot API
     user_usernames = {}
     user_first_names = {}
+    user_tg_ids = {}
     
     for u in users:
-        uid = u[0]
-        try:
-            chat = await bot.get_chat(uid)
-            username = f"@{chat.username}" if chat.username else "—"
-            first_name = chat.first_name or "—"
-        except Exception:
-            username = "—"
-            first_name = "—"
-        user_usernames[uid] = username
-        user_first_names[uid] = first_name
-        # Prevent Telegram API spam rate-limits
-        await asyncio.sleep(0.05)
+        db_id = u[0]
+        tg_id = u[8]
+        username = u[9]
+        display_name = u[10]
+        
+        user_tg_ids[db_id] = tg_id
+        
+        if tg_id:
+            try:
+                chat = await bot.get_chat(tg_id)
+                username_val = f"@{chat.username}" if chat.username else (f"@{username}" if username else "—")
+                first_name_val = chat.first_name or display_name or "—"
+            except Exception:
+                username_val = f"@{username}" if username else "—"
+                first_name_val = display_name or "—"
+        else:
+            username_val = f"@{username}" if username else "—"
+            first_name_val = display_name or "—"
+            
+        user_usernames[db_id] = username_val
+        user_first_names[db_id] = first_name_val
+        if tg_id:
+            # Prevent Telegram API spam rate-limits
+            await asyncio.sleep(0.05)
 
     # 4. Create Workbook
     wb = Workbook()
@@ -116,13 +132,15 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         cell.border = thin_border
         
     for row_idx, u in enumerate(users, start=2):
-        uid = u[0]
+        db_id = u[0]
+        tg_id = u[8]
         is_premium = "Да 👑" if u[1] == 1 else "Нет"
-        username = user_usernames.get(uid, "—")
-        first_name = user_first_names.get(uid, "—")
+        username = user_usernames.get(db_id, "—")
+        first_name = user_first_names.get(db_id, "—")
+        tg_id_display = tg_id if tg_id else f"App ID: {db_id}"
         
         row_data = [
-            uid, username, first_name, is_premium,
+            tg_id_display, username, first_name, is_premium,
             u[2] or "—", (u[3] or "ru").upper(), u[4] or "—", u[5], u[6], u[7]
         ]
         ws_users.append(row_data)
@@ -157,12 +175,14 @@ async def admin_export_stats(m: Message, bot: Bot, db: aiosqlite.Connection):
         cell.border = thin_border
         
     for row_idx, acc in enumerate(accounts, start=2):
-        uid = acc[0]
+        db_id = acc[0]
         is_saving = "Да 🎯" if acc[4] == 1 else "Нет 💳"
-        username = user_usernames.get(uid, "—")
+        username = user_usernames.get(db_id, "—")
+        tg_id = user_tg_ids.get(db_id)
+        tg_id_display = tg_id if tg_id else f"App ID: {db_id}"
         
         row_data = [
-            uid, username, acc[1],
+            tg_id_display, username, acc[1],
             acc[2], acc[3], is_saving
         ]
         ws_accounts.append(row_data)
@@ -229,28 +249,31 @@ async def admin_user_info(m: Message, bot: Bot, db: aiosqlite.Connection):
         
     target_id = int(parts[1])
     
-    cur = await db.execute("SELECT created_at FROM users WHERE user_id = ?", (target_id,))
+    cur = await db.execute("SELECT id, telegram_id, username, display_name, created_at FROM users WHERE id = ? OR telegram_id = ?", (target_id, target_id))
     row = await cur.fetchone()
     if not row:
         await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
         return
         
-    created_at = row[0]
+    db_user_id, telegram_id, stored_username, display_name, created_at = row[0], row[1], row[2], row[3], row[4]
     
     from app.domain.services.access_service import get_user_context, get_available_features
     from app.db.repositories.settings_repo import get_lang
     
-    ctx = await get_user_context(db, target_id)
-    lang = await get_lang(db, target_id)
-    features = await get_available_features(db, target_id)
+    ctx = await get_user_context(db, db_user_id)
+    lang = await get_lang(db, db_user_id)
+    features = await get_available_features(db, db_user_id)
     
-    try:
-        chat = await bot.get_chat(target_id)
-        name = f"{chat.first_name or ''} {chat.last_name or ''}".strip() or "—"
-        username = f"@{chat.username}" if chat.username else "—"
-    except Exception:
-        name = "—"
-        username = "—"
+    name = display_name or "—"
+    username = f"@{stored_username}" if stored_username else "—"
+    
+    if telegram_id:
+        try:
+            chat = await bot.get_chat(telegram_id)
+            name = f"{chat.first_name or ''} {chat.last_name or ''}".strip() or name
+            username = f"@{chat.username}" if chat.username else username
+        except Exception:
+            pass
         
     days_left = "—"
     if ctx.expiration_date:
@@ -258,14 +281,15 @@ async def admin_user_info(m: Message, bot: Bot, db: aiosqlite.Connection):
         try:
             exp = _date.fromisoformat(ctx.expiration_date)
             from app.domain.time_utils import today_in_user_tz
-            today = await today_in_user_tz(db, target_id)
+            today = await today_in_user_tz(db, db_user_id)
             days = (exp - today).days
             days_left = f"{days} дней" if days >= 0 else "истёк"
         except Exception:
             pass
             
     info = (
-        f"👤 <b>Информация о пользователе {target_id}</b>\n\n"
+        f"👤 <b>Информация о пользователе {db_user_id}</b>\n\n"
+        f"• <b>Telegram ID:</b> <code>{telegram_id or '—'}</code>\n"
         f"• <b>Имя:</b> {name}\n"
         f"• <b>Юзернейм:</b> {username}\n"
         f"• <b>Регистрация:</b> <code>{created_at}</code>\n"
@@ -299,11 +323,13 @@ async def admin_grant_access(m: Message, bot: Bot, db: aiosqlite.Connection):
     if len(parts) >= 3 and parts[2].isdigit():
         days = int(parts[2])
         
-    cur = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (target_id,))
+    cur = await db.execute("SELECT id, telegram_id FROM users WHERE id = ? OR telegram_id = ?", (target_id, target_id))
     row = await cur.fetchone()
     if not row:
         await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
         return
+        
+    db_user_id, telegram_id = row[0], row[1]
         
     from app.db.repositories.users_repo import grant_full_access
     from app.db.repositories.settings_repo import get_lang
@@ -311,11 +337,11 @@ async def admin_grant_access(m: Message, bot: Bot, db: aiosqlite.Connection):
     from datetime import datetime as _dt, timezone as _tz
     
     try:
-        await grant_full_access(db, target_id, days=days)
+        await grant_full_access(db, db_user_id, days=days)
         now_str = _dt.now(_tz.utc).isoformat()
         await db.execute(
             "UPDATE settings SET trial_reminder_sent = 0, updated_at = ? WHERE user_id = ?",
-            (now_str, target_id)
+            (now_str, db_user_id)
         )
         await db.commit()
     except Exception as e:
@@ -323,21 +349,22 @@ async def admin_grant_access(m: Message, bot: Bot, db: aiosqlite.Connection):
         await m.reply(f"❌ Ошибка записи в базу данных: {e}")
         return
         
-    lang = await get_lang(db, target_id)
+    lang = await get_lang(db, db_user_id)
     
-    await m.reply(f"✅ Успешно выдан Полный доступ (Premium) пользователю <code>{target_id}</code> на <b>{days}</b> дней.", parse_mode="HTML")
+    await m.reply(f"✅ Успешно выдан Полный доступ (Premium) пользователю <code>{db_user_id}</code> на <b>{days}</b> дней.", parse_mode="HTML")
     
-    user_msg = {
-        "ru": f"🎉 <b>Администратор активировал вам Полный режим на {days} дней!</b>\n\nТеперь вам доступны абсолютно все функции бота, включая AI-Консультанта, отчеты по категориям, учет долгов, лимиты и цели.",
-        "en": f"🎉 <b>The administrator has activated Full Mode for you for {days} days!</b>\n\nAll features of the bot are now available to you, including the AI Assistant, category reports, debts tracking, limits, and targets.",
-        "kk": f"🎉 <b>Әкімші сізге {days} күнге Толық режимді қосты!</b>\n\nЕнді сізге боттың барлық функциялары, соның ішінде AI-Кеңесші, санаттар бойынша есептер, қарыздарды есепке алу, лимиттер мен мақсаттар қолжетімді.",
-    }.get(lang, "ru")
-    
-    try:
-        markup = await build_main_menu_markup(db, target_id, lang)
-        await bot.send_message(target_id, user_msg, reply_markup=markup, parse_mode="HTML")
-    except Exception as e:
-        await m.reply(f"⚠️ Доступ выдан, но не удалось отправить сообщение пользователю: {e}")
+    if telegram_id:
+        user_msg = {
+            "ru": f"🎉 <b>Администратор активировал вам Полный режим на {days} дней!</b>\n\nТеперь вам доступны абсолютно все функции бота, включая AI-Консультанта, отчеты по категориям, учет долгов, лимиты и цели.",
+            "en": f"🎉 <b>The administrator has activated Full Mode for you for {days} days!</b>\n\nAll features of the bot are now available to you, including the AI Assistant, category reports, debts tracking, limits, and targets.",
+            "kk": f"🎉 <b>Әкімші сізге {days} күнге Толық режимді қосты!</b>\n\nЕнді сізге боттың барлық функциялары, соның ішінде AI-Кеңесші, санаттар бойынша есептер, қарыздарды есепке алу, лимиттер мен мақсаттар қолжетімді.",
+        }.get(lang, "ru")
+        
+        try:
+            markup = await build_main_menu_markup(db, db_user_id, lang)
+            await bot.send_message(telegram_id, user_msg, reply_markup=markup, parse_mode="HTML")
+        except Exception as e:
+            await m.reply(f"⚠️ Доступ выдан, но не удалось отправить сообщение пользователю: {e}")
 
 
 @router.message(Command("admin_revoke"))
@@ -355,19 +382,21 @@ async def admin_revoke_access(m: Message, bot: Bot, db: aiosqlite.Connection):
         
     target_id = int(parts[1])
     
-    cur = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (target_id,))
+    cur = await db.execute("SELECT id, telegram_id FROM users WHERE id = ? OR telegram_id = ?", (target_id, target_id))
     row = await cur.fetchone()
     if not row:
         await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
         return
+        
+    db_user_id, telegram_id = row[0], row[1]
         
     from app.db.repositories.settings_repo import get_lang
     from app.handlers.common import build_main_menu_markup
     
     try:
         await db.execute(
-            "UPDATE users SET full_access = 0, mode = 'newbie' WHERE user_id = ?",
-            (target_id,)
+            "UPDATE users SET full_access = 0, mode = 'newbie' WHERE id = ?",
+            (db_user_id,)
         )
         await db.commit()
     except Exception as e:
@@ -375,21 +404,22 @@ async def admin_revoke_access(m: Message, bot: Bot, db: aiosqlite.Connection):
         await m.reply(f"❌ Ошибка записи в базу данных: {e}")
         return
         
-    lang = await get_lang(db, target_id)
+    lang = await get_lang(db, db_user_id)
     
-    await m.reply(f"✅ Доступ (Premium) для пользователя <code>{target_id}</code> успешно аннулирован.", parse_mode="HTML")
+    await m.reply(f"✅ Доступ (Premium) для пользователя <code>{db_user_id}</code> успешно аннулирован.", parse_mode="HTML")
     
-    user_msg = {
-        "ru": "ℹ️ <b>Ваш Полный доступ был приостановлен или изменен администратором.</b>\n\nБот переведен в стандартный режим.",
-        "en": "ℹ️ <b>Your Full access has been suspended or modified by the administrator.</b>\n\nThe bot has been switched to standard mode.",
-        "kk": "ℹ️ <b>Сіздің Толық қолжетімділігіңіз әкімшімен тоқтатылды немесе өзгертілді.</b>\n\nБот стандартты режимге ауыстырылды.",
-    }.get(lang, "ru")
-    
-    try:
-        markup = await build_main_menu_markup(db, target_id, lang)
-        await bot.send_message(target_id, user_msg, reply_markup=markup, parse_mode="HTML")
-    except Exception as e:
-        await m.reply(f"⚠️ Доступ аннулирован, но не удалось отправить сообщение пользователю: {e}")
+    if telegram_id:
+        user_msg = {
+            "ru": "ℹ️ <b>Ваш Полный доступ был приостановлен или изменен администратором.</b>\n\nБот переведен в стандартный режим.",
+            "en": "ℹ️ <b>Your Full access has been suspended or modified by the administrator.</b>\n\nThe bot has been switched to standard mode.",
+            "kk": "ℹ️ <b>Сіздің Толық қолжетімділігіңіз әкімшімен тоқтатылды немесе өзгертілді.</b>\n\nБот стандартты режимге ауыстырылды.",
+        }.get(lang, "ru")
+        
+        try:
+            markup = await build_main_menu_markup(db, db_user_id, lang)
+            await bot.send_message(telegram_id, user_msg, reply_markup=markup, parse_mode="HTML")
+        except Exception as e:
+            await m.reply(f"⚠️ Доступ аннулирован, но не удалось отправить сообщение пользователю: {e}")
 
 
 @router.message(Command("info"))
@@ -434,18 +464,18 @@ async def admin_set_streak(m: Message, bot: Bot, db: aiosqlite.Connection):
     target_id = int(parts[1])
     streak_value = int(parts[2])
 
-    cur = await db.execute("SELECT max_streak FROM users WHERE user_id = ?", (target_id,))
+    cur = await db.execute("SELECT id, telegram_id, max_streak FROM users WHERE id = ? OR telegram_id = ?", (target_id, target_id))
     row = await cur.fetchone()
     if not row:
         await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
         return
 
-    max_streak = int(row[0] or 0)
+    db_user_id, telegram_id, max_streak = row[0], row[1], int(row[2] or 0)
     new_max = max(max_streak, streak_value)
 
     from app.domain.time_utils import today_in_user_tz
     try:
-        today = await today_in_user_tz(db, target_id)
+        today = await today_in_user_tz(db, db_user_id)
         today_str = today.isoformat()
     except Exception:
         from datetime import datetime as _dt, timezone as _tz
@@ -453,8 +483,8 @@ async def admin_set_streak(m: Message, bot: Bot, db: aiosqlite.Connection):
 
     try:
         await db.execute(
-            "UPDATE users SET current_streak = ?, max_streak = ?, last_activity_date = ? WHERE user_id = ?",
-            (streak_value, new_max, today_str, target_id)
+            "UPDATE users SET current_streak = ?, max_streak = ?, last_activity_date = ? WHERE id = ?",
+            (streak_value, new_max, today_str, db_user_id)
         )
         await db.commit()
     except Exception as e:
@@ -463,23 +493,24 @@ async def admin_set_streak(m: Message, bot: Bot, db: aiosqlite.Connection):
         return
 
     await m.reply(
-        f"✅ Серия активности пользователя <code>{target_id}</code> успешно изменена на <b>{streak_value}</b> дней (макс. серия: <b>{new_max}</b>).",
+        f"✅ Серия активности пользователя <code>{db_user_id}</code> успешно изменена на <b>{streak_value}</b> дней (макс. серия: <b>{new_max}</b>).",
         parse_mode="HTML"
     )
 
-    from app.db.repositories.settings_repo import get_lang
-    lang = await get_lang(db, target_id)
+    if telegram_id:
+        from app.db.repositories.settings_repo import get_lang
+        lang = await get_lang(db, db_user_id)
 
-    user_msg = {
-        "ru": f"🔥 <b>Администратор установил вашу серию активности: {streak_value} дн. подряд!</b>\n\nПродолжайте вести учёт каждый день, чтобы сохранить её!",
-        "en": f"🔥 <b>The administrator has set your activity streak to {streak_value} days!</b>\n\nKeep tracking your transactions daily to maintain it!",
-        "kk": f"🔥 <b>Әкімші сіздің белсенділік серияңызды {streak_value} күн етіп орнатты!</b>\n\nОны сақтап қалу үшін күнделікті шығындарды жазып тұрыңыз!",
-    }.get(lang, "ru")
+        user_msg = {
+            "ru": f"🔥 <b>Администратор установил вашу серию активности: {streak_value} дн. подряд!</b>\n\nПродолжайте вести учёт каждый день, чтобы сохранить её!",
+            "en": f"🔥 <b>The administrator has set your activity streak to {streak_value} days!</b>\n\nKeep tracking your transactions daily to maintain it!",
+            "kk": f"🔥 <b>Әкімші сіздің белсенділік серияңызды {streak_value} күн етіп орнатты!</b>\n\nОны сақтап қалу үшін күнделікті шығындарды жазып тұрыңыз!",
+        }.get(lang, "ru")
 
-    try:
-        await bot.send_message(target_id, user_msg, parse_mode="HTML")
-    except Exception as e:
-        await m.reply(f"⚠️ Серия изменена, но не удалось отправить сообщение пользователю: {e}")
+        try:
+            await bot.send_message(telegram_id, user_msg, parse_mode="HTML")
+        except Exception as e:
+            await m.reply(f"⚠️ Серия изменена, но не удалось отправить сообщение пользователю: {e}")
 
 
 @router.message(Command("admin_reports"))
@@ -499,18 +530,20 @@ async def admin_grant_reports(m: Message, bot: Bot, db: aiosqlite.Connection):
     target_id = int(parts[1])
     count = int(parts[2])
 
-    cur = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (target_id,))
+    cur = await db.execute("SELECT id, telegram_id FROM users WHERE id = ? OR telegram_id = ?", (target_id, target_id))
     row = await cur.fetchone()
     if not row:
         await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
         return
+
+    db_user_id, telegram_id = row[0], row[1]
 
     from app.db.repositories.settings_repo import add_ai_reports_extra, get_lang
     from datetime import datetime as _dt, timezone as _tz
     now_str = _dt.now(_tz.utc).isoformat()
 
     try:
-        await add_ai_reports_extra(db, target_id, count, now_str)
+        await add_ai_reports_extra(db, db_user_id, count, now_str)
         await db.commit()
     except Exception as e:
         await db.rollback()
@@ -518,22 +551,23 @@ async def admin_grant_reports(m: Message, bot: Bot, db: aiosqlite.Connection):
         return
 
     await m.reply(
-        f"✅ Пользователю <code>{target_id}</code> успешно начислено <b>{count}</b> бесплатных AI-отчетов.",
+        f"✅ Пользователю <code>{db_user_id}</code> успешно начислено <b>{count}</b> бесплатных AI-отчетов.",
         parse_mode="HTML"
     )
 
-    lang = await get_lang(db, target_id)
+    if telegram_id:
+        lang = await get_lang(db, db_user_id)
 
-    user_msg = {
-        "ru": f"🎁 <b>Администратор начислил вам бесплатные AI-отчеты: +{count} шт.!</b>\n\nВы можете использовать их в разделе AI-Консультанта.",
-        "en": f"🎁 <b>The administrator has credited you with free AI reports: +{count}!</b>\n\nYou can use them in the AI Assistant section.",
-        "kk": f"🎁 <b>Әкімші сізге тегін AI-есептерді қосты: +{count} дана!</b>\n\nОларды AI-Кеңесші бөлімінде пайдалана аласыз.",
-    }.get(lang, "ru")
+        user_msg = {
+            "ru": f"🎁 <b>Администратор начислил вам бесплатные AI-отчеты: +{count} шт.!</b>\n\nВы можете использовать их в разделе AI-Консультанта.",
+            "en": f"🎁 <b>The administrator has credited you with free AI reports: +{count}!</b>\n\nYou can use them in the AI Assistant section.",
+            "kk": f"🎁 <b>Әкімші сізге тегін AI-есептерді қосты: +{count} дана!</b>\n\nОларды AI-Кеңесші бөлімінде пайдалана аласыз.",
+        }.get(lang, "ru")
 
-    try:
-        await bot.send_message(target_id, user_msg, parse_mode="HTML")
-    except Exception as e:
-        await m.reply(f"⚠️ Отчеты начислены, но не удалось отправить сообщение пользователю: {e}")
+        try:
+            await bot.send_message(telegram_id, user_msg, parse_mode="HTML")
+        except Exception as e:
+            await m.reply(f"⚠️ Отчеты начислены, но не удалось отправить сообщение пользователю: {e}")
 
 
 @router.message(Command("admin_delete"))
@@ -553,29 +587,20 @@ async def admin_delete_user(m: Message, db: aiosqlite.Connection):
     target_id = int(parts[1])
 
     # 1. Verify user exists
-    cur = await db.execute("SELECT 1 FROM users WHERE user_id = ?", (target_id,))
+    cur = await db.execute("SELECT id FROM users WHERE id = ? OR telegram_id = ?", (target_id, target_id))
     row = await cur.fetchone()
     if not row:
         await m.reply(f"❌ Пользователь <code>{target_id}</code> не найден в базе данных.", parse_mode="HTML")
         return
 
-    # Tables to clean up
-    tables_with_user_id = [
-        "users", "settings", "accounts", "categories", "transactions", "budgets",
-        "daily_stats", "debts", "debt_payments", "debt_reminder_log", "recurring_expenses",
-        "recurring_incomes", "planned_transactions", "ai_context_notes", "rules",
-        "expected_events", "full_access_payments", "tx_audit", "ai_profile",
-        "ai_insights", "ai_recommendations_log", "sent_keyboards", "export_logs"
-    ]
-
-    from loguru import logger
+    db_user_id = row[0]
 
     try:
         from app.db.repositories.reset_repo import delete_user_account
-        await delete_user_account(db, target_id)
+        await delete_user_account(db, db_user_id)
         
         await m.reply(
-            f"✅ Пользователь <code>{target_id}</code> успешно и полностью удален из базы данных.",
+            f"✅ Пользователь <code>{db_user_id}</code> (Telegram ID/App ID: {target_id}) успешно и полностью удален из базы данных.",
             parse_mode="HTML"
         )
     except Exception as e:

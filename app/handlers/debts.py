@@ -1250,15 +1250,21 @@ async def debt_pick_account(c: CallbackQuery, db: aiosqlite.Connection, state: F
         dtype=dtype,
     )
 
-    if direction == "out":
-        note = f"Платёж по кредиту: {title}" if dtype == "bank" else f"Возврат долга: {title}"
-        await add_expense(db, c.from_user.id, amount, account_id, category_id, note)
-    else:
-        note = f"Мне вернули долг: {title}"
-        await add_income(db, c.from_user.id, amount, account_id, category_id, note)
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        if direction == "out":
+            note = f"Платёж по кредиту: {title}" if dtype == "bank" else f"Возврат долга: {title}"
+            await add_expense(db, c.from_user.id, amount, account_id, category_id, note, commit=False)
+        else:
+            note = f"Мне вернули долг: {title}"
+            await add_income(db, c.from_user.id, amount, account_id, category_id, note, commit=False)
 
-    next_date = _next_date_after_payment(debt)
-    await apply_debt_payment(db, c.from_user.id, debt_id, amount, next_date)
+        next_date = _next_date_after_payment(debt)
+        await apply_debt_payment(db, c.from_user.id, debt_id, amount, next_date, commit=False)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
     updated_raw = await get_debt(db, c.from_user.id, debt_id)
     is_closed = False

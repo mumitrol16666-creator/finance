@@ -107,7 +107,7 @@ async def get_user_context(db: aiosqlite.Connection, user_id: int) -> UserAccess
                 full_access = False
                 stored_mode = "newbie"
                 await db.execute(
-                    "UPDATE users SET full_access=0, mode='newbie' WHERE user_id=?",
+                    "UPDATE users SET full_access=0, mode='newbie' WHERE id=?",
                     (user_id,),
                 )
                 await db.commit()

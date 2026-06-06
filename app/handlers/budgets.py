@@ -151,7 +151,7 @@ def _budget_picker_meta(
     status_map = status_map or {}
 
     def key(row: tuple[int, str, str | None]):
-        cid, name, _emoji = row
+        cid, name, _emoji, *_ = row
         info = status_map.get(int(cid))
 
         if info:
@@ -181,7 +181,7 @@ def _budget_picker_meta(
     right_map: dict[int, str] = {}
     badge_map: dict[int, str] = {}
 
-    for cid, _name, _emoji in ordered:
+    for cid, _name, _emoji, *_ in ordered:
         info = status_map.get(int(cid))
 
         if not info:

@@ -34,7 +34,7 @@ async def get_balance_after(db: aiosqlite.Connection, user_id: int, account_id: 
     bal = int(acc['balance'])
     return bal, bal + delta, name
 
-async def add_expense(db: aiosqlite.Connection, user_id: int, amount_positive: int, account_id: int, category_id: int, note: str | None):
+async def add_expense(db: aiosqlite.Connection, user_id: int, amount_positive: int, account_id: int, category_id: int, note: str | None, commit: bool = True):
     ts = utcnow_iso()
     note = clean_note(note)
     amount = -amount_positive
@@ -42,7 +42,8 @@ async def add_expense(db: aiosqlite.Connection, user_id: int, amount_positive: i
     await apply_expense_income(db, user_id, tx_id, amount, account_id)
     local_date = await _local_date_for_user(db, user_id, ts)
     await update_streak_on_activity(db, user_id, local_date)
-    await db.commit()
+    if commit:
+        await db.commit()
     return tx_id
 
 async def add_expense_v2(
@@ -52,6 +53,7 @@ async def add_expense_v2(
     account_id: int,
     category_id: int,
     note: str | None,
+    commit: bool = True,
 ) -> tuple[int, dict]:
     """Expense with meta for daily limit + monthly category budget."""
     ts = utcnow_iso()
@@ -66,7 +68,7 @@ async def add_expense_v2(
     cat_budget = await get_category_budget(db, user_id, month, category_id)
     before_cat_total = await month_spent_by_category(db, user_id, month, category_id) if cat_budget else 0
 
-    tx_id = await add_expense(db, user_id, amount_positive, account_id, category_id, note)
+    tx_id = await add_expense(db, user_id, amount_positive, account_id, category_id, note, commit=commit)
 
     meta: dict = {}
 
@@ -118,7 +120,7 @@ async def add_expense_v2(
     return tx_id, meta
 
 
-async def add_income(db: aiosqlite.Connection, user_id: int, amount_positive: int, account_id: int, category_id: int, note: str | None):
+async def add_income(db: aiosqlite.Connection, user_id: int, amount_positive: int, account_id: int, category_id: int, note: str | None, commit: bool = True):
     ts = utcnow_iso()
     note = clean_note(note)
     amount = amount_positive
@@ -126,7 +128,8 @@ async def add_income(db: aiosqlite.Connection, user_id: int, amount_positive: in
     await apply_expense_income(db, user_id, tx_id, amount, account_id)
     local_date = await _local_date_for_user(db, user_id, ts)
     await update_streak_on_activity(db, user_id, local_date)
-    await db.commit()
+    if commit:
+        await db.commit()
     return tx_id
 
 async def add_transfer(db: aiosqlite.Connection, user_id: int, amount_positive: int, from_acc: int, to_acc: int, note: str | None, to_amount_positive: int | None = None):

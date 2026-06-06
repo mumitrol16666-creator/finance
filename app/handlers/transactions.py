@@ -416,6 +416,7 @@ async def _flow_finish(
     text: str,
     db=None,
     show_main_menu: bool = False,
+    reply_markup=None,
 ):
     """
     Финал сценария:
@@ -442,7 +443,7 @@ async def _flow_finish(
 
     if show_main_menu and db is not None:
         # 1. Отправляем чек операции
-        await bot.send_message(chat_id, text, parse_mode=PARSE_MODE)
+        await bot.send_message(chat_id, text, parse_mode=PARSE_MODE, reply_markup=reply_markup)
         
         # 2. Отправляем текст Главного меню с основной reply-клавиатурой
         from app.domain.services.ai_consultant_service import build_main_menu_text
@@ -831,7 +832,7 @@ async def _exp_render_category(target: Message | CallbackQuery, state: FSMContex
     spent_map = await month_spent_map(db, user_id, month)
     left_map: dict[int, int] = {}
 
-    for cid, name, emoji in cats:
+    for cid, name, emoji, *_ in cats:
         limit = await get_category_budget(db, user_id, month, cid)
         spent = spent_map.get(cid, 0)
 
@@ -1412,7 +1413,8 @@ async def _exp_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     if feedback:
         msg += f"\n\n<i>{escape(str(feedback))}</i>"
 
-    await _flow_finish(ctx, state, msg, db, show_main_menu=True)
+    from app.ui.keyboards import undo_kb
+    await _flow_finish(ctx, state, msg, db, show_main_menu=True, reply_markup=undo_kb(tx_id))
     await _check_and_send_streak_reward(ctx, db, streak_before)
 
     # Anomaly Detection
@@ -1969,7 +1971,8 @@ async def _inc_save(ctx: Message | CallbackQuery, state: FSMContext, db):
         sent = await bot.send_message(chat_id, prompt_text, reply_markup=kb.as_markup(), parse_mode=PARSE_MODE)
         await state.update_data(flow_message_id=sent.message_id)
     else:
-        await _flow_finish(ctx, state, msg, db, show_main_menu=True)
+        from app.ui.keyboards import undo_kb
+        await _flow_finish(ctx, state, msg, db, show_main_menu=True, reply_markup=undo_kb(tx_id))
         await _check_and_send_streak_reward(ctx, db, streak_before)
 
 async def _inc_piggy_finish(ctx: Message | CallbackQuery, state: FSMContext, db, text: str, streak_before: int):
@@ -1979,11 +1982,16 @@ async def _inc_piggy_finish(ctx: Message | CallbackQuery, state: FSMContext, db,
     user_id = ctx.from_user.id
     lang = await get_lang(db, user_id)
     
+    data = await state.get_data()
+    tx_id = data.get("income_tx_id")
+    
     await _delete_flow_message(bot, chat_id, state)
     await state.clear()
     
     # 1. Send the result message
-    await bot.send_message(chat_id, text, parse_mode=PARSE_MODE)
+    from app.ui.keyboards import undo_kb
+    markup = undo_kb(tx_id) if tx_id else None
+    await bot.send_message(chat_id, text, parse_mode=PARSE_MODE, reply_markup=markup)
     
     # 2. Send the Main Menu
     menu_kb = await build_main_menu_markup(db, user_id, lang)
@@ -2553,7 +2561,8 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
     if data.get("note"):
         msg += f"\n{_i18n_t(lang, 'TX_NOTE')}: <i>{escape(str(data['note']))}</i>"
 
-    await _flow_finish(ctx, state, msg, db, show_main_menu=True)
+    from app.ui.keyboards import undo_kb
+    await _flow_finish(ctx, state, msg, db, show_main_menu=True, reply_markup=undo_kb(tx1))
 
 
 # ---------------------------------------------------------------------------
