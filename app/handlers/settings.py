@@ -2412,7 +2412,7 @@ async def st_tx_edit_cat_init(c: CallbackQuery, state: FSMContext, db: aiosqlite
     
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
-    for cid, name, emoji in cats:
+    for cid, name, emoji, *_ in cats:
         from app.ui.i18n import t_category
         lbl = f"{emoji+' ' if emoji else ''}{t_category(name, lang)}"
         kb.button(text=lbl, callback_data=f"st:tx:set_cat:{tx_id}:{cid}")

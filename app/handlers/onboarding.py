@@ -12,13 +12,22 @@ from loguru import logger
 
 from app.config.settings import settings
 from app.db.repositories.users_repo import get_onboarded, set_onboarded, set_newbie_defaults, grant_full_access
-from app.db.repositories.settings_repo import get_lang, ensure_settings
+from app.db.repositories.settings_repo import get_lang, set_lang, ensure_settings
 from app.db.repositories.categories_repo import ensure_default_categories
 from app.fsm.states import TelegramOnboarding
 from app.domain.auth import hash_password, verify_password
-from app.handlers.common import build_main_menu_markup, cancel_to_main_menu
+from app.handlers.common import build_main_menu_markup, cancel_to_main_menu, neutralize_keyboard, is_cancel_text
 from app.domain.services.ai_consultant_service import build_main_menu_text
 from app.domain.money import get_user_currency, get_scale
+from app.ui.texts import get_text
+from app.ui.keyboards import (
+    lang_selection_kb, currency_kb, cancel_kb, yes_no_kb, daily_time_quick_kb
+)
+from app.domain.validators import clean_name, parse_hhmm
+from app.domain.services.onboarding_service import (
+    init_user, save_currency, add_account, has_any_account,
+    save_daily_report, finish_onboarding, utcnow_iso
+)
 
 router = Router()
 PARSE_MODE = "HTML"
@@ -189,33 +198,38 @@ async def process_link_password(m: Message, state: FSMContext, db: aiosqlite.Con
         )
         
     # Synchronization / Account Merge:
-    # 1. Update app user's telegram_id to temp_tg_id across all tables (if needed)
-    # Actually, as described in compaction, we run a transaction to update user_id from app_user_id to temp_tg_id
-    # so that the user's primary key remains their Telegram ID!
+    # We run a transaction to update user_id from app_user_id to temp_tg_id so that the user's primary key remains their Telegram ID!
     try:
         await db.execute("PRAGMA foreign_keys = OFF;")
         
-        # Update users table
-        await db.execute("UPDATE users SET telegram_id = ? WHERE id = ?", (temp_tg_id, app_user_id))
-        
-        # We need to migrate the user_id in all child tables from app_user_id to temp_tg_id
         tables = [
             "settings", "accounts", "categories", "transactions", "budgets",
             "daily_stats", "debts", "debt_payments", "recurring_expenses",
             "recurring_incomes", "ai_context_notes", "planned_transactions",
-            "user_limits", "category_limits"
+            "debt_reminder_log", "rules", "expected_events", "full_access_payments",
+            "tx_audit", "ai_profile", "ai_insights", "ai_recommendations_log",
+            "sent_keyboards", "export_logs"
         ]
+        
+        # 1. Delete all temporary user records from child tables to prevent UNIQUE constraint failures
+        for tbl in tables:
+            try:
+                await db.execute(f"DELETE FROM {tbl} WHERE user_id = ?", (temp_tg_id,))
+            except Exception:
+                pass
+                
+        # Delete temporary user row
+        await db.execute("DELETE FROM users WHERE id = ?", (temp_tg_id,))
+        
+        # 2. Update child tables of app_user_id to temp_tg_id
         for tbl in tables:
             try:
                 await db.execute(f"UPDATE {tbl} SET user_id = ? WHERE user_id = ?", (temp_tg_id, app_user_id))
             except Exception:
                 pass
                 
-        # Now we delete the temporary user row (which has id = temp_tg_id)
-        await db.execute("DELETE FROM users WHERE id = ?", (temp_tg_id,))
-        
-        # Update the app user's primary key ID to temp_tg_id
-        await db.execute("UPDATE users SET id = ? WHERE id = ?", (temp_tg_id, app_user_id))
+        # 3. Update the app user's primary key ID and telegram_id to temp_tg_id
+        await db.execute("UPDATE users SET id = ?, telegram_id = ? WHERE id = ?", (temp_tg_id, temp_tg_id, app_user_id))
         
         await db.execute("PRAGMA foreign_keys = ON;")
         await db.commit()
@@ -307,10 +321,171 @@ async def process_reg_password(m: Message, state: FSMContext, db: aiosqlite.Conn
     user_id = m.from_user.id
     hashed = hash_password(password)
     
-    await db.execute("UPDATE users SET password_hash = ?, onboarded = 1 WHERE id = ?", (hashed, user_id))
-    await set_state_db(db, user_id, "ai_survey_invite")
-    await state.set_state(TelegramOnboarding.ai_survey_invite)
+    await db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hashed, user_id))
+    await db.commit()
     
+    await set_state_db(db, user_id, "tg_reg_lang")
+    await state.set_state(TelegramOnboarding.tg_reg_lang)
+    
+    prompt = (
+        "🇷🇺 <b>Выберите язык</b>\n\n"
+        "🇬🇧 <b>Choose language</b>\n\n"
+        "🇰🇿 <b>Тілді таңдаңыз</b>"
+    )
+    sent = await m.answer(prompt, reply_markup=lang_selection_kb(), parse_mode=PARSE_MODE)
+    await state.update_data(flow_message_id=sent.message_id)
+
+
+# --- STEP-BY-STEP ONBOARDING WIZARD ---
+
+@router.callback_query(TelegramOnboarding.tg_reg_lang, F.data.startswith('ob:lang:'))
+async def ob_lang_selected(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    lang = c.data.split(':')[-1]
+    await set_lang(db, c.from_user.id, lang, utcnow_iso())
+    await db.commit()
+    
+    await set_state_db(db, c.from_user.id, "tg_reg_currency")
+    await state.set_state(TelegramOnboarding.tg_reg_currency)
+    
+    await c.message.edit_text(
+        get_text(lang, 'ASK_CURRENCY'),
+        reply_markup=currency_kb(),
+        parse_mode=PARSE_MODE
+    )
+    await c.answer()
+
+@router.callback_query(TelegramOnboarding.tg_reg_currency, F.data.startswith('ob:cur:'))
+async def ob_currency_selected(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    cur = c.data.split(':')[2]
+    await save_currency(db, c.from_user.id, cur)
+    lang = await get_lang(db, c.from_user.id)
+    
+    await set_state_db(db, c.from_user.id, "tg_reg_acc_name")
+    await state.set_state(TelegramOnboarding.tg_reg_acc_name)
+    
+    # Send currency confirmation message first, then ask for account name
+    await c.message.edit_text(
+        get_text(lang, 'CURRENCY_SAVED', cur=cur),
+        reply_markup=None,
+        parse_mode=PARSE_MODE
+    )
+    
+    sent = await c.message.answer(
+        get_text(lang, 'ASK_ACC_NAME'),
+        reply_markup=cancel_kb(lang),
+        parse_mode=PARSE_MODE
+    )
+    await state.update_data(prompt_message_id=sent.message_id)
+    await c.answer()
+
+@router.message(TelegramOnboarding.tg_reg_acc_name, F.text)
+async def ob_acc_name(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, m.from_user.id)
+    if is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+    name = clean_name(m.text)
+    if not name:
+        return await m.answer(get_text(lang, 'NAME_ERROR'), reply_markup=cancel_kb(lang))
+    data = await state.get_data()
+    await _try_delete(m.bot, m.chat.id, data.get("prompt_message_id"))
+    try:
+        await m.delete()
+    except Exception:
+        pass
+    await state.update_data(acc_name=name)
+    await set_state_db(db, m.from_user.id, "tg_reg_acc_balance")
+    await state.set_state(TelegramOnboarding.tg_reg_acc_balance)
+    sent = await m.answer(get_text(lang, 'ASK_ACC_BAL'), reply_markup=cancel_kb(lang))
+    await state.update_data(prompt_message_id=sent.message_id)
+
+@router.message(TelegramOnboarding.tg_reg_acc_balance, F.text)
+async def ob_acc_bal(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, m.from_user.id)
+    if is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+    from app.domain.money import parse_money_for_user
+    raw = (m.text or "").strip().replace(" ", "").replace(",", ".")
+    if raw in {"0", "0.0", "0.00"}:
+        bal = 0
+    else:
+        bal = await parse_money_for_user(db, m.from_user.id, m.text, max_minor=99_999_999_00)
+        if bal is None:
+            return await m.answer(get_text(lang, 'SUM_ERROR'), reply_markup=cancel_kb(lang))
+    data = await state.get_data()
+    await _try_delete(m.bot, m.chat.id, data.get("prompt_message_id"))
+    try:
+        await m.delete()
+    except Exception:
+        pass
+    await add_account(db, m.from_user.id, data['acc_name'], bal)
+    await state.clear()
+    
+    await set_state_db(db, m.from_user.id, "tg_reg_daily")
+    await state.set_state(TelegramOnboarding.tg_reg_daily)
+    await m.answer(get_text(lang, 'ASK_DAILY'), reply_markup=yes_no_kb('ob:daily', lang))
+
+@router.callback_query(TelegramOnboarding.tg_reg_daily, F.data.startswith('ob:daily:'))
+async def ob_daily_selected(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    ans = c.data.split(':')[2]
+    lang = await get_lang(db, c.from_user.id)
+    if ans == 'no':
+        await save_daily_report(db, c.from_user.id, 0, '21:00')
+        await finish_onboarding(db, c.from_user.id)
+        
+        # Go to AI Survey Invite
+        await set_state_db(db, c.from_user.id, "ai_survey_invite")
+        await state.set_state(TelegramOnboarding.ai_survey_invite)
+        await show_ai_survey_invite(c.message)
+        await c.answer()
+        return
+    await save_daily_report(db, c.from_user.id, 1, '21:00')
+    await set_state_db(db, c.from_user.id, "tg_reg_daily_time")
+    await state.set_state(TelegramOnboarding.tg_reg_daily_time)
+    await c.message.edit_text(get_text(lang, 'ASK_DAILY_TIME'), reply_markup=daily_time_quick_kb(lang), parse_mode=PARSE_MODE)
+    await c.answer()
+
+@router.callback_query(TelegramOnboarding.tg_reg_daily_time, F.data.startswith('ob:time:'))
+async def ob_time_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
+    await neutralize_keyboard(c)
+    part = c.data.split(':')[2:]
+    lang = await get_lang(db, c.from_user.id)
+    if part[0] == 'other':
+        await set_state_db(db, c.from_user.id, "tg_reg_daily_time_custom")
+        await state.set_state(TelegramOnboarding.tg_reg_daily_time_custom)
+        sent = await c.message.answer(get_text(lang, 'CUSTOM_TIME'), reply_markup=cancel_kb(lang))
+        await state.update_data(prompt_message_id=sent.message_id)
+        await c.answer()
+        return
+    hhmm = ':'.join(part)
+    await save_daily_report(db, c.from_user.id, 1, hhmm)
+    await finish_onboarding(db, c.from_user.id)
+    
+    # Go to AI Survey Invite
+    await set_state_db(db, c.from_user.id, "ai_survey_invite")
+    await state.set_state(TelegramOnboarding.ai_survey_invite)
+    await show_ai_survey_invite(c.message)
+    await c.answer()
+
+@router.message(TelegramOnboarding.tg_reg_daily_time_custom, F.text)
+async def ob_time_custom(m: Message, state: FSMContext, db: aiosqlite.Connection):
+    lang = await get_lang(db, m.from_user.id)
+    if is_cancel_text(m.text):
+        await cancel_to_main_menu(m, state, db)
+        return
+    hhmm = parse_hhmm(m.text)
+    if not hhmm:
+        return await m.answer(get_text(lang, 'TIME_ERROR'))
+    await save_daily_report(db, m.from_user.id, 1, hhmm)
+    await finish_onboarding(db, m.from_user.id)
+    
+    # Go to AI Survey Invite
+    await set_state_db(db, m.from_user.id, "ai_survey_invite")
+    await state.set_state(TelegramOnboarding.ai_survey_invite)
     await show_ai_survey_invite(m)
 
 

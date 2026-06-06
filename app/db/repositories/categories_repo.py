@@ -226,7 +226,7 @@ async def find_category_by_note_hint(db: aiosqlite.Connection, user_id: int, kin
 
     from app.ui.i18n import t_category
     cats = await list_categories(db, user_id, kind)
-    for cid, name, emoji in cats:
+    for cid, name, emoji, *_ in cats:
         name_lower = name.lower() if name else ""
         translated_name = t_category(name, lang).lower() if name else ""
         if name_lower and (name_lower in low or translated_name in low):

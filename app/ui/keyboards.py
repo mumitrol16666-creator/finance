@@ -245,7 +245,7 @@ def categories_kb(
     visible = cats[start:end]
 
     kb = InlineKeyboardBuilder()
-    for cid, name, emoji in visible:
+    for cid, name, emoji, *_ in visible:
         label = f"{emoji + ' ' if emoji else ''}{t_category(name, lang)}"
         kb.button(text=label, callback_data=f"{prefix}:{cid}")
 
@@ -271,7 +271,7 @@ def categories_kb(
 
 def categories_kb_with_add(cats: list[tuple[int,str,str|None]], prefix: str, add_cb: str, lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for cid, name, emoji in cats:
+    for cid, name, emoji, *_ in cats:
         label = f"{emoji+' ' if emoji else ''}{t_category(name, lang)}"
         kb.button(text=label, callback_data=f"{prefix}:{cid}")
     kb.button(text=t(lang, "BTN_ADD_CATEGORY"), callback_data=add_cb)
@@ -456,7 +456,7 @@ def cats_kind_kb(lang: str = "ru") -> InlineKeyboardMarkup:
 
 def cats_list_manage_kb(cats: list[tuple[int,str,str|None]], kind: str, lang: str = "ru") -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for cid, name, emoji in cats:
+    for cid, name, emoji, *_ in cats:
         label = f"{emoji+' ' if emoji else ''}{t_category(name, lang)}"
         kb.button(text=label, callback_data=f"st:cats:pick:{cid}")
     kb.button(text=t(lang, "BTN_ADD_CATEGORY"), callback_data=f"st:cats:add:{kind}")
@@ -501,7 +501,7 @@ def budgets_categories_kb(cats, right_map: dict[int, str] | None = None, badge_m
     right_map = right_map or {}
     badge_map = badge_map or {}
     badge_prefix = {"over": "🔴 ", "warn": "🟡 ", "ok": "🟢 ", "plain": "⚪️ "}
-    for cid, name, emoji in cats:
+    for cid, name, emoji, *_ in cats:
         title = f"{(emoji + ' ') if emoji else ''}{t_category(name, lang)}"
         if cid in right_map:
             badge = badge_prefix.get(badge_map.get(cid, "plain"), "")

@@ -264,7 +264,13 @@ async def register_user(req: RegisterRequest):
             user_id = cur.lastrowid
             
             await db.execute(
-                "INSERT INTO settings (user_id, created_at, updated_at) VALUES (?, ?, ?)",
+                "INSERT INTO settings (user_id, lang, currency, created_at, updated_at) VALUES (?, 'ru', 'KZT', ?, ?)",
+                (user_id, now_str, now_str)
+            )
+            
+            await db.execute(
+                "INSERT INTO accounts (user_id, name, balance, starting_balance, currency, is_saving, is_archived, created_at, updated_at) "
+                "VALUES (?, 'Основной', 0, 0, 'KZT', 0, 0, ?, ?)",
                 (user_id, now_str, now_str)
             )
             
@@ -850,73 +856,79 @@ async def pay_debt_endpoint(debt_id: int, req: DebtPayRequest, user_id: int = De
         if not await can_use_feature(db, user_id, "debts"):
             raise HTTPException(status_code=403, detail="Функция долгов доступна только в Premium версии")
         
-        if req.account_id is not None:
-            from app.db.repositories.debts_repo import get_debt
-            row = await get_debt(db, user_id, debt_id)
-            if row:
-                if hasattr(row, "keys"):
-                    debt = {k: row[k] for k in row.keys()}
-                else:
-                    debt = {
-                        "id": row[0],
-                        "title": row[1],
-                        "payment_amount": row[2],
-                        "next_payment_date": row[3],
-                        "remaining_amount": row[4],
-                        "dtype": row[5],
-                        "direction": row[6],
-                        "is_active": row[7],
-                        "status": row[8],
-                    }
-                
-                direction = debt["direction"]
-                dtype = debt["dtype"]
-                title = debt["title"]
-                amount = req.payment_amount
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            if req.account_id is not None:
+                from app.db.repositories.debts_repo import get_debt
+                row = await get_debt(db, user_id, debt_id)
+                if row:
+                    if hasattr(row, "keys"):
+                        debt = {k: row[k] for k in row.keys()}
+                    else:
+                        debt = {
+                            "id": row[0],
+                            "title": row[1],
+                            "payment_amount": row[2],
+                            "next_payment_date": row[3],
+                            "remaining_amount": row[4],
+                            "dtype": row[5],
+                            "direction": row[6],
+                            "is_active": row[7],
+                            "status": row[8],
+                        }
+                    
+                    direction = debt["direction"]
+                    dtype = debt["dtype"]
+                    title = debt["title"]
+                    amount = req.payment_amount
 
-                async def ensure_category(db_conn, u_id, kind, name, emoji):
-                    cur = await db_conn.execute(
-                        "SELECT id FROM categories WHERE user_id = ? AND kind = ? AND name = ?",
-                        (u_id, kind, name),
-                    )
-                    r = await cur.fetchone()
-                    if r:
-                        return int(r["id"] if hasattr(r, "keys") else r[0])
-
-                    cur = await db_conn.execute(
-                        """
-                        INSERT INTO categories (
-                            user_id, name, emoji, kind, is_archived, created_at, updated_at
+                    async def ensure_category(db_conn, u_id, kind, name, emoji):
+                        cur = await db_conn.execute(
+                            "SELECT id FROM categories WHERE user_id = ? AND kind = ? AND name = ?",
+                            (u_id, kind, name),
                         )
-                        VALUES (?, ?, ?, ?, 0, datetime('now'), datetime('now'))
-                        """,
-                        (u_id, name, emoji, kind),
-                    )
-                    return int(cur.lastrowid)
+                        r = await cur.fetchone()
+                        if r:
+                            return int(r["id"] if hasattr(r, "keys") else r[0])
 
-                if direction == "out":
-                    category_id = await ensure_category(
-                        db, user_id, kind="expense",
-                        name="Платёж по кредиту" if dtype == "bank" else "Возврат долга",
-                        emoji="💳" if dtype == "bank" else "📤"
-                    )
-                    note = f"Платёж по кредиту: {title}" if dtype == "bank" else f"Возврат долга: {title}"
-                    from app.domain.services.accounting_service import add_expense
-                    await add_expense(db, user_id, amount, req.account_id, category_id, note)
-                else:
-                    category_id = await ensure_category(
-                        db, user_id, kind="income",
-                        name="Мне вернули долг",
-                        emoji="📥"
-                    )
-                    note = f"Мне вернули долг: {title}"
-                    from app.domain.services.accounting_service import add_income
-                    await add_income(db, user_id, amount, req.account_id, category_id, note)
+                        cur = await db_conn.execute(
+                            """
+                            INSERT INTO categories (
+                                user_id, name, emoji, kind, is_archived, created_at, updated_at
+                            )
+                            VALUES (?, ?, ?, ?, 0, datetime('now'), datetime('now'))
+                            """,
+                            (u_id, name, emoji, kind),
+                        )
+                        return int(cur.lastrowid)
 
-        from app.db.repositories.debts_repo import apply_debt_payment
-        await apply_debt_payment(
-            db, user_id, debt_id, req.payment_amount, req.next_payment_date
-        )
+                    if direction == "out":
+                        category_id = await ensure_category(
+                            db, user_id, kind="expense",
+                            name="Платёж по кредиту" if dtype == "bank" else "Возврат долга",
+                            emoji="💳" if dtype == "bank" else "📤"
+                        )
+                        note = f"Платёж по кредиту: {title}" if dtype == "bank" else f"Возврат долга: {title}"
+                        from app.domain.services.accounting_service import add_expense
+                        await add_expense(db, user_id, amount, req.account_id, category_id, note, commit=False)
+                    else:
+                        category_id = await ensure_category(
+                            db, user_id, kind="income",
+                            name="Мне вернули долг",
+                            emoji="📥"
+                        )
+                        note = f"Мне вернули долг: {title}"
+                        from app.domain.services.accounting_service import add_income
+                        await add_income(db, user_id, amount, req.account_id, category_id, note, commit=False)
+
+            from app.db.repositories.debts_repo import apply_debt_payment
+            await apply_debt_payment(
+                db, user_id, debt_id, req.payment_amount, req.next_payment_date, commit=False
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
         return {"status": "success"}
 
 @app.post("/api/recurring")

@@ -277,7 +277,7 @@ def planned_categories_pick_kb(cats, lang: str = "ru"):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    for cid, name, emoji in cats:
+    for cid, name, emoji, *_ in cats:
         label = f"{emoji + ' ' if emoji else ''}{name}"
         kb.button(text=label, callback_data=f"pl:cat:{cid}")
     kb.button(text=t(lang, "BTN_BACK"), callback_data="pl:step:importance")
@@ -779,22 +779,28 @@ async def planned_move_date(m: Message, state: FSMContext, db: aiosqlite.Connect
 @router.callback_query(F.data.startswith("pl:done:"))
 async def planned_done(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection, lang: str = "ru"):
     item_id = int(c.data.split(":")[-1])
-    row = await mark_planned_done(db, c.from_user.id, item_id, now_iso())
-    if not row:
-        await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
-        return
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        row = await mark_planned_done(db, c.from_user.id, item_id, now_iso())
+        if not row:
+            await db.rollback()
+            await c.answer(t(lang, "NOT_FOUND"), show_alert=True)
+            return
 
-    amount = int(row["amount"] or 0)
-    kind = str(row["kind"] or "expense")
-    acc = int(row["account_id"])
-    cat = int(row["category_id"])
-    note = str(row["comment"] or row["title"] or "") or None
+        amount = int(row["amount"] or 0)
+        kind = str(row["kind"] or "expense")
+        acc = int(row["account_id"])
+        cat = int(row["category_id"])
+        note = str(row["comment"] or row["title"] or "") or None
 
-    sign_amount = amount if kind == "income" else -amount
-    tier = 'obligation' if int(row.get("is_required") or 0) == 1 else 'routine'
-    tx_id = await create_tx(db, c.from_user.id, now_iso(), kind, sign_amount, acc, cat, note, now_iso(), tier=tier)
-    await apply_expense_income(db, c.from_user.id, tx_id, sign_amount, acc)
-    await db.commit()
+        sign_amount = amount if kind == "income" else -amount
+        tier = 'obligation' if int(row.get("is_required") or 0) == 1 else 'routine'
+        tx_id = await create_tx(db, c.from_user.id, now_iso(), kind, sign_amount, acc, cat, note, now_iso(), tier=tier)
+        await apply_expense_income(db, c.from_user.id, tx_id, sign_amount, acc)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
     await _render_screen(
         c,

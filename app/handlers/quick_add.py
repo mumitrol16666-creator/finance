@@ -432,6 +432,31 @@ async def qa_undo_cmd(m: Message, db: aiosqlite.Connection):
     await m.answer(_L(lang)["undo_ok"] if ok else _L(lang)["undo_fail"])
 
 
+@router.callback_query(F.data.startswith("qa:undo:"))
+async def qa_undo_callback(c: CallbackQuery, db: aiosqlite.Connection):
+    lang = await get_lang(db, c.from_user.id)
+    tx_id = int(c.data.split(":")[2])
+    try:
+        ok, _ = await delete_tx(db, c.from_user.id, tx_id)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+    if ok:
+        try:
+            text = c.message.html_text if c.message.text else ""
+            if text:
+                text += f"\n\n🗑️ <b>{_L(lang)['undo_ok']}</b>"
+            else:
+                text = f"🗑️ <b>{_L(lang)['undo_ok']}</b>"
+            await c.message.edit_text(text, parse_mode="HTML", reply_markup=None)
+        except Exception:
+            await c.answer(_L(lang)["undo_ok"])
+    else:
+        await c.answer(_L(lang)["undo_fail"], show_alert=True)
+
+
 @router.callback_query(F.data == "qa:batch:save", QuickAddFlow.batch_confirm)
 async def qa_batch_save(c: CallbackQuery, state: FSMContext, db):
     lang = await get_lang(db, c.from_user.id)

@@ -409,6 +409,7 @@ async def apply_debt_payment(
     debt_id: int,
     payment_amount: int,
     next_payment_date: Optional[str],
+    commit: bool = True,
 ) -> None:
     cur = await db.execute(
         """
@@ -448,7 +449,8 @@ async def apply_debt_payment(
             """,
             (next_payment_date, debt_id, user_id),
         )
-        await db.commit()
+        if commit:
+            await db.commit()
         return
 
     await db.execute(
@@ -462,7 +464,8 @@ async def apply_debt_payment(
         (new_remaining, next_payment_date, debt_id, user_id),
     )
     await refresh_debt_status(db, debt_id)
-    await db.commit()
+    if commit:
+        await db.commit()
 
 async def list_due_debts_for_reminders(db: aiosqlite.Connection, user_id: int):
     cur = await db.execute(

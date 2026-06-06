@@ -396,7 +396,7 @@ async def _build_category_rows(db: aiosqlite.Connection, user_id: int, lang: str
     cats = await list_categories(db, user_id, kind)
     month, statuses, spent_map = await _expense_status_map(db, user_id)
     rows: list[tuple[str, str]] = []
-    for cid, name, emoji in cats:
+    for cid, name, emoji, *_ in cats:
         title = _label(name, emoji, lang)
         if kind == "expense":
             status = statuses.get(int(cid))
