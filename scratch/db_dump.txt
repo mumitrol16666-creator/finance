@@ -1,0 +1,45 @@
+--- ACCOUNTS ---
+{'id': 11, 'user_id': 8198014753, 'name': 'Хуйня', 'balance': 25877, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 12, 'user_id': 1156617321, 'name': 'Наличные', 'balance': 50000, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 14, 'user_id': 1097719119, 'name': 'Наличные', 'balance': 170000, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 15, 'user_id': 1130729067, 'name': 'Kai', 'balance': 0, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 16, 'user_id': 1130729067, 'name': '✅ Доход', 'balance': 40922, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 31, 'user_id': 8607013608, 'name': 'Каспи чорт', 'balance': 340, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 32, 'user_id': 8607013608, 'name': 'Халык чорт', 'balance': 1000, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 33, 'user_id': 8607013608, 'name': 'БЦК', 'balance': 25000, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 40, 'user_id': 1917163976, 'name': 'Kaspi', 'balance': 0, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 41, 'user_id': 1917163976, 'name': 'Наличные', 'balance': 42400, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 47, 'user_id': 6384362036, 'name': 'Деньги', 'balance': -3500, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 80, 'user_id': 6384362036, 'name': 'Ок ок', 'balance': 200, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 81, 'user_id': 6856090314, 'name': 'Каспи', 'balance': 29434, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 90, 'user_id': 938030819, 'name': 'Kaspi', 'balance': 337, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 91, 'user_id': 938030819, 'name': 'Наличные', 'balance': 0, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 92, 'user_id': 938030819, 'name': 'Фридом', 'balance': 0, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+{'id': 93, 'user_id': 8092822438, 'name': 'Kaspi', 'balance': 28000, 'is_archived': 0, 'currency': 'KZT', 'is_saving': 0}
+
+--- LAST TRANSACTIONS ---
+{'id': 642, 'user_id': 8092822438, 'ts': '2026-06-03T08:55:26.684580+00:00', 'type': 'expense', 'amount': -2000, 'account_id': 93, 'related_tx_id': None, 'note': None}
+{'id': 641, 'user_id': 8092822438, 'ts': '2026-06-03T08:53:49.458627+00:00', 'type': 'starting_balance', 'amount': 30000, 'account_id': 93, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 640, 'user_id': 938030819, 'ts': '2026-06-03T04:12:09.208485+00:00', 'type': 'expense', 'amount': -80, 'account_id': 90, 'related_tx_id': None, 'note': None}
+{'id': 639, 'user_id': 938030819, 'ts': '2026-06-03T03:33:35.184151+00:00', 'type': 'adjustment', 'amount': -79, 'account_id': 90, 'related_tx_id': None, 'note': '🔧 Корректировка баланса (ручной ввод)'}
+{'id': 636, 'user_id': 938030819, 'ts': '2026-06-02T14:50:16.209271+00:00', 'type': 'expense', 'amount': -80, 'account_id': 90, 'related_tx_id': None, 'note': 'оплатила абобус'}
+{'id': 635, 'user_id': 938030819, 'ts': '2026-06-02T14:40:17.867461+00:00', 'type': 'expense', 'amount': -80, 'account_id': 90, 'related_tx_id': None, 'note': 'оплатила абобус'}
+{'id': 634, 'user_id': 938030819, 'ts': '2026-06-02T12:14:44.368621+00:00', 'type': 'expense', 'amount': -898, 'account_id': 90, 'related_tx_id': None, 'note': '✨'}
+{'id': 633, 'user_id': 938030819, 'ts': '2026-06-02T12:14:00.623477+00:00', 'type': 'income', 'amount': 650, 'account_id': 90, 'related_tx_id': None, 'note': None}
+{'id': 628, 'user_id': 938030819, 'ts': '2026-06-02T07:23:57.990703+00:00', 'type': 'income', 'amount': 100, 'account_id': 90, 'related_tx_id': None, 'note': 'Наживаемся на долбаебах'}
+{'id': 627, 'user_id': 938030819, 'ts': '2026-06-02T06:22:56.712668+00:00', 'type': 'starting_balance', 'amount': 804, 'account_id': 90, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 584, 'user_id': 6856090314, 'ts': '2026-05-24T08:31:33.336145+00:00', 'type': 'expense', 'amount': -5566, 'account_id': 81, 'related_tx_id': None, 'note': None}
+{'id': 581, 'user_id': 6856090314, 'ts': '2026-05-23T17:03:21.170635+00:00', 'type': 'starting_balance', 'amount': 35000, 'account_id': 81, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 580, 'user_id': 6384362036, 'ts': '2026-05-23T15:34:03.578789+00:00', 'type': 'starting_balance', 'amount': 200, 'account_id': 80, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 553, 'user_id': 6384362036, 'ts': '2026-04-20T13:30:13.251981+00:00', 'type': 'starting_balance', 'amount': 6000, 'account_id': 47, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 552, 'user_id': 1917163976, 'ts': '2026-03-31T07:00:41.249539+00:00', 'type': 'starting_balance', 'amount': 10000, 'account_id': 41, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 551, 'user_id': 8607013608, 'ts': '2026-03-27T06:48:51.497730+00:00', 'type': 'starting_balance', 'amount': 25000, 'account_id': 33, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 550, 'user_id': 8607013608, 'ts': '2026-03-27T06:48:28.257422+00:00', 'type': 'starting_balance', 'amount': 1000, 'account_id': 32, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 549, 'user_id': 8607013608, 'ts': '2026-03-27T06:46:45.281541+00:00', 'type': 'starting_balance', 'amount': 340, 'account_id': 31, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 546, 'user_id': 1130729067, 'ts': '2026-02-16T14:32:30.266981+00:00', 'type': 'starting_balance', 'amount': 35622, 'account_id': 16, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 545, 'user_id': 1130729067, 'ts': '2026-02-16T14:32:02.877435+00:00', 'type': 'starting_balance', 'amount': 20000, 'account_id': 15, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 544, 'user_id': 1097719119, 'ts': '2026-02-16T13:31:43.520048+00:00', 'type': 'starting_balance', 'amount': 180000, 'account_id': 14, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 543, 'user_id': 1156617321, 'ts': '2026-02-16T13:27:08.324705+00:00', 'type': 'starting_balance', 'amount': 50000, 'account_id': 12, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 542, 'user_id': 8198014753, 'ts': '2026-02-16T13:17:39.013230+00:00', 'type': 'starting_balance', 'amount': 25000, 'account_id': 11, 'related_tx_id': None, 'note': 'Стартовый баланс'}
+{'id': 465, 'user_id': 6384362036, 'ts': '2026-05-18T17:30:33.390241+00:00', 'type': 'expense', 'amount': -3500, 'account_id': 47, 'related_tx_id': None, 'note': None}
+{'id': 399, 'user_id': 1917163976, 'ts': '2026-05-05T13:29:57.977058+00:00', 'type': 'expense', 'amount': -25000, 'account_id': 41, 'related_tx_id': None, 'note': None}
