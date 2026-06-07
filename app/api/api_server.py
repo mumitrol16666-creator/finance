@@ -193,6 +193,7 @@ class AccountUpdateRequest(BaseModel):
     interest_rate: Optional[float] = None
     accrual_period: Optional[str] = None
     is_business: Optional[int] = None
+    currency: Optional[str] = None
 
 class DebtCreateRequest(BaseModel):
     direction: str  # 'out' or 'in'
@@ -396,7 +397,12 @@ async def get_dashboard(
         total_balance = 0
         savings_balance = 0
         deposit_balance = 0
+        
+        from app.services.currency_service import get_exchange_rate
         for acc in accounts:
+            rate = await get_exchange_rate(db, acc["currency"], "KZT")
+            converted_balance = int(round(acc["balance"] * rate))
+            
             accounts_data.append({
                 "id": acc["id"],
                 "name": acc["name"],
@@ -409,31 +415,41 @@ async def get_dashboard(
                 "is_business": bool(acc["is_business"])
             })
             if acc["acc_type"] == 'deposit':
-                deposit_balance += acc["balance"]
+                deposit_balance += converted_balance
             elif acc["is_saving"]:
-                savings_balance += acc["balance"]
+                savings_balance += converted_balance
             else:
-                total_balance += acc["balance"]
+                total_balance += converted_balance
             
-        # 2. Monthly Expenses inside current cycle
+        # 2. Monthly Expenses inside current cycle (with currency conversions)
         cur = await db.execute(
-            "SELECT COALESCE(SUM(t.amount), 0) FROM transactions t "
-            "LEFT JOIN categories c ON c.id=t.category_id "
+            "SELECT t.amount, a.currency FROM transactions t "
+            "JOIN accounts a ON a.id = t.account_id "
+            "LEFT JOIN categories c ON c.id = t.category_id "
             "WHERE t.user_id=? AND t.type='expense' AND t.deleted_at IS NULL AND t.ts >= ? AND t.ts < ? "
             "AND (c.exclude_from_analytics IS NULL OR c.exclude_from_analytics = 0)",
             (user_id, start_str, end_str)
         )
-        (monthly_expenses_row,) = await cur.fetchone()
+        expenses_rows = await cur.fetchall()
+        monthly_expenses_row = 0
+        for amount, currency in expenses_rows:
+            rate = await get_exchange_rate(db, currency, "KZT")
+            monthly_expenses_row += int(round(amount * rate))
 
-        # 2b. Monthly Income inside current cycle
+        # 2b. Monthly Income inside current cycle (with currency conversions)
         cur_inc = await db.execute(
-            "SELECT COALESCE(SUM(t.amount), 0) FROM transactions t "
-            "LEFT JOIN categories c ON c.id=t.category_id "
+            "SELECT t.amount, a.currency FROM transactions t "
+            "JOIN accounts a ON a.id = t.account_id "
+            "LEFT JOIN categories c ON c.id = t.category_id "
             "WHERE t.user_id=? AND t.type='income' AND t.deleted_at IS NULL AND t.ts >= ? AND t.ts < ? "
             "AND (c.exclude_from_analytics IS NULL OR c.exclude_from_analytics = 0)",
             (user_id, start_str, end_str)
         )
-        (monthly_income_row,) = await cur_inc.fetchone()
+        income_rows = await cur_inc.fetchall()
+        monthly_income_row = 0
+        for amount, currency in income_rows:
+            rate = await get_exchange_rate(db, currency, "KZT")
+            monthly_income_row += int(round(amount * rate))
         
         # 3. Weekly streak (Monday to Sunday)
         start_of_week = today - timedelta(days=today.weekday())
@@ -452,7 +468,7 @@ async def get_dashboard(
         # 4. Recent Transactions (last 10)
         cur = await db.execute(
             "SELECT t.id, t.ts, t.type, t.amount, "
-            "       a.name as account_name, "
+            "       a.name as account_name, a.currency as account_currency, "
             "       dest_a.name as dest_account_name, "
             "       c.name as category_name, "
             "       c.emoji as category_emoji, "
@@ -476,7 +492,8 @@ async def get_dashboard(
                 "accountName": row["account_name"] if row["type"] != "transfer" else f"{row['account_name']} ➡️ {row['dest_account_name']}",
                 "categoryName": row["category_name"] or ("Перевод в копилку" if row["type"] == "transfer" and row["dest_account_name"] and "копил" in row["dest_account_name"].lower() else ("Перевод" if row["type"] == "transfer" else "Прочее")),
                 "categoryEmoji": row["category_emoji"] or ("🔁" if row["type"] == "transfer" else "📦"),
-                "note": row["note"]
+                "note": row["note"],
+                "currency": row["account_currency"]
             })
             
         # 5. Categories progress (limit vs spent) for both expenses and incomes
@@ -1339,7 +1356,41 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
                 await archive_account(db, user_id, acc_id, now_str)
             else:
                 await restore_account(db, user_id, acc_id, now_str)
-                
+
+        # 5. Update type, rate, period, business, and currency fields
+        if req.acc_type is not None:
+            await db.execute(
+                "UPDATE accounts SET acc_type=?, updated_at=? WHERE user_id=? AND id=?",
+                (req.acc_type, now_str, user_id, acc_id)
+            )
+        if req.interest_rate is not None:
+            await db.execute(
+                "UPDATE accounts SET interest_rate=?, updated_at=? WHERE user_id=? AND id=?",
+                (req.interest_rate, now_str, user_id, acc_id)
+            )
+        if req.accrual_period is not None:
+            await db.execute(
+                "UPDATE accounts SET accrual_period=?, updated_at=? WHERE user_id=? AND id=?",
+                (req.accrual_period, now_str, user_id, acc_id)
+            )
+        if req.is_business is not None:
+            await db.execute(
+                "UPDATE accounts SET is_business=?, updated_at=? WHERE user_id=? AND id=?",
+                (req.is_business, now_str, user_id, acc_id)
+            )
+        if req.currency is not None:
+            from app.domain.services.access_service import get_user_context
+            ctx = await get_user_context(db, user_id)
+            if req.currency.upper() != "KZT" and ctx.mode != "full":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Использование валютных счетов доступно только в Premium версии"
+                )
+            await db.execute(
+                "UPDATE accounts SET currency=?, updated_at=? WHERE user_id=? AND id=?",
+                (req.currency, now_str, user_id, acc_id)
+            )
+
         await db.commit()
         return {"status": "success"}
 
@@ -1359,11 +1410,23 @@ async def update_profile(req: ProfileUpdateRequest, user_id: int = Depends(get_c
         raise HTTPException(status_code=400, detail="Name cannot be empty")
     async with get_db() as db:
         await db.execute(
-            "UPDATE users SET name=? WHERE user_id=?",
+            "UPDATE users SET display_name=? WHERE id=?",
             (name, user_id)
         )
         await db.commit()
     return {"status": "success", "name": name}
+
+@app.post("/api/profile/upgrade")
+async def upgrade_profile_to_premium(user_id: int = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    expiration = (now + timedelta(days=365)).isoformat()
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE users SET full_access = 1, mode = 'full', full_access_until = ? WHERE id = ?",
+            (expiration, user_id)
+        )
+        await db.commit()
+    return {"status": "success", "message": "Profile upgraded to Premium"}
 
 @app.post("/api/user/settings")
 async def update_settings(req: SettingsUpdateRequest, user_id: int = Depends(get_current_user)):
