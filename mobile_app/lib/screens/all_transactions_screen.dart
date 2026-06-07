@@ -5,14 +5,12 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class AllTransactionsScreen extends StatelessWidget {
   const AllTransactionsScreen({super.key});
 
-  String _formatKzt(int amountMinor) {
-    final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor);
-  }
+  String _formatCurrency(int amount, String currency) => cu.formatCurrency(amount, currency);
 
   void _showEditTransactionDialog(BuildContext context, AppState appState, Transaction tx) {
     final amountController = TextEditingController(text: tx.amount.toString());
@@ -54,12 +52,12 @@ class AllTransactionsScreen extends StatelessWidget {
                 controller: amountController,
                 keyboardType: TextInputType.number,
                 style: const TextStyle(color: AppTheme.textPrimary),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Сумма',
-                  labelStyle: TextStyle(color: AppTheme.textSecondary),
-                  suffixText: '₸',
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                  labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                  suffixText: cu.currencySymbol(tx.currency),
+                  enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                  focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
                 ),
               ),
               const SizedBox(height: 16),
@@ -213,7 +211,7 @@ class AllTransactionsScreen extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text(
-                            '${isExpense ? '-' : '+'}${_formatKzt(tx.amount)}',
+                            '${isExpense ? '-' : '+'}${_formatCurrency(tx.amount, tx.currency)}',
                             style: TextStyle(
                               color: isExpense ? AppTheme.expense : AppTheme.income,
                               fontWeight: FontWeight.bold,

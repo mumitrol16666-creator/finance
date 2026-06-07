@@ -197,46 +197,59 @@ async def process_link_password(m: Message, state: FSMContext, db: aiosqlite.Con
             reply_markup=back_kb("Назад к логину")
         )
         
-    # Synchronization / Account Merge:
-    # We run a transaction to update user_id from app_user_id to temp_tg_id so that the user's primary key remains their Telegram ID!
+    # Keep the Telegram ID as the internal ID because existing bot handlers use it
+    # directly. The merge is atomic: either every table moves or nothing changes.
     try:
+        linked = await db.execute(
+            "SELECT telegram_id FROM users WHERE id=?",
+            (app_user_id,),
+        )
+        linked_row = await linked.fetchone()
+        if linked_row and linked_row[0] not in (None, temp_tg_id):
+            return await m.answer("Этот аккаунт уже связан с другим Telegram-профилем.")
+
+        await db.commit()
         await db.execute("PRAGMA foreign_keys = OFF;")
-        
-        tables = [
-            "settings", "accounts", "categories", "transactions", "budgets",
-            "daily_stats", "debts", "debt_payments", "recurring_expenses",
-            "recurring_incomes", "ai_context_notes", "planned_transactions",
-            "debt_reminder_log", "rules", "expected_events", "full_access_payments",
-            "tx_audit", "ai_profile", "ai_insights", "ai_recommendations_log",
-            "sent_keyboards", "export_logs"
-        ]
-        
-        # 1. Delete all temporary user records from child tables to prevent UNIQUE constraint failures
+        await db.execute("BEGIN IMMEDIATE")
+
+        tables_cur = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+        tables = []
+        for table_row in await tables_cur.fetchall():
+            table_name = str(table_row[0])
+            if table_name in {"users", "migrations"}:
+                continue
+            columns_cur = await db.execute(f"PRAGMA table_info(`{table_name}`)")
+            columns = {str(column[1]) for column in await columns_cur.fetchall()}
+            if "user_id" in columns:
+                tables.append(table_name)
+
+        # Temporary onboarding data cannot override the established app account.
         for tbl in tables:
-            try:
-                await db.execute(f"DELETE FROM {tbl} WHERE user_id = ?", (temp_tg_id,))
-            except Exception:
-                pass
-                
-        # Delete temporary user row
+            await db.execute(f"DELETE FROM `{tbl}` WHERE user_id = ?", (temp_tg_id,))
+
         await db.execute("DELETE FROM users WHERE id = ?", (temp_tg_id,))
-        
-        # 2. Update child tables of app_user_id to temp_tg_id
+
         for tbl in tables:
-            try:
-                await db.execute(f"UPDATE {tbl} SET user_id = ? WHERE user_id = ?", (temp_tg_id, app_user_id))
-            except Exception:
-                pass
-                
-        # 3. Update the app user's primary key ID and telegram_id to temp_tg_id
+            await db.execute(
+                f"UPDATE `{tbl}` SET user_id = ? WHERE user_id = ?",
+                (temp_tg_id, app_user_id),
+            )
+
         await db.execute("UPDATE users SET id = ?, telegram_id = ? WHERE id = ?", (temp_tg_id, temp_tg_id, app_user_id))
-        
-        await db.execute("PRAGMA foreign_keys = ON;")
+
+        fk_cur = await db.execute("PRAGMA foreign_key_check")
+        fk_errors = await fk_cur.fetchall()
+        if fk_errors:
+            raise RuntimeError(f"Foreign key check failed after account link: {fk_errors[:3]}")
         await db.commit()
     except Exception as e:
         await db.rollback()
         logger.exception("Failed to merge account during link: {}", e)
         return await m.answer("Произошла ошибка при связывании аккаунтов. Пожалуйста, попробуйте позже.")
+    finally:
+        await db.execute("PRAGMA foreign_keys = ON;")
 
     # Advance to AI Survey hook
     await set_state_db(db, temp_tg_id, "ai_survey_invite")

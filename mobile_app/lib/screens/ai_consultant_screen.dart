@@ -66,7 +66,6 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
     showDialog(
       context: context,
       builder: (context) {
-        final appState = Provider.of<AppState>(context, listen: false);
         return AlertDialog(
           backgroundColor: AppTheme.surface,
           shape: RoundedRectangleBorder(
@@ -86,13 +85,7 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
-                appState.upgradeToPremium();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('👑 Спасибо за покупку Premium подписки!'),
-                    backgroundColor: AppTheme.primary,
-                  ),
-                );
+                AppTheme.showPremiumBlockDialog(context);
               },
               child: const Text('Купить Premium', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
             ),

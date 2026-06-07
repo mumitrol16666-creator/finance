@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class BudgetsScreen extends StatefulWidget {
   const BudgetsScreen({super.key});
@@ -13,8 +13,8 @@ class BudgetsScreen extends StatefulWidget {
 
 class _BudgetsScreenState extends State<BudgetsScreen> {
   String _formatKzt(int amountMinor) {
-    final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor);
+    final appState = Provider.of<AppState>(context, listen: false);
+    return cu.formatCurrency(amountMinor, appState.baseCurrency);
   }
 
   void _showEditLimitDialog(BuildContext context, AppState appState, int categoryId, String categoryName, int? currentLimit) {
@@ -36,12 +36,12 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
             controller: controller,
             keyboardType: TextInputType.number,
             style: const TextStyle(color: AppTheme.textPrimary),
-            decoration: const InputDecoration(
-              hintText: 'Сумма лимита в тенге',
-              hintStyle: TextStyle(color: Colors.white24),
-              suffixText: '₸',
-              enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-              focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+            decoration: InputDecoration(
+              hintText: 'Сумма лимита в ${appState.baseCurrency}',
+              hintStyle: const TextStyle(color: Colors.white24),
+              suffixText: cu.currencySymbol(appState.baseCurrency),
+              enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+              focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
             ),
           ),
           actions: [

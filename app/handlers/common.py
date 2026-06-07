@@ -389,8 +389,6 @@ async def menu_any(m: Message, state: FSMContext, db: aiosqlite.Connection):
 
 @router.message(Command("login"))
 async def login_command(m: Message, state: FSMContext, db: aiosqlite.Connection):
-    import random
-    from datetime import datetime, timedelta, timezone
     from loguru import logger
     from app.fsm.states import TelegramOnboarding
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
@@ -436,34 +434,16 @@ async def login_command(m: Message, state: FSMContext, db: aiosqlite.Connection)
             await m.answer(prompt, parse_mode="HTML")
             return
             
-        # Check if code already exists
-        async with db.execute("SELECT code FROM login_codes WHERE user_id = ? LIMIT 1", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            
-        if row:
-            code = row[0]
-        else:
-            # Generate new persistent 6-digit code
-            code = f"{random.randint(100000, 999999)}"
-            # Set expiry far in the future
-            expires_at = (datetime.now(timezone.utc) + timedelta(days=365*10)).isoformat()
-            
-            await db.execute(
-                "INSERT INTO login_codes (code, user_id, expires_at) VALUES (?, ?, ?)",
-                (code, user_id, expires_at),
-            )
-            await db.commit()
-        
         webapp_url = settings.webapp_url or "http://178.105.162.123/"
         if not webapp_url.endswith("/"):
             webapp_url += "/"
-        web_url_with_code = f"{webapp_url}?code={code}"
+        web_url = webapp_url
         
         # Localized message
         if lang == "kk":
             text = (
-                f"🔑 Кіруге арналған логиніңіз: <code>{username}</code>. Қосымшаға кіру үшін осы логинді және құпия сөзіңізді пайдаланыңыз.\n\n"
-                f"🔑 Қосымшаға кіру кодыңыз: <code>{code}</code>\nБұл код әрқашан жарамды."
+                f"🔑 Кіруге арналған логиніңіз: <code>{username}</code>.\n"
+                "Қосымшаға кіру үшін осы логинді және құпия сөзіңізді пайдаланыңыз."
             )
             btn_tg_text = "📱 Telegram-да ашу"
             btn_browser_text = "🌐 Браузерде ашу"
@@ -471,8 +451,8 @@ async def login_command(m: Message, state: FSMContext, db: aiosqlite.Connection)
             btn_change_pwd = "✏️ Құпия сөзді өзгерту"
         elif lang == "en":
             text = (
-                f"🔑 Your login username: <code>{username}</code>. Use it along with your password to log in to the application.\n\n"
-                f"🔑 Your app login code: <code>{code}</code>\nThis code is permanent."
+                f"🔑 Your login username: <code>{username}</code>.\n"
+                "Use it with your password to log in to the application."
             )
             btn_tg_text = "📱 Open in Telegram"
             btn_browser_text = "🌐 Open in Browser"
@@ -480,8 +460,8 @@ async def login_command(m: Message, state: FSMContext, db: aiosqlite.Connection)
             btn_change_pwd = "✏️ Change Password"
         else:
             text = (
-                f"🔑 Ваш логин для входа: <code>{username}</code>. Используйте его и ваш пароль для входа в приложение.\n\n"
-                f"🔑 Ваш уникальный код для входа в приложение: <code>{code}</code>\nЭтот код постоянный и больше не меняется."
+                f"🔑 Ваш логин для входа: <code>{username}</code>.\n"
+                "Используйте его и ваш пароль для входа в приложение."
             )
             btn_tg_text = "📱 Открыть в Telegram"
             btn_browser_text = "🌐 Открыть в браузере"
@@ -492,11 +472,11 @@ async def login_command(m: Message, state: FSMContext, db: aiosqlite.Connection)
         
         buttons = []
         # Telegram WebApp requires HTTPS URL, otherwise it throws Bad Request
-        if web_url_with_code.startswith("https://"):
-            buttons.append([InlineKeyboardButton(text=btn_tg_text, web_app=WebAppInfo(url=web_url_with_code))])
+        if web_url.startswith("https://"):
+            buttons.append([InlineKeyboardButton(text=btn_tg_text, web_app=WebAppInfo(url=web_url))])
         
         # Standard URL buttons can be HTTP or HTTPS
-        buttons.append([InlineKeyboardButton(text=btn_browser_text, url=web_url_with_code)])
+        buttons.append([InlineKeyboardButton(text=btn_browser_text, url=web_url)])
         buttons.append([InlineKeyboardButton(text=btn_apk_text, url=apk_url)])
         buttons.append([InlineKeyboardButton(text=btn_change_pwd, callback_data="st:set_password")])
         

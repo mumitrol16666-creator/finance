@@ -19,7 +19,7 @@ from app.scheduler.notify_scheduler import setup_notify_scheduler
 BOT_COMMANDS: dict[str, list[BotCommand]] = {
     "ru": [
         BotCommand(command="start", description="Запуск"),
-        BotCommand(command="login", description="Войти в приложение (получить код)"),
+        BotCommand(command="login", description="Войти в приложение"),
         BotCommand(command="undo", description="Отменить последнюю запись"),
         BotCommand(command="export", description="Экспорт XLSX за месяц"),
         BotCommand(command="cancel", description="Сбросить текущее действие"),
@@ -27,7 +27,7 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
     ],
     "en": [
         BotCommand(command="start", description="Start"),
-        BotCommand(command="login", description="Log in to the app (get code)"),
+        BotCommand(command="login", description="Log in to the app"),
         BotCommand(command="undo", description="Undo last entry"),
         BotCommand(command="export", description="Export XLSX for the month"),
         BotCommand(command="cancel", description="Cancel current action"),
@@ -35,7 +35,7 @@ BOT_COMMANDS: dict[str, list[BotCommand]] = {
     ],
     "kk": [
         BotCommand(command="start", description="Бастау"),
-        BotCommand(command="login", description="Қосымшаға кіру (кодты алу)"),
+        BotCommand(command="login", description="Қосымшаға кіру"),
         BotCommand(command="undo", description="Соңғы жазуды болдырмау"),
         BotCommand(command="export", description="Айдың XLSX-экспорты"),
         BotCommand(command="cancel", description="Ағымдағы әрекетті бас тарту"),

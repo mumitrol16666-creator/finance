@@ -8,6 +8,7 @@ import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
 import '../utils/file_saver.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
@@ -38,8 +39,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   bool _isCustomRangeActive = false;
 
   String _formatKzt(int amountMinor) {
-    final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor);
+    final appState = Provider.of<AppState>(context, listen: false);
+    return cu.formatCurrency(amountMinor, appState.baseCurrency);
+  }
+
+  String _formatCurrency(int amount, String currency) {
+    return cu.formatCurrency(amount, currency);
+  }
+
+  int _accountBalanceInBase(AppState appState, Account account) {
+    return appState.convertAmount(account.balance, account.currency, appState.baseCurrency) ?? account.balance;
   }
 
   void _previousPeriod() {
@@ -333,7 +342,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final int activeSum = _activeTab == 0 ? appState.cycleExpenses : appState.cycleIncome;
 
     final savingsAccounts = appState.accounts.where((a) => a.isSaving).toList();
-    final int totalSavings = savingsAccounts.fold(0, (sum, a) => sum + a.balance);
+    final int totalSavings = savingsAccounts.fold(0, (sum, a) => sum + _accountBalanceInBase(appState, a));
 
     final List<Color> segmentColors = [
       AppTheme.primary,
@@ -939,7 +948,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                   borderData: FlBorderData(show: false),
                                   sectionsSpace: 2,
                                   centerSpaceRadius: 55,
-                                  sections: showingSavingsSections(savingsAccounts, totalSavings, segmentColors),
+                                  sections: showingSavingsSections(appState, savingsAccounts, totalSavings, segmentColors),
                                 ),
                               ).animate().scale(duration: 500.ms, curve: Curves.easeOut),
                               Center(
@@ -998,7 +1007,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       itemBuilder: (context, index) {
                         final acc = savingsAccounts[index];
                         final color = segmentColors[index % segmentColors.length];
-                        final double percent = totalSavings > 0 ? (acc.balance / totalSavings) * 100 : 0;
+                        final convertedBalance = _accountBalanceInBase(appState, acc);
+                        final double percent = totalSavings > 0 ? (convertedBalance / totalSavings) * 100 : 0;
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
@@ -1027,7 +1037,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                       crossAxisAlignment: CrossAxisAlignment.end,
                                       children: [
                                         Text(
-                                          _formatKzt(acc.balance),
+                                          _formatCurrency(acc.balance, acc.currency),
                                           style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary, fontSize: 13.5),
                                         ),
                                         const SizedBox(height: 2),
@@ -1151,7 +1161,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     });
   }
 
-  List<PieChartSectionData> showingSavingsSections(List<Account> savingsAccounts, int totalSavings, List<Color> colors) {
+  List<PieChartSectionData> showingSavingsSections(AppState appState, List<Account> savingsAccounts, int totalSavings, List<Color> colors) {
     if (totalSavings <= 0 || savingsAccounts.isEmpty) {
       return [
         PieChartSectionData(
@@ -1168,12 +1178,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       final fontSize = isTouched ? 15.0 : 0.0;
       final radius = isTouched ? 32.0 : 22.0;
       final account = savingsAccounts[i];
+      final convertedBalance = _accountBalanceInBase(appState, account);
       final color = colors[i % colors.length];
 
       return PieChartSectionData(
         color: color,
-        value: account.balance.toDouble(),
-        title: isTouched ? '${((account.balance / totalSavings) * 100).toStringAsFixed(0)}%' : '',
+        value: convertedBalance.toDouble(),
+        title: isTouched ? '${((convertedBalance / totalSavings) * 100).toStringAsFixed(0)}%' : '',
         radius: radius,
         titleStyle: TextStyle(
           fontSize: fontSize,

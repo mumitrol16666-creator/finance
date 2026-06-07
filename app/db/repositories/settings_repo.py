@@ -63,12 +63,15 @@ async def update_debt_settings(db: aiosqlite.Connection, user_id: int, enabled: 
 
 async def list_notify_targets(db: aiosqlite.Connection):
     cur = await db.execute(
-        "SELECT user_id, currency, timezone, lang, "
+        "SELECT s.user_id, s.currency, s.timezone, s.lang, "
         "daily_report_enabled, daily_report_time, "
         "daily_report_last_sent_date, daily_report_pre_last_sent_date, "
         "nudge_enabled, nudge_interval_min, nudge_last_sent_at, debts_enabled, debts_days_before, "
-        "recurring_inc_enabled, recurring_inc_days, recurring_exp_enabled, recurring_exp_days "
-        "FROM settings WHERE daily_report_enabled=1 OR nudge_enabled=1 OR debts_enabled=1 OR recurring_inc_enabled=1 OR recurring_exp_enabled=1"
+        "recurring_inc_enabled, recurring_inc_days, recurring_exp_enabled, recurring_exp_days, "
+        "telegram_notifications_enabled, quiet_hours_enabled, quiet_hours_start, quiet_hours_end "
+        "FROM settings s JOIN users u ON u.id=s.user_id "
+        "WHERE u.telegram_id IS NOT NULL AND telegram_notifications_enabled=1 AND "
+        "(daily_report_enabled=1 OR nudge_enabled=1 OR debts_enabled=1 OR recurring_inc_enabled=1 OR recurring_exp_enabled=1)"
     )
     return await cur.fetchall()
 
@@ -244,4 +247,3 @@ async def save_onboarding_interview(
         "WHERE user_id=?",
         (archetype, main_goal, daily_limit, main_goal, updated_at, user_id),
     )
-

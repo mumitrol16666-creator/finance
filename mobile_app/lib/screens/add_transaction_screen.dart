@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class AddTransactionScreen extends StatefulWidget {
   const AddTransactionScreen({super.key});
@@ -25,14 +26,36 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   int? _selectedDebtId;
   String? _linkedItemTitle;
 
+  double? _customTransferRate;
+  bool _isCustomRateActive = false;
+
   // Auto-save logic fields
   bool _autoSave = false;
   String? _selectedSavingAccount;
   int _autoSavePercent = 10; // Default 10%
 
   String _formatKzt(num amount) {
-    final format = NumberFormat.currency(locale: 'ru_KZ', symbol: '₸', decimalDigits: 0);
-    return format.format(amount).trim();
+    final appState = Provider.of<AppState>(context, listen: false);
+    return cu.formatCurrency(amount.round(), appState.baseCurrency);
+  }
+
+  int _convertAmountToBase(AppState appState, int amount) {
+    if (_selectedAccount == null) return amount;
+    try {
+      final acc = appState.accounts.firstWhere((a) => a.name == _selectedAccount);
+      return appState.convertAmount(amount, acc.currency, appState.baseCurrency) ?? amount;
+    } catch (_) {
+      return amount;
+    }
+  }
+
+  String _selectedAccountCurrency(AppState appState) {
+    if (_selectedAccount == null) return appState.baseCurrency;
+    try {
+      return appState.accounts.firstWhere((a) => a.name == _selectedAccount).currency;
+    } catch (_) {
+      return appState.baseCurrency;
+    }
   }
 
   @override
@@ -106,77 +129,87 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
     final appState = Provider.of<AppState>(context, listen: false);
 
-    if (_selectedDebtId != null) {
-      final account = appState.accounts.firstWhere((a) => a.name == _selectedAccount);
-      await appState.payDebt(
-        _selectedDebtId!,
-        amount: amountInt,
-        accountId: account.id,
-      );
-    } else if (_kind == 'transfer') {
-      if (!appState.isPremium) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('🔒 Функция перевода доступна только в Premium версии'),
-            backgroundColor: AppTheme.expense,
-          ),
+    try {
+      if (_selectedDebtId != null) {
+        final account = appState.accounts.firstWhere((a) => a.name == _selectedAccount);
+        await appState.payDebt(
+          _selectedDebtId!,
+          amount: amountInt,
+          accountId: account.id,
         );
-        return;
-      }
-      if (_selectedToAccount == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Выберите счёт зачисления')),
-        );
-        return;
-      }
-      if (_selectedAccount == _selectedToAccount) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Счета списания и зачисления должны отличаться')),
-        );
-        return;
-      }
-
-      await appState.addTransaction(
-        amount: amountInt,
-        kind: 'transfer',
-        categoryName: '',
-        categoryEmoji: '',
-        accountName: _selectedAccount!,
-        toAccountName: _selectedToAccount!,
-        note: _noteController.text.trim().isNotEmpty ? _noteController.text.trim() : null,
-      );
-    } else {
-      final category = appState.categories.firstWhere((c) => c.name == _selectedCategory);
-
-      // Save transaction in app state
-      await appState.addTransaction(
-        amount: amountInt, // raw whole units
-        kind: _kind,
-        categoryName: category.name,
-        categoryEmoji: category.emoji,
-        accountName: _selectedAccount!,
-        note: _noteController.text.trim().isNotEmpty ? _noteController.text.trim() : null,
-      );
-
-      // Auto-save part to savings if checked
-      if (_kind == 'income' && _autoSave && _selectedSavingAccount != null) {
-        final transferAmount = (amountInt * _autoSavePercent / 100).round();
-        if (transferAmount > 0) {
-          await appState.addTransaction(
-            amount: transferAmount,
-            kind: 'transfer',
-            categoryName: category.name,
-            categoryEmoji: category.emoji,
-            accountName: _selectedAccount!,
-            toAccountName: _selectedSavingAccount!,
-            note: 'Автонакопление ($_autoSavePercent% от дохода)',
+      } else if (_kind == 'transfer') {
+        if (!appState.isPremium) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('🔒 Функция перевода доступна только в Premium версии'),
+              backgroundColor: AppTheme.expense,
+            ),
           );
+          return;
+        }
+        if (_selectedToAccount == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Выберите счёт зачисления')),
+          );
+          return;
+        }
+        if (_selectedAccount == _selectedToAccount) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Счета списания и зачисления должны отличаться')),
+          );
+          return;
+        }
+
+        await appState.addTransaction(
+          amount: amountInt,
+          kind: 'transfer',
+          categoryName: '',
+          categoryEmoji: '',
+          accountName: _selectedAccount!,
+          toAccountName: _selectedToAccount!,
+          note: _noteController.text.trim().isNotEmpty ? _noteController.text.trim() : null,
+          customRate: _isCustomRateActive ? _customTransferRate : null,
+        );
+      } else {
+        final category = appState.categories.firstWhere((c) => c.name == _selectedCategory);
+
+        await appState.addTransaction(
+          amount: amountInt,
+          kind: _kind,
+          categoryName: category.name,
+          categoryEmoji: category.emoji,
+          accountName: _selectedAccount!,
+          note: _noteController.text.trim().isNotEmpty ? _noteController.text.trim() : null,
+        );
+
+        if (_kind == 'income' && _autoSave && _selectedSavingAccount != null) {
+          final transferAmount = (amountInt * _autoSavePercent / 100).round();
+          if (transferAmount > 0) {
+            await appState.addTransaction(
+              amount: transferAmount,
+              kind: 'transfer',
+              categoryName: category.name,
+              categoryEmoji: category.emoji,
+              accountName: _selectedAccount!,
+              toAccountName: _selectedSavingAccount!,
+              note: 'Автонакопление ($_autoSavePercent% от дохода)',
+            );
+          }
+        }
+
+        if (_selectedPlannedId != null) {
+          await appState.completePlanned(_selectedPlannedId!);
         }
       }
-
-      if (_selectedPlannedId != null) {
-        await appState.completePlanned(_selectedPlannedId!);
-      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Не удалось сохранить операцию: ${e.toString().replaceAll("Exception: ", "")}'),
+          backgroundColor: AppTheme.expense,
+        ),
+      );
+      return;
     }
 
     // Reset state & show success
@@ -187,6 +220,8 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       _selectedPlannedId = null;
       _selectedDebtId = null;
       _linkedItemTitle = null;
+      _customTransferRate = null;
+      _isCustomRateActive = false;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -425,16 +460,25 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                           'Сумма:',
                           style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.bold),
                         ),
-                        Text(
-                          '$_amountStr ₸',
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: isTransfer
-                                ? AppTheme.accentBlue
-                                : (isExpense ? AppTheme.expense : AppTheme.income),
-                          ),
-                        ),
+                        Builder(builder: (context) {
+                          String sym = cu.currencySymbol(appState.baseCurrency);
+                          if (_selectedAccount != null) {
+                            try {
+                              final acc = appState.accounts.firstWhere((a) => a.name == _selectedAccount);
+                              sym = cu.currencySymbol(acc.currency);
+                            } catch (_) {}
+                          }
+                          return Text(
+                            '$_amountStr $sym',
+                            style: TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              color: isTransfer
+                                  ? AppTheme.accentBlue
+                                  : (isExpense ? AppTheme.expense : AppTheme.income),
+                            ),
+                          );
+                        }),
                       ],
                     ),
                   ),
@@ -480,7 +524,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                 ),
                               ),
                               child: Text(
-                                '$name ($balance ₸)',
+                                '$name (${cu.formatCurrency(balance, acc.currency)})',
                                 style: TextStyle(
                                   color: isSelected ? Colors.white : AppTheme.textSecondary,
                                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -525,7 +569,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                 ),
                               ),
                               child: Text(
-                                '$name ($balance ₸)',
+                                '$name (${cu.formatCurrency(balance, acc.currency)})',
                                 style: TextStyle(
                                   color: isSelected ? Colors.white : AppTheme.textSecondary,
                                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -537,6 +581,128 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
+
+                    // Multi-currency transfer details
+                    Builder(builder: (context) {
+                      try {
+                        final fromAcc = accounts.firstWhere((a) => a.name == _selectedAccount);
+                        final toAcc = accounts.firstWhere((a) => a.name == _selectedToAccount);
+
+                        if (fromAcc.currency != toAcc.currency) {
+                          final fromRate = appState.exchangeRates[fromAcc.currency.toUpperCase()] ?? 1.0;
+                          final toRate = appState.exchangeRates[toAcc.currency.toUpperCase()] ?? 1.0;
+                          final defaultRate = toRate / fromRate;
+
+                          final rateToUse = _isCustomRateActive && _customTransferRate != null
+                              ? _customTransferRate!
+                              : defaultRate;
+
+                          final amountVal = int.tryParse(_amountStr) ?? 0;
+                          final receivedAmount = (amountVal * rateToUse).round();
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
+                            decoration: AppTheme.glassCardDecoration(radius: 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text(
+                                      'Курс обмена:',
+                                      style: TextStyle(
+                                        color: AppTheme.textSecondary,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Row(
+                                      children: [
+                                        GestureDetector(
+                                          onTap: () {
+                                            _showEditTransferRateDialog(context, fromAcc.currency, toAcc.currency, rateToUse);
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: _isCustomRateActive
+                                                  ? AppTheme.accentBlue.withOpacity(0.15)
+                                                  : Colors.white.withOpacity(0.05),
+                                              borderRadius: BorderRadius.circular(8),
+                                              border: Border.all(
+                                                color: _isCustomRateActive
+                                                    ? AppTheme.accentBlue.withOpacity(0.3)
+                                                    : Colors.white.withOpacity(0.05),
+                                              ),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                Text(
+                                                  '1 ${cu.currencySymbol(fromAcc.currency)} = ${rateToUse.toStringAsFixed(4)} ${cu.currencySymbol(toAcc.currency)}',
+                                                  style: TextStyle(
+                                                    color: _isCustomRateActive ? AppTheme.accentBlue : Colors.white70,
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Icon(
+                                                  Icons.edit_rounded,
+                                                  size: 12,
+                                                  color: _isCustomRateActive ? AppTheme.accentBlue : AppTheme.textSecondary,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        if (_isCustomRateActive) ...[
+                                          const SizedBox(width: 6),
+                                          IconButton(
+                                            icon: const Icon(Icons.refresh_rounded, size: 16, color: AppTheme.textSecondary),
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
+                                            onPressed: () {
+                                              setState(() {
+                                                _isCustomRateActive = false;
+                                                _customTransferRate = null;
+                                              });
+                                            },
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text(
+                                      'Получатель получит:',
+                                      style: TextStyle(
+                                        color: AppTheme.textSecondary,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    Text(
+                                      '≈ ${cu.formatCurrency(receivedAmount, toAcc.currency)}',
+                                      style: const TextStyle(
+                                        color: AppTheme.income,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                      } catch (_) {}
+                      return const SizedBox.shrink();
+                    }),
                   ] else ...[
                     // Horizontal scroll of accounts (Excluding Savings)
                     const Text(
@@ -574,7 +740,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                   ),
                                 ),
                                 child: Text(
-                                  '$name ($balance ₸)',
+                                  '$name (${cu.formatCurrency(balance, acc.currency)})',
                                   style: TextStyle(
                                     color: isSelected ? Colors.white : AppTheme.textSecondary,
                                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -626,6 +792,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                               
                               // Parse currently typed amount preview
                               final currentTypedAmount = int.tryParse(_amountStr) ?? 0;
+                              final currentTypedBaseAmount = _convertAmountToBase(appState, currentTypedAmount);
                               final limit = cat.limitAmount;
                               final spent = cat.spentAmount;
                               
@@ -637,7 +804,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                               double progressVal = 0.0;
                               
                               if (showLimitInfo && limit > 0) {
-                                final totalPredicted = spent + (isSelected ? currentTypedAmount : 0);
+                                final totalPredicted = spent + (isSelected ? currentTypedBaseAmount : 0);
                                 progressVal = totalPredicted / limit;
                                 if (progressVal >= 1.0) {
                                   warningText = '⚠️ Превысит лимит!';
@@ -708,7 +875,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                             const SizedBox(height: 2),
                                             Text(
                                               currentTypedAmount > 0 && isSelected && _kind == 'expense'
-                                                  ? '${_formatKzt(spent)} + ${_formatKzt(currentTypedAmount)}'
+                                                  ? '${_formatKzt(spent)} + ${_formatKzt(currentTypedBaseAmount)}'
                                                   : 'Потрачено: ${_formatKzt(spent)}',
                                               style: TextStyle(
                                                 color: isSelected ? Colors.white70 : AppTheme.textSecondary,
@@ -945,15 +1112,22 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                   _selectedDebtId = null;
                                   _linkedItemTitle = 'План: ${planned.title}';
                                   _noteController.text = planned.title;
+
+                                  if (planned.accountId != null) {
+                                    final plannedAccounts = appState.accounts.where((a) => a.id == planned.accountId);
+                                    if (plannedAccounts.isNotEmpty) {
+                                      _selectedAccount = plannedAccounts.first.name;
+                                    }
+                                  }
                                   
                                   // Auto match category
                                   final match = appState.categories.where((c) => c.emoji == planned.categoryEmoji);
                                   if (match.isNotEmpty) {
                                     _selectedCategory = match.first.name;
                                     
-                                    // Auto match account if defined
+                                    // Fall back to the category account for older planned items.
                                     final cat = match.first;
-                                    if (cat.defaultAccountId != null && cat.defaultAccountId! > 0) {
+                                    if (planned.accountId == null && cat.defaultAccountId != null && cat.defaultAccountId! > 0) {
                                       final matchAcc = appState.accounts.where((a) => a.id == cat.defaultAccountId);
                                       if (matchAcc.isNotEmpty) {
                                         _selectedAccount = matchAcc.first.name;
@@ -988,7 +1162,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
                                           Text(
-                                            '${planned.amount} ₸',
+                                            cu.formatCurrency(planned.amount, planned.currency),
                                             style: const TextStyle(color: AppTheme.expense, fontSize: 10, fontWeight: FontWeight.bold),
                                           ),
                                           Text(
@@ -1077,7 +1251,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
                                           Text(
-                                            '${debt.paymentAmount > 0 ? debt.paymentAmount : debt.remainingAmount} ₸',
+                                            _formatKzt(debt.paymentAmount > 0 ? debt.paymentAmount : debt.remainingAmount),
                                             style: const TextStyle(color: AppTheme.expense, fontSize: 10, fontWeight: FontWeight.bold),
                                           ),
                                           if (nextPaymentText != null)
@@ -1153,7 +1327,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                   items: savingsAccounts.map((a) {
                                     return DropdownMenuItem<String>(
                                       value: a.name,
-                                      child: Text('${a.name} (${a.balance} ₸)'),
+                                      child: Text('${a.name} (${cu.formatCurrency(a.balance, a.currency)})'),
                                     );
                                   }).toList(),
                                   onChanged: (val) {
@@ -1200,7 +1374,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                           ),
                                           const SizedBox(height: 2),
                                           Text(
-                                            '$calcAmount ₸',
+                                            cu.formatCurrency(calcAmount, _selectedAccountCurrency(appState)),
                                             style: TextStyle(
                                               color: isSelected ? Colors.white70 : AppTheme.textSecondary,
                                               fontSize: 9,
@@ -1337,6 +1511,74 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           );
         }).toList(),
       ),
+    );
+  }
+
+  void _showEditTransferRateDialog(BuildContext context, String fromCurrency, String toCurrency, double currentRate) {
+    final controller = TextEditingController(text: currentRate.toStringAsFixed(4));
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text(
+            'Курс обмена',
+            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Укажите сколько $toCurrency стоит 1 $fromCurrency:',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  suffixText: toCurrency,
+                  suffixStyle: const TextStyle(color: AppTheme.textSecondary),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTheme.accentBlue),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.accentBlue,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                final double? newRate = double.tryParse(controller.text.replaceAll(',', '.'));
+                if (newRate != null && newRate > 0) {
+                  setState(() {
+                    _customTransferRate = newRate;
+                    _isCustomRateActive = true;
+                  });
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Установить', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
     );
   }
 }
