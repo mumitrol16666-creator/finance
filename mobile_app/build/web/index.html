@@ -31,16 +31,296 @@
 
   <title>FinTrack</title>
   <link rel="manifest" href="manifest.json">
+  
+  <style>
+    body {
+      background-color: #0b0f19;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    /* Loader Container */
+    #loading-indicator {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-color: #0b0f19;
+      z-index: 99999;
+      transition: opacity 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+    }
+    #loading-indicator.fade-out {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .glow-bg {
+      position: absolute;
+      width: 320px;
+      height: 320px;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, rgba(99, 102, 241, 0.04) 50%, rgba(11, 15, 25, 0) 100%);
+      filter: blur(40px);
+      pointer-events: none;
+      z-index: 1;
+    }
+    .loader-content {
+      position: relative;
+      width: 180px;
+      height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+    }
+    .loading-text {
+      margin-top: 24px;
+      font-size: 15px;
+      color: #94a3b8;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      z-index: 2;
+      animation: pulse-text 1.5s infinite ease-in-out;
+    }
+    @keyframes pulse-text {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
+    }
+
+    /* Variant 1: Coin Drop */
+    .coin-drop-wrapper {
+      position: relative;
+      width: 120px;
+      height: 120px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .coin-drop-wrapper .wallet {
+      transform-origin: bottom center;
+      animation: wallet-bounce 1.6s infinite ease-in-out;
+    }
+    .coin-drop-wrapper .coin {
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      background: linear-gradient(135deg, #fef08a 0%, #f59e0b 100%);
+      border-radius: 50%;
+      border: 2px solid #fbbf24;
+      box-shadow: 0 0 12px rgba(245, 158, 11, 0.6);
+      top: 0;
+      left: 50%;
+      margin-left: -11px;
+      opacity: 0;
+      animation: coin-fall 1.6s infinite cubic-bezier(0.25, 1, 0.5, 1);
+    }
+    @keyframes coin-fall {
+      0% {
+        transform: translateY(-15px) scale(0.7);
+        opacity: 0;
+      }
+      15% {
+        opacity: 1;
+      }
+      50%, 100% {
+        transform: translateY(70px) scale(1);
+        opacity: 0;
+      }
+    }
+    @keyframes wallet-bounce {
+      0%, 45%, 100% {
+        transform: scale(1);
+      }
+      50% {
+        transform: scale(1.15, 0.82);
+      }
+      60% {
+        transform: scale(0.88, 1.12);
+      }
+      70% {
+        transform: scale(1.03, 0.97);
+      }
+      80% {
+        transform: scale(1);
+      }
+    }
+
+    /* Variant 2: Orbit */
+    .orbit-wrapper {
+      position: relative;
+      width: 150px;
+      height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      perspective: 600px;
+    }
+    .center-sphere {
+      position: absolute;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      z-index: 10;
+      animation: sphere-pulse 2s infinite ease-in-out;
+    }
+    @keyframes sphere-pulse {
+      0%, 100% { transform: scale(1); filter: drop-shadow(0 0 10px rgba(245, 158, 11, 0.5)); }
+      50% { transform: scale(1.08); filter: drop-shadow(0 0 18px rgba(245, 158, 11, 0.85)); }
+    }
+    .orbit-ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 1px dashed rgba(255, 255, 255, 0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform-style: preserve-3d;
+    }
+    .ring-1 { transform: rotateX(70deg) rotateY(15deg); width: 110px; height: 110px; }
+    .ring-2 { transform: rotateX(60deg) rotateY(-25deg); width: 135px; height: 135px; }
+    .ring-3 { transform: rotateX(80deg) rotateY(45deg); width: 90px; height: 90px; }
+    
+    .orbiting-coin {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      background: #1e293b;
+      border: 1.5px solid #38bdf8;
+      color: #38bdf8;
+      border-radius: 50%;
+      font-size: 10px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+    }
+    .ring-1 .orbiting-coin { animation: orbit-1 3s infinite linear; }
+    .ring-2 .orbiting-coin { animation: orbit-2 4s infinite linear; border-color: #a78bfa; color: #a78bfa; box-shadow: 0 0 8px rgba(167, 139, 250, 0.4); }
+    .ring-3 .orbiting-coin { animation: orbit-3 2.5s infinite linear; border-color: #10b981; color: #10b981; box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
+    
+    @keyframes orbit-1 {
+      from { transform: rotateZ(0deg) translateX(55deg) rotateZ(0deg) rotateX(-70deg); }
+      to { transform: rotateZ(360deg) translateX(55deg) rotateZ(-360deg) rotateX(-70deg); }
+    }
+    @keyframes orbit-2 {
+      from { transform: rotateZ(0deg) translateX(67.5deg) rotateZ(0deg) rotateX(-60deg); }
+      to { transform: rotateZ(360deg) translateX(67.5deg) rotateZ(-360deg) rotateX(-60deg); }
+    }
+    @keyframes orbit-3 {
+      from { transform: rotateZ(0deg) translateX(45deg) rotateZ(0deg) rotateX(-80deg); }
+      to { transform: rotateZ(360deg) translateX(45deg) rotateZ(-360deg) rotateX(-80deg); }
+    }
+
+    /* Variant 3: Chart Rider */
+    .chart-rider-wrapper {
+      position: relative;
+      width: 140px;
+      height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #chart-path {
+      stroke-dasharray: 400;
+      stroke-dashoffset: 400;
+      animation: draw-chart 3s infinite ease-in-out;
+    }
+    @keyframes draw-chart {
+      0% { stroke-dashoffset: 400; }
+      40%, 100% { stroke-dashoffset: 0; }
+    }
+  </style>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
+  <!-- Loading Splash Screen -->
+  <div id="loading-indicator">
+    <div class="glow-bg"></div>
+    <div id="loader-content" class="loader-content"></div>
+    <div class="loading-text">Загрузка FinTrack...</div>
+  </div>
 
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+  <script>
+    (function() {
+      const coinDropHtml = `
+        <div class="coin-drop-wrapper">
+          <div class="coin"></div>
+          <div class="wallet">
+            <svg width="80" height="70" viewBox="0 0 80 70" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="5" y="15" width="70" height="50" rx="12" fill="#1e293b" stroke="#334155" stroke-width="3"/>
+              <path d="M45 15H70V40C70 42.7614 67.7614 45 65 45H45V15Z" fill="#1e293b" stroke="#334155" stroke-width="3"/>
+              <circle cx="50" cy="30" r="5" fill="#f59e0b" />
+              <line x1="20" y1="15" x2="40" y2="15" stroke="#10b981" stroke-width="4" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+      `;
+
+      const orbitHtml = `
+        <div class="orbit-wrapper">
+          <div class="center-sphere">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+              <circle cx="20" cy="20" r="16" fill="url(#goldGrad)" stroke="#fbbf24" stroke-width="2"/>
+              <text x="50%" y="58%" dominant-baseline="middle" text-anchor="middle" fill="#78350f" font-weight="bold" font-size="16">$</text>
+              <defs>
+                <linearGradient id="goldGrad" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#fef08a"/>
+                  <stop offset="1" stop-color="#d97706"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <div class="orbit-ring ring-1">
+            <div class="orbiting-coin c1">₸</div>
+          </div>
+          <div class="orbit-ring ring-2">
+            <div class="orbiting-coin c2">€</div>
+          </div>
+          <div class="orbit-ring ring-3">
+            <div class="orbiting-coin c3">₽</div>
+          </div>
+        </div>
+      `;
+
+      const chartRiderHtml = `
+        <div class="chart-rider-wrapper">
+          <svg width="140" height="80" viewBox="0 0 140 80" fill="none">
+            <line x1="10" y1="10" x2="130" y2="10" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <line x1="10" y1="30" x2="130" y2="30" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <line x1="10" y1="50" x2="130" y2="50" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <line x1="10" y1="70" x2="130" y2="70" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+            <path id="chart-path" d="M10,70 Q40,55 60,35 T110,20 L130,55" stroke="url(#chartGrad)" stroke-width="3" stroke-linecap="round"/>
+            <rect x="120" y="50" width="16" height="16" rx="3" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+            <line x1="124" y1="50" x2="132" y2="50" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>
+            <circle id="chart-coin" r="7" fill="url(#goldGrad2)" stroke="#fbbf24" stroke-width="1.5">
+              <animateMotion dur="2.5s" repeatCount="indefinite" path="M10,70 Q40,55 60,35 T110,20 L130,55" rotate="auto" />
+            </circle>
+            <defs>
+              <linearGradient id="chartGrad" x1="0" y1="80" x2="140" y2="0" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#10b981"/>
+                <stop offset="0.7" stop-color="#3b82f6"/>
+                <stop offset="1" stop-color="#6366f1"/>
+              </linearGradient>
+              <linearGradient id="goldGrad2" x1="0" y1="0" x2="14" y2="14" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#fef08a"/>
+                <stop offset="1" stop-color="#d97706"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+      `;
+
+      const variants = [coinDropHtml, orbitHtml, chartRiderHtml];
+      const rand = Math.floor(Math.random() * variants.length);
+      document.getElementById('loader-content').innerHTML = variants[rand];
+    })();
+  </script>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
