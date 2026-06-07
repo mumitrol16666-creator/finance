@@ -318,6 +318,15 @@
       const variants = [coinDropHtml, orbitHtml, chartRiderHtml];
       const rand = Math.floor(Math.random() * variants.length);
       document.getElementById('loader-content').innerHTML = variants[rand];
+
+      // Fallback timeout: remove loader after 6 seconds if it's still present
+      setTimeout(function() {
+        const loader = document.getElementById('loading-indicator');
+        if (loader && !loader.classList.contains('fade-out')) {
+          loader.classList.add('fade-out');
+          setTimeout(() => loader.remove(), 400);
+        }
+      }, 6000);
     })();
   </script>
 

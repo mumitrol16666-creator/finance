@@ -111,6 +111,7 @@ class Transaction {
   final String accountName;
   final String? note;
   final DateTime timestamp;
+  final String currency;
 
   Transaction({
     required this.id,
@@ -121,6 +122,7 @@ class Transaction {
     required this.accountName,
     this.note,
     required this.timestamp,
+    this.currency = 'KZT',
   });
 
   factory Transaction.fromJson(Map<String, dynamic> json) {
@@ -133,6 +135,7 @@ class Transaction {
       accountName: json['accountName'] as String? ?? json['account_name'] as String? ?? '',
       note: json['note'] as String?,
       timestamp: DateTime.tryParse(json['timestamp'] as String? ?? json['ts'] as String? ?? '') ?? DateTime.now(),
+      currency: json['currency'] as String? ?? 'KZT',
     );
   }
 
@@ -145,6 +148,7 @@ class Transaction {
     'account_name': accountName,
     'note': note,
     'timestamp': timestamp.toIso8601String(),
+    'currency': currency,
   };
 }
 
@@ -271,4 +275,38 @@ class AnalyticsCategory {
       amount: json['amount'] as int? ?? 0,
     );
   }
+}
+
+class QuickAddTemplate {
+  final int id;
+  final String title;
+  final int amount;
+  final String categoryName;
+  final String categoryEmoji;
+
+  QuickAddTemplate({
+    required this.id,
+    required this.title,
+    required this.amount,
+    required this.categoryName,
+    required this.categoryEmoji,
+  });
+
+  factory QuickAddTemplate.fromJson(Map<String, dynamic> json) {
+    return QuickAddTemplate(
+      id: json['id'] as int,
+      title: json['title'] as String? ?? '',
+      amount: json['amount'] as int? ?? 0,
+      categoryName: json['category_name'] as String? ?? json['categoryName'] as String? ?? 'Прочее',
+      categoryEmoji: json['category_emoji'] as String? ?? json['categoryEmoji'] as String? ?? '📦',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'amount': amount,
+    'category_name': categoryName,
+    'category_emoji': categoryEmoji,
+  };
 }

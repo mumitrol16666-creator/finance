@@ -180,7 +180,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _quickAdd(BuildContext context, AppState appState, _QuickAddTemplate template) async {
+  void _quickAdd(BuildContext context, AppState appState, QuickAddTemplate template) async {
     if (appState.accounts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -193,34 +193,430 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final activeAccounts = appState.accounts.where((a) => !a.isSaving && a.accType != 'deposit').toList();
     final targetAccount = activeAccounts.isNotEmpty ? activeAccounts.first : appState.accounts.first;
 
+    // Find category for default account
+    Account? initialAccount;
     try {
-      await appState.addTransaction(
-        amount: template.amount,
-        kind: 'expense',
-        categoryName: template.categoryName,
-        categoryEmoji: template.categoryEmoji,
-        accountName: targetAccount.name,
-        note: template.title,
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('✅ Добавлен расход: ${template.title} — ${template.amount} ₸'),
-          backgroundColor: AppTheme.income,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ Ошибка добавления: $e'),
-          backgroundColor: AppTheme.expense,
-        ),
-      );
+      final cat = appState.categories.firstWhere((c) => c.name == template.categoryName);
+      if (cat.defaultAccountId != null && cat.defaultAccountId! > 0) {
+        initialAccount = appState.accounts.firstWhere((a) => a.id == cat.defaultAccountId);
+      }
+    } catch (_) {}
+    initialAccount ??= targetAccount;
+
+    final amountController = TextEditingController(text: template.amount.toString());
+    final noteController = TextEditingController(text: template.title);
+    Account? selectedAccount = initialAccount;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.surfaceCard,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.border),
+              ),
+              title: Row(
+                children: [
+                  Text(template.categoryEmoji, style: const TextStyle(fontSize: 24)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Быстрый ввод: ${template.title}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: amountController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                      decoration: const InputDecoration(
+                        labelText: 'Сумма',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        suffixText: '₸',
+                        suffixStyle: TextStyle(color: Colors.white70),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: noteController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Комментарий (Заметка)',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Списать со счёта:',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<Account>(
+                      dropdownColor: AppTheme.surfaceCard,
+                      value: selectedAccount,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.02),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppTheme.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppTheme.border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppTheme.primary),
+                        ),
+                      ),
+                      items: appState.accounts.map((acc) {
+                        return DropdownMenuItem<Account>(
+                          value: acc,
+                          child: Text('${acc.name} (${acc.balance} ${acc.currency})'),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        setDialogState(() {
+                          selectedAccount = val;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final enteredAmount = int.tryParse(amountController.text.trim()) ?? 0;
+                    if (enteredAmount <= 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('❌ Введите корректную сумму!'),
+                          backgroundColor: AppTheme.expense,
+                        ),
+                      );
+                      return;
+                    }
+                    if (selectedAccount == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('❌ Выберите счёт для списания!'),
+                          backgroundColor: AppTheme.expense,
+                        ),
+                      );
+                      return;
+                    }
+
+                    Navigator.pop(context);
+
+                    try {
+                      await appState.addTransaction(
+                        amount: enteredAmount,
+                        kind: 'expense',
+                        categoryName: template.categoryName,
+                        categoryEmoji: template.categoryEmoji,
+                        accountName: selectedAccount!.name,
+                        note: noteController.text.trim().isNotEmpty ? noteController.text.trim() : template.title,
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('✅ Добавлен расход: ${template.title} — $enteredAmount ${selectedAccount!.currency}'),
+                          backgroundColor: AppTheme.income,
+                        ),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('❌ Ошибка добавления: $e'),
+                          backgroundColor: AppTheme.expense,
+                        ),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('Добавить', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showConfigureQuickAddBottomSheet(BuildContext context, AppState appState) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final templates = appState.quickAddTemplates;
+            return Container(
+              padding: EdgeInsets.only(
+                left: 24,
+                right: 24,
+                top: 24,
+                bottom: 24 + MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Настройка быстрого расхода',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: templates.length,
+                    itemBuilder: (context, index) {
+                      final template = templates[index];
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: AppTheme.glassCardDecoration(radius: 12),
+                        child: ListTile(
+                          leading: Text(template.categoryEmoji, style: const TextStyle(fontSize: 24)),
+                          title: Text(template.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          subtitle: Text('${template.amount} ₸ • ${template.categoryName}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                          trailing: const Icon(Icons.edit_outlined, color: AppTheme.primary, size: 20),
+                          onTap: () async {
+                            final changed = await _showEditQuickAddTemplateDialog(context, appState, template);
+                            if (changed == true) {
+                              setSheetState(() {});
+                            }
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Готово', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<bool?> _showEditQuickAddTemplateDialog(BuildContext context, AppState appState, QuickAddTemplate template) {
+    final titleController = TextEditingController(text: template.title);
+    final amountController = TextEditingController(text: template.amount.toString());
+    
+    // Filter categories to only expense ones
+    final expenseCategories = appState.categories.where((c) => c.kind == 'expense').toList();
+    
+    Category? selectedCategory;
+    try {
+      selectedCategory = expenseCategories.firstWhere((c) => c.name == template.categoryName);
+    } catch (_) {
+      if (expenseCategories.isNotEmpty) {
+        selectedCategory = expenseCategories.first;
+      }
     }
+
+    return showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppTheme.surfaceCard,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.border),
+              ),
+              title: const Text('Редактировать шаблон', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: titleController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Название кнопки',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: amountController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Сумма по умолчанию',
+                        labelStyle: TextStyle(color: AppTheme.textSecondary),
+                        suffixText: '₸',
+                        suffixStyle: TextStyle(color: Colors.white70),
+                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Категория расхода:',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<Category>(
+                      dropdownColor: AppTheme.surfaceCard,
+                      value: selectedCategory,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.02),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppTheme.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppTheme.border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppTheme.primary),
+                        ),
+                      ),
+                      items: expenseCategories.map((cat) {
+                        return DropdownMenuItem<Category>(
+                          value: cat,
+                          child: Text('${cat.emoji} ${cat.name}'),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        setDialogState(() {
+                          selectedCategory = val;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final title = titleController.text.trim();
+                    final amount = int.tryParse(amountController.text.trim()) ?? 0;
+                    if (title.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Введите название шаблона')),
+                      );
+                      return;
+                    }
+                    if (amount <= 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Введите корректную сумму')),
+                      );
+                      return;
+                    }
+                    if (selectedCategory == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Выберите категорию')),
+                      );
+                      return;
+                    }
+
+                    await appState.updateQuickAddTemplate(
+                      template.id,
+                      title: title,
+                      amount: amount,
+                      categoryName: selectedCategory!.name,
+                      categoryEmoji: selectedCategory!.emoji,
+                    );
+
+                    Navigator.pop(context, true);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('Сохранить', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   String _formatKzt(int amountMinor) {
-    final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor);
+    return _formatCurrency(amountMinor, 'KZT');
+  }
+
+  String _formatCurrency(int amount, String currency) {
+    String symbol = '₸';
+    String locale = 'kk_KZ';
+    if (currency == 'USD') {
+      symbol = '\$';
+      locale = 'en_US';
+    } else if (currency == 'EUR') {
+      symbol = '€';
+      locale = 'de_DE';
+    } else if (currency == 'RUB') {
+      symbol = '₽';
+      locale = 'ru_RU';
+    }
+    final formatter = NumberFormat.currency(locale: locale, symbol: symbol, decimalDigits: 0);
+    return formatter.format(amount);
   }
 
   String _getRussianPlural(int number, String one, String two, String many) {
@@ -521,7 +917,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       crossAxisAlignment: CrossAxisAlignment.end,
                                       children: [
                                         Text(
-                                          '${isExpense ? '-' : '+'}${_formatKzt(tx.amount)}',
+                                          '${isExpense ? '-' : '+'}${_formatCurrency(tx.amount, tx.currency)}',
                                           style: TextStyle(
                                             color: isExpense ? AppTheme.expense : AppTheme.income,
                                             fontWeight: FontWeight.bold,
@@ -927,12 +1323,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Filter to only show expense categories on limits overview
     final expenseCategories = categories.where((c) => c.kind == 'expense').toList();
 
-    final quickAddTemplates = const [
-      _QuickAddTemplate(title: 'Кофе', amount: 800, categoryName: 'Еда и рестораны', categoryEmoji: '🍔'),
-      _QuickAddTemplate(title: 'Такси', amount: 1500, categoryName: 'Транспорт', categoryEmoji: '🚗'),
-      _QuickAddTemplate(title: 'Обед', amount: 2500, categoryName: 'Еда и рестораны', categoryEmoji: '🍔'),
-      _QuickAddTemplate(title: 'Подписка', amount: 2000, categoryName: 'Услуги', categoryEmoji: '🛠️'),
-    ];
+    final quickAddTemplates = appState.quickAddTemplates;
 
     // Calculate 30-day forecast (Planned & Recurring)
     final now = DateTime.now();
@@ -1289,9 +1680,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Быстрый расход',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Быстрый расход',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.settings_outlined, size: 20, color: AppTheme.textSecondary),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () {
+                          _showConfigureQuickAddBottomSheet(context, appState);
+                        },
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   SizedBox(
@@ -1729,16 +2133,4 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-class _QuickAddTemplate {
-  final String title;
-  final int amount;
-  final String categoryName;
-  final String categoryEmoji;
 
-  const _QuickAddTemplate({
-    required this.title,
-    required this.amount,
-    required this.categoryName,
-    required this.categoryEmoji,
-  });
-}

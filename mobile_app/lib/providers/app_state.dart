@@ -51,6 +51,9 @@ class AppState extends ChangeNotifier {
   List<String> _availableFeatures = [];
   List<String> get availableFeatures => _availableFeatures;
 
+  List<QuickAddTemplate> _quickAddTemplates = [];
+  List<QuickAddTemplate> get quickAddTemplates => _quickAddTemplates;
+
   bool hasFeature(String feature) {
     return _isPremium || _availableFeatures.contains(feature);
   }
@@ -469,6 +472,7 @@ class AppState extends ChangeNotifier {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        await loadQuickAddTemplates();
         
         // Parse accounts
         _accounts = (data['accounts'] as List)
@@ -604,8 +608,31 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> upgradeToPremium() async {
-    _isPremium = true;
+    if (_token == null) return;
+    _isLoading = true;
     notifyListeners();
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/profile/upgrade'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+      );
+      if (response.statusCode == 200) {
+        _isPremium = true;
+        notifyListeners();
+        await loadDashboardData();
+      } else {
+        throw Exception('Failed to upgrade');
+      }
+    } catch (e) {
+      print('Upgrade to premium error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   void logout() async {
@@ -778,6 +805,7 @@ class AppState extends ChangeNotifier {
     double? interestRate,
     String? accrualPeriod,
     int? isBusiness,
+    String? currency,
   }) async {
     if (_token == null) return;
     _isLoading = true;
@@ -792,6 +820,7 @@ class AppState extends ChangeNotifier {
       if (interestRate != null) bodyMap['interest_rate'] = interestRate;
       if (accrualPeriod != null) bodyMap['accrual_period'] = accrualPeriod;
       if (isBusiness != null) bodyMap['is_business'] = isBusiness;
+      if (currency != null) bodyMap['currency'] = currency;
 
       final response = await http.put(
         Uri.parse('$_baseUrl/api/accounts/$accountId'),
@@ -1246,6 +1275,50 @@ class AppState extends ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> loadQuickAddTemplates() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('quick_add_templates');
+    if (jsonStr != null && jsonStr.isNotEmpty) {
+      try {
+        final List<dynamic> list = json.decode(jsonStr);
+        _quickAddTemplates = list.map((x) => QuickAddTemplate.fromJson(x as Map<String, dynamic>)).toList();
+        notifyListeners();
+        return;
+      } catch (e) {
+        print('Error loading quick add templates: $e');
+      }
+    }
+    // Default templates
+    _quickAddTemplates = [
+      QuickAddTemplate(id: 1, title: 'Кофе', amount: 800, categoryName: 'Еда и рестораны', categoryEmoji: '🍔'),
+      QuickAddTemplate(id: 2, title: 'Такси', amount: 1500, categoryName: 'Транспорт', categoryEmoji: '🚗'),
+      QuickAddTemplate(id: 3, title: 'Обед', amount: 2500, categoryName: 'Еда и рестораны', categoryEmoji: '🍔'),
+      QuickAddTemplate(id: 4, title: 'Подписка', amount: 2000, categoryName: 'Услуги', categoryEmoji: '🛠️'),
+    ];
+    await saveQuickAddTemplates();
+  }
+
+  Future<void> saveQuickAddTemplates() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = json.encode(_quickAddTemplates.map((x) => x.toJson()).toList());
+    await prefs.setString('quick_add_templates', jsonStr);
+    notifyListeners();
+  }
+
+  Future<void> updateQuickAddTemplate(int id, {required String title, required int amount, required String categoryName, required String categoryEmoji}) async {
+    final idx = _quickAddTemplates.indexWhere((x) => x.id == id);
+    if (idx != -1) {
+      _quickAddTemplates[idx] = QuickAddTemplate(
+        id: id,
+        title: title,
+        amount: amount,
+        categoryName: categoryName,
+        categoryEmoji: categoryEmoji,
+      );
+      await saveQuickAddTemplates();
     }
   }
 }
