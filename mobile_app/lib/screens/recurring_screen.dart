@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class RecurringScreen extends StatefulWidget {
   const RecurringScreen({super.key});
@@ -19,11 +19,6 @@ class _RecurringScreenState extends State<RecurringScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Provider.of<AppState>(context, listen: false).loadRecurring();
     });
-  }
-
-  String _formatKzt(int amountMinor) {
-    final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor);
   }
 
   void _showAddTemplateDialog(BuildContext context, AppState appState) {
@@ -112,7 +107,7 @@ class _RecurringScreenState extends State<RecurringScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
                                     Text(
-                                      '${isExpense ? '-' : '+'}${_formatKzt(item.amount)}',
+                                      '${isExpense ? '-' : '+'}${cu.formatCurrency(item.amount, item.currency)}',
                                       style: TextStyle(
                                         color: isExpense ? AppTheme.expense : AppTheme.income,
                                         fontSize: 16,
@@ -173,6 +168,11 @@ class _AddTemplateDialogState extends State<_AddTemplateDialog> {
   String kind = 'expense';
   int? selectedCategoryId;
   int? selectedAccountId;
+
+  String _selectedCurrency() {
+    final accounts = widget.appState.accounts.where((a) => a.id == selectedAccountId);
+    return accounts.isNotEmpty ? accounts.first.currency : widget.appState.baseCurrency;
+  }
 
   @override
   void initState() {
@@ -261,12 +261,12 @@ class _AddTemplateDialogState extends State<_AddTemplateDialog> {
               controller: amountController,
               keyboardType: TextInputType.number,
               style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Сумма',
-                labelStyle: TextStyle(color: AppTheme.textSecondary),
-                suffixText: '₸',
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                suffixText: cu.currencySymbol(_selectedCurrency()),
+                enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
               ),
             ),
             const SizedBox(height: 12),
@@ -297,7 +297,7 @@ class _AddTemplateDialogState extends State<_AddTemplateDialog> {
               ),
               hint: const Text('Выберите счёт', style: TextStyle(color: AppTheme.textSecondary)),
               items: widget.appState.accounts.map((acc) {
-                return DropdownMenuItem(value: acc.id, child: Text(acc.name));
+                return DropdownMenuItem(value: acc.id, child: Text('${acc.name} (${cu.formatCurrency(acc.balance, acc.currency)})'));
               }).toList(),
               onChanged: (val) {
                 setState(() => selectedAccountId = val);
@@ -340,22 +340,30 @@ class _AddTemplateDialogState extends State<_AddTemplateDialog> {
                   final title = titleController.text.trim();
                   final amount = int.tryParse(amountController.text) ?? 0;
                   final day = int.tryParse(dayController.text) ?? 1;
-                  Navigator.pop(context);
-                  await widget.appState.addRecurring(
-                    title: title,
-                    amount: amount,
-                    categoryId: selectedCategoryId!,
-                    accountId: selectedAccountId!,
-                    dayOfMonth: day,
-                    kind: kind,
-                    comment: commentController.text.trim().isEmpty ? null : commentController.text.trim(),
-                  );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('✅ Шаблон "$title" успешно создан!'),
-                      backgroundColor: AppTheme.income,
-                    ),
-                  );
+                  try {
+                    await widget.appState.addRecurring(
+                      title: title,
+                      amount: amount,
+                      categoryId: selectedCategoryId!,
+                      accountId: selectedAccountId!,
+                      dayOfMonth: day,
+                      kind: kind,
+                      comment: commentController.text.trim().isEmpty ? null : commentController.text.trim(),
+                    );
+                    if (!mounted) return;
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('✅ Шаблон "$title" успешно создан!'),
+                        backgroundColor: AppTheme.income,
+                      ),
+                    );
+                  } catch (e) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')), backgroundColor: AppTheme.expense),
+                    );
+                  }
                 }
               : null,
           child: Text(

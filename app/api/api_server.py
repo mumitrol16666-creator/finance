@@ -5,12 +5,15 @@ from typing import Optional, List
 import aiosqlite
 import hashlib
 import hmac
+import math
 from datetime import datetime, timezone, date, timedelta
 import calendar
 from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 
 from app.config.settings import settings
 from app.db.connection import get_db
+from app.db.migrate import run_migrations
 from app.db.repositories.users_repo import get_onboarded
 from app.db.repositories.accounts_repo import list_accounts, apply_balance_delta
 from app.db.repositories.categories_repo import list_categories
@@ -20,8 +23,9 @@ from app.domain.auth import hash_password, verify_password
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Perform database typo migrations
     async with get_db() as db:
+        await run_migrations(db)
+        # Perform database typo migrations
         await db.execute("UPDATE accounts SET name = 'Копилка' WHERE TRIM(name) = 'Копила'")
         await db.execute("UPDATE transactions SET note = 'Копилка' WHERE TRIM(note) = 'Копила'")
         await db.commit()
@@ -42,6 +46,17 @@ app.add_middleware(
 )
 
 SECRET_KEY = settings.secret_key.encode()
+SUPPORTED_CURRENCIES = {"KZT", "USD", "EUR", "RUB"}
+
+
+def normalize_currency(value: str | None, default: str = "KZT") -> str:
+    code = (value or default).strip().upper()
+    if code not in SUPPORTED_CURRENCIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported currency: {code}. Supported currencies: KZT, USD, EUR, RUB",
+        )
+    return code
 
 def generate_token(user_id: int) -> str:
     # 90 days validity
@@ -60,14 +75,6 @@ def verify_token(token: str) -> int | None:
             if time.time() > exp_time:
                 return None
             msg = f"{user_id}.{exp_time}".encode()
-            expected_sig = hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
-            if hmac.compare_digest(sig, expected_sig):
-                return user_id
-        elif len(parts) == 2:
-            # Backwards compatibility: verify old token format without expiration
-            user_id_str, sig = parts
-            user_id = int(user_id_str)
-            msg = str(user_id).encode()
             expected_sig = hmac.new(SECRET_KEY, msg, hashlib.sha256).hexdigest()
             if hmac.compare_digest(sig, expected_sig):
                 return user_id
@@ -108,6 +115,15 @@ class SettingsUpdateRequest(BaseModel):
     currency: Optional[str] = None
     timezone: Optional[str] = None
     lang: Optional[str] = None
+    telegram_notifications_enabled: Optional[bool] = None
+    push_notifications_enabled: Optional[bool] = None
+    daily_report_enabled: Optional[bool] = None
+    daily_report_time: Optional[str] = None
+    quiet_hours_enabled: Optional[bool] = None
+    quiet_hours_start: Optional[str] = None
+    quiet_hours_end: Optional[str] = None
+    debts_enabled: Optional[bool] = None
+    debts_days_before: Optional[int] = None
 
 class CategoryUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -155,6 +171,20 @@ async def get_user_name(db: aiosqlite.Connection, user_id: int) -> str | None:
         return row[0]
     return None
 
+async def sum_converted_amounts(
+    db: aiosqlite.Connection,
+    rows,
+    base_currency: str,
+) -> int:
+    """Sum transaction rows converted from account currency into user's base currency."""
+    from app.services.currency_service import get_exchange_rate
+
+    total = 0
+    for amount, currency in rows:
+        rate = await get_exchange_rate(db, currency or base_currency, base_currency)
+        total += int(round(int(amount or 0) * rate))
+    return total
+
 class TransactionCreateRequest(BaseModel):
     amount: int  # in minor units (e.g. 100 for 1.00 KZT)
     kind: str  # 'expense', 'income', 'transfer'
@@ -163,6 +193,7 @@ class TransactionCreateRequest(BaseModel):
     note: Optional[str] = None
     to_account_id: Optional[int] = None  # for transfers
     date_override: Optional[str] = None  # YYYY-MM-DD override
+    custom_rate: Optional[float] = None  # custom exchange rate for transfers
 
 class TransactionUpdateRequest(BaseModel):
     amount: Optional[int] = None
@@ -208,6 +239,14 @@ class DebtPayRequest(BaseModel):
     account_id: Optional[int] = None
     next_payment_date: Optional[str] = None
 
+class DebtReminderRequest(BaseModel):
+    enabled: bool = True
+    days_before: int = 3
+
+class PushDeviceRequest(BaseModel):
+    token: str
+    platform: str
+
 class RecurringCreateRequest(BaseModel):
     title: str
     amount: int
@@ -225,6 +264,7 @@ class PlannedCreateRequest(BaseModel):
     planned_date: str
     kind: str
     comment: Optional[str] = None
+    is_required: Optional[int] = 1
 
 class CategoryCreateRequest(BaseModel):
     name: str
@@ -238,6 +278,22 @@ class BudgetUpsertRequest(BaseModel):
     category_id: int
     amount: int
     month: Optional[str] = None
+
+
+def validate_hhmm(value: str, field_name: str) -> str:
+    try:
+        parsed = datetime.strptime(value, "%H:%M")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} must use HH:MM format") from exc
+    return parsed.strftime("%H:%M")
+
+
+@app.get("/health")
+async def health():
+    async with get_db() as db:
+        cur = await db.execute("SELECT 1")
+        await cur.fetchone()
+    return {"status": "ok"}
 
 @app.post("/api/auth/register")
 async def register_user(req: RegisterRequest):
@@ -379,11 +435,11 @@ async def get_dashboard(
         ctx = await get_user_context(db, user_id)
         available_features = list(get_available_features_from_context(ctx))
 
+        cycle_start_day = await get_budget_cycle_start_day(db, user_id)
         if is_custom_range:
             start_dt, end_dt, cycle_month_str = custom_start_dt, custom_end_dt, custom_cycle_month_str
         else:
             # Get settings cycle start day
-            cycle_start_day = await get_budget_cycle_start_day(db, user_id)
             start_dt, end_dt, cycle_month_str = get_budget_cycle_bounds(today, cycle_start_day)
             
         start_str = start_dt.isoformat()
@@ -392,6 +448,12 @@ async def get_dashboard(
         # 1. Accounts & balances
         from app.services.deposit_service import accrue_deposit_interests
         await accrue_deposit_interests(db, user_id)
+
+        # Fetch user's base currency (used for balance conversions)
+        cur_settings = await db.execute("SELECT currency FROM settings WHERE user_id=?", (user_id,))
+        settings_row = await cur_settings.fetchone()
+        base_currency = normalize_currency(settings_row[0] if settings_row else "KZT")
+
         accounts = await list_accounts(db, user_id)
         accounts_data = []
         total_balance = 0
@@ -400,7 +462,7 @@ async def get_dashboard(
         
         from app.services.currency_service import get_exchange_rate
         for acc in accounts:
-            rate = await get_exchange_rate(db, acc["currency"], "KZT")
+            rate = await get_exchange_rate(db, acc["currency"], base_currency)
             converted_balance = int(round(acc["balance"] * rate))
             
             accounts_data.append({
@@ -431,10 +493,7 @@ async def get_dashboard(
             (user_id, start_str, end_str)
         )
         expenses_rows = await cur.fetchall()
-        monthly_expenses_row = 0
-        for amount, currency in expenses_rows:
-            rate = await get_exchange_rate(db, currency, "KZT")
-            monthly_expenses_row += int(round(amount * rate))
+        monthly_expenses_row = await sum_converted_amounts(db, expenses_rows, base_currency)
 
         # 2b. Monthly Income inside current cycle (with currency conversions)
         cur_inc = await db.execute(
@@ -446,10 +505,7 @@ async def get_dashboard(
             (user_id, start_str, end_str)
         )
         income_rows = await cur_inc.fetchall()
-        monthly_income_row = 0
-        for amount, currency in income_rows:
-            rate = await get_exchange_rate(db, currency, "KZT")
-            monthly_income_row += int(round(amount * rate))
+        monthly_income_row = await sum_converted_amounts(db, income_rows, base_currency)
         
         # 3. Weekly streak (Monday to Sunday)
         start_of_week = today - timedelta(days=today.weekday())
@@ -503,11 +559,12 @@ async def get_dashboard(
         
         for cat in expense_cats:
             cur_spent = await db.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM transactions "
-                "WHERE user_id=? AND category_id=? AND type='expense' AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+                "SELECT t.amount, a.currency FROM transactions t "
+                "JOIN accounts a ON a.id = t.account_id "
+                "WHERE t.user_id=? AND t.category_id=? AND t.type='expense' AND t.deleted_at IS NULL AND t.ts >= ? AND t.ts < ?",
                 (user_id, cat["id"], start_str, end_str)
             )
-            (spent_val,) = await cur_spent.fetchone()
+            spent_val = await sum_converted_amounts(db, await cur_spent.fetchall(), base_currency)
             
             cur_limit = await db.execute(
                 "SELECT limit_amount FROM budgets WHERE user_id=? AND category_id=? AND month=?",
@@ -531,11 +588,12 @@ async def get_dashboard(
             
         for cat in income_cats:
             cur_earned = await db.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM transactions "
-                "WHERE user_id=? AND category_id=? AND type='income' AND deleted_at IS NULL AND ts >= ? AND ts < ?",
+                "SELECT t.amount, a.currency FROM transactions t "
+                "JOIN accounts a ON a.id = t.account_id "
+                "WHERE t.user_id=? AND t.category_id=? AND t.type='income' AND t.deleted_at IS NULL AND t.ts >= ? AND t.ts < ?",
                 (user_id, cat["id"], start_str, end_str)
             )
-            (earned_val,) = await cur_earned.fetchone()
+            earned_val = await sum_converted_amounts(db, await cur_earned.fetchall(), base_currency)
             
             categories_data.append({
                 "id": cat["id"],
@@ -559,6 +617,9 @@ async def get_dashboard(
         active_days_count = (await cur_active_days.fetchone())[0]
         total_cycle_days = (end_dt - start_dt).days
 
+        from app.services.currency_service import get_rates_snapshot
+        exchange_rates_data, rates_updated_at = await get_rates_snapshot(db)
+
         return {
             "totalBalance": total_balance,
             "savingsBalance": savings_balance,
@@ -581,7 +642,25 @@ async def get_dashboard(
             "currentStreak": ctx.current_streak,
             "maxStreak": ctx.max_streak,
             "userName": await get_user_name(db, user_id),
-            "budgetCycleStartDay": cycle_start_day
+            "budgetCycleStartDay": cycle_start_day,
+            "baseCurrency": base_currency,
+            "exchangeRates": {
+                "base": "USD",
+                "rates": exchange_rates_data,
+                "updated_at": rates_updated_at
+            }
+        }
+
+@app.get("/api/exchange-rates")
+async def get_exchange_rates(user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        from app.services.currency_service import get_rates_snapshot
+        rates, updated_at = await get_rates_snapshot(db)
+
+        return {
+            "base": "USD",
+            "rates": rates,
+            "updated_at": updated_at
         }
 
 @app.get("/api/accounts")
@@ -637,23 +716,40 @@ async def delete_category(category_id: int, user_id: int = Depends(get_current_u
 @app.post("/api/transactions")
 async def add_transaction(req: TransactionCreateRequest, user_id: int = Depends(get_current_user)):
     now_str = datetime.now(timezone.utc).isoformat()
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than zero")
+    if req.kind not in {"expense", "income", "transfer"}:
+        raise HTTPException(status_code=400, detail="Unsupported transaction kind")
+    if req.custom_rate is not None and (not math.isfinite(req.custom_rate) or req.custom_rate <= 0):
+        raise HTTPException(status_code=400, detail="Custom exchange rate must be greater than zero")
+
     async with get_db() as db:
+        from app.db.repositories.accounts_repo import get_account
+        from_acc_row = await get_account(db, user_id, req.account_id)
+        if not from_acc_row or from_acc_row[3]:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        if req.category_id is not None:
+            from app.db.repositories.categories_repo import get_category
+            if not await get_category(db, user_id, req.category_id):
+                raise HTTPException(status_code=404, detail="Category not found")
+
         if req.kind == "transfer":
             from app.domain.services.access_service import can_use_feature, get_user_context
             if not await can_use_feature(db, user_id, "transfer"):
                 raise HTTPException(status_code=403, detail="Функция перевода доступна только в Premium версии")
             if not req.to_account_id:
                 raise HTTPException(status_code=400, detail="to_account_id is required for transfers")
+            if req.account_id == req.to_account_id:
+                raise HTTPException(status_code=400, detail="Source and destination accounts must be different")
 
             # Currency exchange logic
-            from app.db.repositories.accounts_repo import get_account
-            from_acc_row = await get_account(db, user_id, req.account_id)
             to_acc_row = await get_account(db, user_id, req.to_account_id)
-            if not from_acc_row or not to_acc_row:
+            if not to_acc_row or to_acc_row[3]:
                 raise HTTPException(status_code=404, detail="Счёт не найден")
 
-            from_curr = from_acc_row[4]  # currency is index 4
-            to_curr = to_acc_row[4]
+            from_curr = normalize_currency(from_acc_row[4])  # currency is index 4
+            to_curr = normalize_currency(to_acc_row[4])
 
             ctx = await get_user_context(db, user_id)
             if (from_curr != to_curr or from_curr != "KZT" or to_curr != "KZT") and ctx.mode != "full":
@@ -663,8 +759,11 @@ async def add_transaction(req: TransactionCreateRequest, user_id: int = Depends(
                 )
 
             if from_curr != to_curr:
-                from app.services.currency_service import get_exchange_rate
-                rate = await get_exchange_rate(db, from_curr, to_curr)
+                if req.custom_rate is not None and req.custom_rate > 0:
+                    rate = req.custom_rate
+                else:
+                    from app.services.currency_service import get_exchange_rate
+                    rate = await get_exchange_rate(db, from_curr, to_curr)
                 to_amount = int(round(req.amount * rate))
                 conversion_note = f"{req.note or ''} (Курс: {rate:.4f})".strip()
             else:
@@ -716,8 +815,11 @@ async def get_debts(user_id: int = Depends(get_current_user)):
         if not await can_use_feature(db, user_id, "debts"):
             raise HTTPException(status_code=403, detail="Функция долгов доступна только в Premium версии")
         cur = await db.execute(
-            "SELECT id, direction, dtype, title, total_amount, remaining_amount, payment_amount, next_payment_date, note, status, is_active "
-            "FROM debts WHERE user_id=? AND is_active=1 ORDER BY id DESC",
+            "SELECT d.id, d.direction, d.dtype, d.title, d.total_amount, d.remaining_amount, "
+            "d.payment_amount, d.next_payment_date, d.note, d.status, d.is_active, "
+            "COALESCE(r.enabled, 1) AS reminder_enabled, COALESCE(r.days_before, 3) AS reminder_days_before "
+            "FROM debts d LEFT JOIN debt_reminder_preferences r ON r.debt_id=d.id AND r.user_id=d.user_id "
+            "WHERE d.user_id=? AND d.is_active=1 ORDER BY d.id DESC",
             (user_id,)
         )
         debts = []
@@ -732,7 +834,9 @@ async def get_debts(user_id: int = Depends(get_current_user)):
                 "paymentAmount": row["payment_amount"],
                 "nextPaymentDate": row["next_payment_date"],
                 "note": row["note"],
-                "status": row["status"]
+                "status": row["status"],
+                "reminderEnabled": bool(row["reminder_enabled"]),
+                "reminderDaysBefore": row["reminder_days_before"],
             })
         return debts
 
@@ -743,9 +847,11 @@ async def get_recurring(user_id: int = Depends(get_current_user)):
             raise HTTPException(status_code=403, detail="Регулярные платежи доступны только в Premium версии")
         # Get recurring expenses
         cur_exp = await db.execute(
-            "SELECT r.id, r.title, r.amount, 'expense' as kind, r.day_of_month, r.next_run_date, c.emoji as category_emoji "
+            "SELECT r.id, r.title, r.amount, 'expense' as kind, r.day_of_month, r.next_run_date, c.emoji as category_emoji, "
+            "r.account_id, a.currency "
             "FROM recurring_expenses r "
             "LEFT JOIN categories c ON c.id = r.category_id "
+            "LEFT JOIN accounts a ON a.id = r.account_id "
             "WHERE r.user_id=? AND r.is_archived=0 ORDER BY r.id DESC",
             (user_id,)
         )
@@ -753,9 +859,11 @@ async def get_recurring(user_id: int = Depends(get_current_user)):
         
         # Get recurring incomes
         cur_inc = await db.execute(
-            "SELECT r.id, r.title, r.amount, 'income' as kind, r.day_of_month, r.next_run_date, c.emoji as category_emoji "
+            "SELECT r.id, r.title, r.amount, 'income' as kind, r.day_of_month, r.next_run_date, c.emoji as category_emoji, "
+            "r.account_id, a.currency "
             "FROM recurring_incomes r "
             "LEFT JOIN categories c ON c.id = r.category_id "
+            "LEFT JOIN accounts a ON a.id = r.account_id "
             "WHERE r.user_id=? AND r.is_archived=0 ORDER BY r.id DESC",
             (user_id,)
         )
@@ -771,7 +879,9 @@ async def get_recurring(user_id: int = Depends(get_current_user)):
                 "intervalType": "monthly",
                 "intervalValue": row["day_of_month"],
                 "nextRunDate": row["next_run_date"],
-                "categoryEmoji": row["category_emoji"] or "🔁"
+                "categoryEmoji": row["category_emoji"] or "🔁",
+                "accountId": row["account_id"],
+                "currency": normalize_currency(row["currency"])
             })
         return recurring
 
@@ -781,9 +891,11 @@ async def get_planned(user_id: int = Depends(get_current_user)):
         if not await can_use_feature(db, user_id, "planned"):
             raise HTTPException(status_code=403, detail="Планируемые операции доступны только в Premium версии")
         cur = await db.execute(
-            "SELECT p.id, p.title, p.amount, p.planned_date, p.kind, c.emoji as category_emoji "
+            "SELECT p.id, p.title, p.amount, p.planned_date, p.kind, c.emoji as category_emoji, "
+            "p.account_id, a.currency "
             "FROM planned_transactions p "
             "LEFT JOIN categories c ON c.id=p.category_id "
+            "LEFT JOIN accounts a ON a.id=p.account_id "
             "WHERE p.user_id=? AND p.is_archived=0 ORDER BY p.planned_date ASC",
             (user_id,)
         )
@@ -796,7 +908,9 @@ async def get_planned(user_id: int = Depends(get_current_user)):
                 "date": row["planned_date"],
                 "kind": row["kind"],
                 "status": "pending",
-                "categoryEmoji": row["category_emoji"] or "📅"
+                "categoryEmoji": row["category_emoji"] or "📅",
+                "accountId": row["account_id"],
+                "currency": normalize_currency(row["currency"])
             })
         return planned
 
@@ -852,23 +966,38 @@ async def get_analytics(user_id: int = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     current_month_str = now.strftime("%Y-%m")
     async with get_db() as db:
+        cur_settings = await db.execute("SELECT currency FROM settings WHERE user_id=?", (user_id,))
+        settings_row = await cur_settings.fetchone()
+        base_currency = normalize_currency(settings_row[0] if settings_row else "KZT")
+
         cur = await db.execute(
-            "SELECT c.name, c.emoji, COALESCE(SUM(t.amount), 0) as total "
+            "SELECT c.id, c.name, c.emoji, t.amount, a.currency "
             "FROM transactions t "
             "JOIN categories c ON c.id=t.category_id "
-            "WHERE t.user_id=? AND t.type='expense' AND t.deleted_at IS NULL AND strftime('%Y-%m', t.ts)=? "
-            "GROUP BY c.id",
+            "JOIN accounts a ON a.id=t.account_id "
+            "WHERE t.user_id=? AND t.type='expense' AND t.deleted_at IS NULL AND strftime('%Y-%m', t.ts)=? ",
             (user_id, current_month_str)
         )
-        chart_data = []
+        grouped: dict[int, dict] = {}
         for row in await cur.fetchall():
-            chart_data.append({
+            item = grouped.setdefault(row["id"], {
                 "categoryName": row["name"],
                 "categoryEmoji": row["emoji"],
-                "amount": abs(row["total"])
+                "amount": 0,
+            })
+            converted = await sum_converted_amounts(db, [(row["amount"], row["currency"])], base_currency)
+            item["amount"] += abs(converted)
+
+        chart_data = []
+        for item in grouped.values():
+            chart_data.append({
+                "categoryName": item["categoryName"],
+                "categoryEmoji": item["categoryEmoji"],
+                "amount": item["amount"],
             })
         return {
             "month": current_month_str,
+            "baseCurrency": base_currency,
             "chartData": chart_data
         }
 
@@ -935,11 +1064,12 @@ async def post_analytics_audit(
 @app.post("/api/accounts")
 async def add_account(req: AccountCreateRequest, user_id: int = Depends(get_current_user)):
     now_str = datetime.now(timezone.utc).isoformat()
+    currency = normalize_currency(req.currency)
     async with get_db() as db:
         # Check premium logic for non-KZT currency
         from app.domain.services.access_service import get_user_context
         ctx = await get_user_context(db, user_id)
-        if (req.currency and req.currency.upper() != "KZT") and ctx.mode != "full":
+        if currency != "KZT" and ctx.mode != "full":
             raise HTTPException(
                 status_code=403,
                 detail="Создание валютных счетов доступно только в Premium версии"
@@ -949,7 +1079,7 @@ async def add_account(req: AccountCreateRequest, user_id: int = Depends(get_curr
             from app.db.repositories.accounts_repo import create_account
             acc_id, status = await create_account(
                 db, user_id, req.name, req.balance, now_str,
-                currency=req.currency or "KZT",
+                currency=currency,
                 is_saving=req.is_saving or 0,
                 acc_type=req.acc_type or "regular",
                 interest_rate=req.interest_rate or 0.0,
@@ -968,6 +1098,12 @@ async def add_debt_endpoint(req: DebtCreateRequest, user_id: int = Depends(get_c
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "debts"):
             raise HTTPException(status_code=403, detail="Функция долгов доступна только в Premium версии")
+        if req.direction not in {"in", "out"} or req.dtype not in {"bank", "private"}:
+            raise HTTPException(status_code=400, detail="Unsupported debt type")
+        if not req.title.strip() or req.remaining_amount <= 0:
+            raise HTTPException(status_code=400, detail="Debt title and positive amount are required")
+        if req.payment_amount is not None and req.payment_amount <= 0:
+            raise HTTPException(status_code=400, detail="Payment amount must be greater than zero")
         from app.db.repositories.debts_repo import add_debt
         debt_id = await add_debt(
             db, user_id, req.direction, req.dtype, req.title,
@@ -980,12 +1116,40 @@ async def pay_debt_endpoint(debt_id: int, req: DebtPayRequest, user_id: int = De
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "debts"):
             raise HTTPException(status_code=403, detail="Функция долгов доступна только в Premium версии")
+        if req.payment_amount <= 0:
+            raise HTTPException(status_code=400, detail="Payment amount must be greater than zero")
+
+        cur_debt = await db.execute(
+            "SELECT * FROM debts WHERE id=? AND user_id=? AND is_active=1",
+            (debt_id, user_id),
+        )
+        row = await cur_debt.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Active debt not found")
+        remaining_amount = int(row["remaining_amount"] or 0)
+        if remaining_amount <= 0:
+            raise HTTPException(status_code=400, detail="Debt has no remaining balance")
+        debt_payment_amount = min(req.payment_amount, remaining_amount)
+
+        transaction_amount = debt_payment_amount
+        if req.account_id is not None:
+            from app.db.repositories.accounts_repo import get_account
+            account = await get_account(db, user_id, req.account_id)
+            if not account or int(account[3] or 0) == 1:
+                raise HTTPException(status_code=404, detail="Active account not found")
+
+            cur_settings = await db.execute("SELECT currency FROM settings WHERE user_id=?", (user_id,))
+            settings_row = await cur_settings.fetchone()
+            base_currency = normalize_currency(settings_row[0] if settings_row else "KZT")
+            account_currency = normalize_currency(account[4])
+            from app.services.currency_service import get_exchange_rate
+            rate = await get_exchange_rate(db, base_currency, account_currency)
+            transaction_amount = max(1, int(round(debt_payment_amount * rate)))
         
         await db.execute("BEGIN IMMEDIATE")
         try:
+            payment_tx_id = None
             if req.account_id is not None:
-                from app.db.repositories.debts_repo import get_debt
-                row = await get_debt(db, user_id, debt_id)
                 if row:
                     if hasattr(row, "keys"):
                         debt = {k: row[k] for k in row.keys()}
@@ -1005,7 +1169,7 @@ async def pay_debt_endpoint(debt_id: int, req: DebtPayRequest, user_id: int = De
                     direction = debt["direction"]
                     dtype = debt["dtype"]
                     title = debt["title"]
-                    amount = req.payment_amount
+                    amount = transaction_amount
 
                     async def ensure_category(db_conn, u_id, kind, name, emoji):
                         cur = await db_conn.execute(
@@ -1035,7 +1199,7 @@ async def pay_debt_endpoint(debt_id: int, req: DebtPayRequest, user_id: int = De
                         )
                         note = f"Платёж по кредиту: {title}" if dtype == "bank" else f"Возврат долга: {title}"
                         from app.domain.services.accounting_service import add_expense
-                        await add_expense(db, user_id, amount, req.account_id, category_id, note, commit=False)
+                        payment_tx_id = await add_expense(db, user_id, amount, req.account_id, category_id, note, commit=False)
                     else:
                         category_id = await ensure_category(
                             db, user_id, kind="income",
@@ -1044,11 +1208,19 @@ async def pay_debt_endpoint(debt_id: int, req: DebtPayRequest, user_id: int = De
                         )
                         note = f"Мне вернули долг: {title}"
                         from app.domain.services.accounting_service import add_income
-                        await add_income(db, user_id, amount, req.account_id, category_id, note, commit=False)
+                        payment_tx_id = await add_income(db, user_id, amount, req.account_id, category_id, note, commit=False)
 
-            from app.db.repositories.debts_repo import apply_debt_payment
+            from app.db.repositories.debts_repo import apply_debt_payment, add_debt_payment_history
             await apply_debt_payment(
-                db, user_id, debt_id, req.payment_amount, req.next_payment_date, commit=False
+                db, user_id, debt_id, debt_payment_amount, req.next_payment_date, commit=False
+            )
+            await add_debt_payment_history(
+                db,
+                user_id,
+                debt_id,
+                debt_payment_amount,
+                tx_id=payment_tx_id,
+                account_id=req.account_id,
             )
             await db.commit()
         except Exception:
@@ -1056,12 +1228,64 @@ async def pay_debt_endpoint(debt_id: int, req: DebtPayRequest, user_id: int = De
             raise
         return {"status": "success"}
 
+@app.get("/api/debts/{debt_id}/payments")
+async def get_debt_payments_endpoint(debt_id: int, user_id: int = Depends(get_current_user)):
+    async with get_db() as db:
+        cur = await db.execute("SELECT 1 FROM debts WHERE id=? AND user_id=?", (debt_id, user_id))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Debt not found")
+        from app.db.repositories.debts_repo import list_debt_payments
+        rows = await list_debt_payments(db, user_id, debt_id)
+        return [
+            {
+                "id": row["id"],
+                "debtId": row["debt_id"],
+                "transactionId": row["tx_id"],
+                "accountId": row["account_id"],
+                "amount": row["amount"],
+                "paymentDate": row["payment_date"],
+                "comment": row["comment"],
+                "createdAt": row["created_at"],
+            }
+            for row in rows
+        ]
+
+@app.post("/api/debts/{debt_id}/reminder")
+async def update_debt_reminder_endpoint(
+    debt_id: int,
+    req: DebtReminderRequest,
+    user_id: int = Depends(get_current_user),
+):
+    if req.days_before < 0 or req.days_before > 30:
+        raise HTTPException(status_code=400, detail="days_before must be between 0 and 30")
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT 1 FROM debts WHERE id=? AND user_id=? AND is_active=1",
+            (debt_id, user_id),
+        )
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Active debt not found")
+        from app.db.repositories.debts_repo import set_debt_reminder_preference
+        await set_debt_reminder_preference(db, user_id, debt_id, int(req.enabled), req.days_before)
+        await db.commit()
+    return {"status": "success", "enabled": req.enabled, "daysBefore": req.days_before}
+
 @app.post("/api/recurring")
 async def add_recurring_endpoint(req: RecurringCreateRequest, user_id: int = Depends(get_current_user)):
     now_str = datetime.now(timezone.utc).isoformat()
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "recurring"):
             raise HTTPException(status_code=403, detail="Регулярные платежи доступны только в Premium версии")
+        if req.amount <= 0 or req.kind not in {"expense", "income"} or not 1 <= req.day_of_month <= 31:
+            raise HTTPException(status_code=400, detail="Invalid recurring payment data")
+        from app.db.repositories.accounts_repo import get_account
+        from app.db.repositories.categories_repo import get_category
+        account = await get_account(db, user_id, req.account_id)
+        category = await get_category(db, user_id, req.category_id)
+        if not account or int(account[3] or 0) == 1:
+            raise HTTPException(status_code=404, detail="Active account not found")
+        if not category or int(category[4] or 0) == 1 or category[3] != req.kind:
+            raise HTTPException(status_code=404, detail="Active category for operation kind not found")
         from app.db.repositories.recurring_repo import create_recurring_expense, create_recurring_income
         if req.kind == "expense":
             item_id = await create_recurring_expense(
@@ -1080,6 +1304,20 @@ async def add_planned_endpoint(req: PlannedCreateRequest, user_id: int = Depends
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "planned"):
             raise HTTPException(status_code=403, detail="Планируемые операции доступны только в Premium версии")
+        if req.amount <= 0 or req.kind not in {"expense", "income"}:
+            raise HTTPException(status_code=400, detail="Invalid planned operation data")
+        try:
+            date.fromisoformat(req.planned_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="planned_date must use YYYY-MM-DD format")
+        from app.db.repositories.accounts_repo import get_account
+        from app.db.repositories.categories_repo import get_category
+        account = await get_account(db, user_id, req.account_id)
+        category = await get_category(db, user_id, req.category_id)
+        if not account or int(account[3] or 0) == 1:
+            raise HTTPException(status_code=404, detail="Active account not found")
+        if not category or int(category[4] or 0) == 1 or category[3] != req.kind:
+            raise HTTPException(status_code=404, detail="Active category for operation kind not found")
         from app.db.repositories.planned_repo import create_planned
         item_id = await create_planned(
             db, user_id, req.kind, req.title, req.amount, req.category_id, req.account_id, req.planned_date, req.comment, now_str, req.is_required or 1
@@ -1099,6 +1337,38 @@ async def complete_planned_endpoint(planned_id: int, user_id: int = Depends(get_
             raise HTTPException(status_code=404, detail="Planned transaction not found")
         await db.commit()
         return {"status": "success"}
+
+@app.post("/api/planned/{planned_id}/execute")
+async def execute_planned_endpoint(planned_id: int, user_id: int = Depends(get_current_user)):
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        if not await can_use_feature(db, user_id, "planned"):
+            raise HTTPException(status_code=403, detail="Planned operations require Premium")
+        from app.db.repositories.planned_repo import get_planned, mark_planned_done
+        planned = await get_planned(db, user_id, planned_id)
+        if not planned or int(planned["is_archived"] or 0) == 1:
+            raise HTTPException(status_code=404, detail="Active planned transaction not found")
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            note = planned["comment"] or planned["title"]
+            if planned["kind"] == "expense":
+                from app.domain.services.accounting_service import add_expense
+                tx_id = await add_expense(
+                    db, user_id, int(planned["amount"]), int(planned["account_id"]),
+                    int(planned["category_id"]), note, commit=False,
+                )
+            else:
+                from app.domain.services.accounting_service import add_income
+                tx_id = await add_income(
+                    db, user_id, int(planned["amount"]), int(planned["account_id"]),
+                    int(planned["category_id"]), note, commit=False,
+                )
+            await mark_planned_done(db, user_id, planned_id, now_str)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return {"status": "success", "transactionId": tx_id}
 
 @app.post("/api/budgets")
 async def upsert_budget_endpoint(req: BudgetUpsertRequest, user_id: int = Depends(get_current_user)):
@@ -1293,6 +1563,20 @@ async def export_report_endpoint(
 async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_id: int = Depends(get_current_user)):
     async with get_db() as db:
         now_str = datetime.now(timezone.utc).isoformat()
+
+        normalized_currency = None
+        if req.currency is not None:
+            normalized_currency = normalize_currency(req.currency)
+            from app.db.repositories.accounts_repo import get_account, account_has_transactions
+            current_account = await get_account(db, user_id, acc_id)
+            if not current_account:
+                raise HTTPException(status_code=404, detail="Account not found")
+            current_currency = normalize_currency(current_account[4])
+            if normalized_currency != current_currency and await account_has_transactions(db, user_id, acc_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Currency can only be changed for an account without transactions",
+                )
         
         # 1. Update name
         if req.name is not None:
@@ -1378,17 +1662,17 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
                 "UPDATE accounts SET is_business=?, updated_at=? WHERE user_id=? AND id=?",
                 (req.is_business, now_str, user_id, acc_id)
             )
-        if req.currency is not None:
+        if normalized_currency is not None:
             from app.domain.services.access_service import get_user_context
             ctx = await get_user_context(db, user_id)
-            if req.currency.upper() != "KZT" and ctx.mode != "full":
+            if normalized_currency != "KZT" and ctx.mode != "full":
                 raise HTTPException(
                     status_code=403,
                     detail="Использование валютных счетов доступно только в Premium версии"
                 )
             await db.execute(
                 "UPDATE accounts SET currency=?, updated_at=? WHERE user_id=? AND id=?",
-                (req.currency, now_str, user_id, acc_id)
+                (normalized_currency, now_str, user_id, acc_id)
             )
 
         await db.commit()
@@ -1418,15 +1702,29 @@ async def update_profile(req: ProfileUpdateRequest, user_id: int = Depends(get_c
 
 @app.post("/api/profile/upgrade")
 async def upgrade_profile_to_premium(user_id: int = Depends(get_current_user)):
-    now = datetime.now(timezone.utc)
-    expiration = (now + timedelta(days=365)).isoformat()
+    raise HTTPException(
+        status_code=403,
+        detail="Premium activation must be confirmed by the Telegram payment flow",
+    )
+
+@app.get("/api/user/settings")
+async def get_user_settings(user_id: int = Depends(get_current_user)):
     async with get_db() as db:
-        await db.execute(
-            "UPDATE users SET full_access = 1, mode = 'full', full_access_until = ? WHERE id = ?",
-            (expiration, user_id)
+        cur = await db.execute(
+            """
+            SELECT currency, timezone, lang, budget_cycle_start_day,
+                   telegram_notifications_enabled, push_notifications_enabled,
+                   daily_report_enabled, daily_report_time,
+                   quiet_hours_enabled, quiet_hours_start, quiet_hours_end,
+                   debts_enabled, debts_days_before
+            FROM settings WHERE user_id=?
+            """,
+            (user_id,),
         )
-        await db.commit()
-    return {"status": "success", "message": "Profile upgraded to Premium"}
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Settings not found")
+        return {key: row[key] for key in row.keys()}
 
 @app.post("/api/user/settings")
 async def update_settings(req: SettingsUpdateRequest, user_id: int = Depends(get_current_user)):
@@ -1446,22 +1744,86 @@ async def update_settings(req: SettingsUpdateRequest, user_id: int = Depends(get
                 (day, now_str, user_id)
             )
         if req.currency is not None:
+            currency = normalize_currency(req.currency)
             await db.execute(
                 "UPDATE settings SET currency=?, updated_at=? WHERE user_id=?",
-                (req.currency, now_str, user_id)
+                (currency, now_str, user_id)
             )
         if req.timezone is not None:
+            try:
+                ZoneInfo(req.timezone)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail="Invalid timezone") from exc
             await db.execute(
                 "UPDATE settings SET timezone=?, updated_at=? WHERE user_id=?",
                 (req.timezone, now_str, user_id)
             )
         if req.lang is not None:
+            if req.lang not in {"ru", "en", "kk"}:
+                raise HTTPException(status_code=400, detail="Unsupported language")
             await db.execute(
                 "UPDATE settings SET lang=?, updated_at=? WHERE user_id=?",
                 (req.lang, now_str, user_id)
             )
+        bool_fields = {
+            "telegram_notifications_enabled": req.telegram_notifications_enabled,
+            "push_notifications_enabled": req.push_notifications_enabled,
+            "daily_report_enabled": req.daily_report_enabled,
+            "quiet_hours_enabled": req.quiet_hours_enabled,
+            "debts_enabled": req.debts_enabled,
+        }
+        for field, value in bool_fields.items():
+            if value is not None:
+                await db.execute(
+                    f"UPDATE settings SET {field}=?, updated_at=? WHERE user_id=?",
+                    (int(value), now_str, user_id),
+                )
+        time_fields = {
+            "daily_report_time": req.daily_report_time,
+            "quiet_hours_start": req.quiet_hours_start,
+            "quiet_hours_end": req.quiet_hours_end,
+        }
+        for field, value in time_fields.items():
+            if value is not None:
+                normalized = validate_hhmm(value, field)
+                await db.execute(
+                    f"UPDATE settings SET {field}=?, updated_at=? WHERE user_id=?",
+                    (normalized, now_str, user_id),
+                )
+        if req.debts_days_before is not None:
+            if req.debts_days_before < 0 or req.debts_days_before > 30:
+                raise HTTPException(status_code=400, detail="debts_days_before must be between 0 and 30")
+            await db.execute(
+                "UPDATE settings SET debts_days_before=?, updated_at=? WHERE user_id=?",
+                (req.debts_days_before, now_str, user_id),
+            )
         await db.commit()
         return {"status": "success"}
+
+@app.post("/api/push/devices")
+async def register_push_device(req: PushDeviceRequest, user_id: int = Depends(get_current_user)):
+    token = req.token.strip()
+    platform = req.platform.strip().lower()
+    if not token:
+        raise HTTPException(status_code=400, detail="Push token cannot be empty")
+    if platform not in {"android", "ios", "web"}:
+        raise HTTPException(status_code=400, detail="Unsupported push platform")
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO push_devices(user_id, token, platform, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+            ON CONFLICT(token) DO UPDATE SET
+              user_id=excluded.user_id,
+              platform=excluded.platform,
+              enabled=1,
+              updated_at=excluded.updated_at
+            """,
+            (user_id, token, platform, now_str, now_str),
+        )
+        await db.commit()
+    return {"status": "success"}
 
 @app.put("/api/categories/{category_id}")
 async def update_category_endpoint(category_id: int, req: CategoryUpdateRequest, user_id: int = Depends(get_current_user)):

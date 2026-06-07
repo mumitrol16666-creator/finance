@@ -50,6 +50,22 @@ jobs:
             APP_DIR="/opt/finance-bot"
             REPO_URL="https://${{ github.token }}@github.com/${{ github.repository }}.git"
             BRANCH="master"
+            PREVIOUS_REV=""
+            DB_BACKUP=""
+
+            rollback() {
+              echo "Deploy failed. Rolling back code and database..."
+              sudo systemctl stop finance-bot finance-api || true
+              if [ -n "$DB_BACKUP" ] && [ -f "$DB_BACKUP" ]; then
+                cp "$DB_BACKUP" "$APP_DIR/data/bot.db"
+              fi
+              if [ -n "$PREVIOUS_REV" ]; then
+                cd "$APP_DIR"
+                git reset --hard "$PREVIOUS_REV"
+              fi
+              sudo systemctl start finance-bot finance-api finance-web || true
+            }
+            trap rollback ERR
 
             echo "▸ Deploying $BRANCH to $APP_DIR …"
 
@@ -59,6 +75,7 @@ jobs:
               cd "$APP_DIR"
             else
               cd "$APP_DIR"
+              PREVIOUS_REV="$(git rev-parse HEAD 2>/dev/null || true)"
               if [ ! -d ".git" ]; then
                 git init
               fi
@@ -77,6 +94,7 @@ jobs:
             # Install / update dependencies
             .venv/bin/pip install --upgrade pip
             .venv/bin/pip install -r requirements.txt
+            .venv/bin/python scripts/check_backend_workflows.py
 
             # ── Migration & Systemd Service Update ──────────────────────────
             # 1. Copy environment file if missing in /opt/finance-bot
@@ -84,10 +102,23 @@ jobs:
               echo "▸ Migrating .env from /root/Finance_bot to $APP_DIR …"
               cp /root/Finance_bot/.env "$APP_DIR/.env"
             fi
+            if ! grep -Eq '^SECRET_KEY=.{32,}$' "$APP_DIR/.env"; then
+              printf '\nSECRET_KEY=%s\n' "$(openssl rand -hex 32)" >> "$APP_DIR/.env"
+              echo "Generated a persistent API signing key. Existing sessions must log in again."
+            fi
 
             # 2. Database is now exclusively in /opt/finance-bot/data/bot.db
             # We no longer sync from /root/Finance_bot to avoid overwriting!
             mkdir -p "$APP_DIR/data"
+
+            # Stop database writers, make a backup, then migrate once.
+            sudo systemctl stop finance-bot finance-api || true
+            if [ -f "$APP_DIR/data/bot.db" ]; then
+              mkdir -p "/opt/finance-bot-backups"
+              DB_BACKUP="/opt/finance-bot-backups/bot-$(date +%Y%m%d-%H%M%S).db"
+              cp "$APP_DIR/data/bot.db" "$DB_BACKUP"
+            fi
+            .venv/bin/python scripts/run_migrations.py
 
             # 3. Copy service files and reload systemd to switch to /opt/finance-bot
             echo "▸ Updating systemd service files …"
@@ -105,16 +136,20 @@ jobs:
             echo "=== PYTHON PROCESSES BEFORE RESTART ==="
             ps aux | grep python || true
 
-            sudo systemctl restart finance-bot
-            sudo systemctl restart finance-api
+            sudo systemctl start finance-bot
+            sudo systemctl start finance-api
             sudo systemctl enable finance-web
             sudo systemctl restart finance-web
 
-            echo "=== SYSTEMD STATUS AFTER RESTART ==="
-            sudo systemctl status finance-bot || true
-            sudo systemctl status finance-api || true
+            echo "=== VERIFYING SERVICES ==="
+            sudo systemctl is-active --quiet finance-bot
+            sudo systemctl is-active --quiet finance-api
+            sudo systemctl is-active --quiet finance-web
+            curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8000/health
+            curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8080/ >/dev/null
 
             echo "=== PYTHON PROCESSES AFTER RESTART ==="
             ps aux | grep python || true
 
+            trap - ERR
             echo "✓ Deploy complete"

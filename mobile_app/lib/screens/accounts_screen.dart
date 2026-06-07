@@ -1,32 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class AccountsScreen extends StatelessWidget {
   const AccountsScreen({super.key});
 
-  String _formatKzt(int amountMinor) {
-    return _formatCurrency(amountMinor, 'KZT');
-  }
-
   String _formatCurrency(int amount, String currency) {
-    String symbol = '₸';
-    String locale = 'kk_KZ';
-    if (currency == 'USD') {
-      symbol = '\$';
-      locale = 'en_US';
-    } else if (currency == 'EUR') {
-      symbol = '€';
-      locale = 'de_DE';
-    } else if (currency == 'RUB') {
-      symbol = '₽';
-      locale = 'ru_RU';
-    }
-    final formatter = NumberFormat.currency(locale: locale, symbol: symbol, decimalDigits: 0);
-    return formatter.format(amount);
+    return cu.formatCurrency(amount, currency);
   }
 
   void _showAddAccountDialog(BuildContext context, AppState appState) {
@@ -235,13 +218,7 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
-                widget.appState.upgradeToPremium();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('👑 Спасибо за покупку Premium подписки!'),
-                    backgroundColor: AppTheme.primary,
-                  ),
-                );
+                AppTheme.showPremiumBlockDialog(context);
               },
               child: const Text('Купить Premium', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
             ),
@@ -285,12 +262,12 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
               focusNode: balanceFocusNode,
               keyboardType: TextInputType.number,
               style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Стартовый баланс',
-                labelStyle: TextStyle(color: AppTheme.textSecondary),
-                suffixText: '₸',
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                suffixText: cu.currencySymbol(currency),
+                enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
               ),
             ),
             const SizedBox(height: 12),
@@ -524,13 +501,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
-                widget.appState.upgradeToPremium();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('👑 Спасибо за покупку Premium подписки!'),
-                    backgroundColor: AppTheme.primary,
-                  ),
-                );
+                AppTheme.showPremiumBlockDialog(context);
               },
               child: const Text('Купить Premium', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
             ),

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class PlannedScreen extends StatefulWidget {
   const PlannedScreen({super.key});
@@ -19,11 +20,6 @@ class _PlannedScreenState extends State<PlannedScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Provider.of<AppState>(context, listen: false).loadPlanned();
     });
-  }
-
-  String _formatKzt(int amountMinor) {
-    final formatter = NumberFormat.currency(locale: 'kk_KZ', symbol: '₸', decimalDigits: 0);
-    return formatter.format(amountMinor);
   }
 
   void _showAddPlannedDialog(BuildContext context, AppState appState) {
@@ -113,7 +109,7 @@ class _PlannedScreenState extends State<PlannedScreen> {
                                 ),
 
                                 Text(
-                                  '${isExpense ? '-' : '+'}${_formatKzt(item.amount)}',
+                                  '${isExpense ? '-' : '+'}${cu.formatCurrency(item.amount, item.currency)}',
                                   style: TextStyle(
                                     color: isExpense ? AppTheme.expense : AppTheme.income,
                                     fontSize: 16,
@@ -167,6 +163,11 @@ class _AddPlannedDialogState extends State<_AddPlannedDialog> {
   String kind = 'expense';
   int? selectedCategoryId;
   int? selectedAccountId;
+
+  String _selectedCurrency() {
+    final accounts = widget.appState.accounts.where((a) => a.id == selectedAccountId);
+    return accounts.isNotEmpty ? accounts.first.currency : widget.appState.baseCurrency;
+  }
 
   @override
   void initState() {
@@ -254,12 +255,12 @@ class _AddPlannedDialogState extends State<_AddPlannedDialog> {
               controller: amountController,
               keyboardType: TextInputType.number,
               style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Сумма',
-                labelStyle: TextStyle(color: AppTheme.textSecondary),
-                suffixText: '₸',
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                suffixText: cu.currencySymbol(_selectedCurrency()),
+                enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
               ),
             ),
             const SizedBox(height: 12),
@@ -290,7 +291,7 @@ class _AddPlannedDialogState extends State<_AddPlannedDialog> {
               ),
               hint: const Text('Выберите счёт', style: TextStyle(color: AppTheme.textSecondary)),
               items: widget.appState.accounts.map((acc) {
-                return DropdownMenuItem(value: acc.id, child: Text(acc.name));
+                return DropdownMenuItem(value: acc.id, child: Text('${acc.name} (${cu.formatCurrency(acc.balance, acc.currency)})'));
               }).toList(),
               onChanged: (val) {
                 setState(() => selectedAccountId = val);
@@ -342,22 +343,30 @@ class _AddPlannedDialogState extends State<_AddPlannedDialog> {
         TextButton(
           onPressed: isButtonEnabled
               ? () async {
-                  Navigator.pop(context);
-                  await widget.appState.addPlanned(
-                    title: title,
-                    amount: amount,
-                    categoryId: selectedCategoryId!,
-                    accountId: selectedAccountId!,
-                    plannedDate: plannedDate,
-                    kind: kind,
-                    comment: commentController.text.trim().isEmpty ? null : commentController.text.trim(),
-                  );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('✅ Событие "$title" успешно запланировано!'),
-                      backgroundColor: AppTheme.income,
-                    ),
-                  );
+                  try {
+                    await widget.appState.addPlanned(
+                      title: title,
+                      amount: amount,
+                      categoryId: selectedCategoryId!,
+                      accountId: selectedAccountId!,
+                      plannedDate: plannedDate,
+                      kind: kind,
+                      comment: commentController.text.trim().isEmpty ? null : commentController.text.trim(),
+                    );
+                    if (!mounted) return;
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('✅ Событие "$title" успешно запланировано!'),
+                        backgroundColor: AppTheme.income,
+                      ),
+                    );
+                  } catch (e) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')), backgroundColor: AppTheme.expense),
+                    );
+                  }
                 }
               : null,
           child: Text(

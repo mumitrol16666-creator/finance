@@ -5,8 +5,8 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
+import '../utils/currency_utils.dart' as cu;
 import 'package:url_launcher/url_launcher.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'categories_screen.dart';
 import 'all_transactions_screen.dart';
 import 'accounts_screen.dart';
@@ -21,163 +21,10 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _showSavings = false;
-  int _tourStep = 0; // 0 = inactive, 1 = balance card, 2 = accounts, 3 = add button, 4 = ai chat
 
   @override
   void initState() {
     super.initState();
-    _checkOnboarding();
-  }
-
-  void _checkOnboarding() async {
-    final prefs = await SharedPreferences.getInstance();
-    final tourShown = prefs.getBool('onboarding_tutorial_shown') ?? false;
-    if (!tourShown) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _showStartTourDialog();
-      });
-    }
-  }
-
-  void _showStartTourDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: AppTheme.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: AppTheme.border),
-          ),
-          title: const Text('👋 Добро пожаловать!', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-          content: const Text(
-            'Хотите пройти быстрое обучение по основным возможностям нашего приложения?',
-            style: TextStyle(color: AppTheme.textSecondary),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setBool('onboarding_tutorial_shown', true);
-              },
-              child: const Text('Пропустить', style: TextStyle(color: AppTheme.textSecondary)),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                setState(() {
-                  _tourStep = 1;
-                });
-              },
-              child: const Text('Начать обучение', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildTourOverlay() {
-    String title = '';
-    String description = '';
-    
-    if (_tourStep == 1) {
-      title = '💳 Карточка баланса';
-      description = 'Здесь отображается ваш общий баланс, а также остаток в копилке и на депозитах.';
-    } else if (_tourStep == 2) {
-      title = '💼 Ваши Счета';
-      description = 'Нажмите на кнопку "Мои Счета" или на любую строку, чтобы отредактировать кошелёк, изменить баланс или заархивировать его.';
-    } else if (_tourStep == 3) {
-      title = '➕ Добавление транзакций';
-      description = 'Нажмите центральную кнопку "+" внизу экрана, чтобы быстро записать новый расход, доход или сделать перевод.';
-    } else if (_tourStep == 4) {
-      title = '🤖 ИИ-Консультант';
-      description = 'Перейдите на третью вкладку внизу, чтобы спросить совета у искусственного интеллекта или получить финансовый аудит.';
-    }
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (_tourStep <= 2)
-              const Icon(Icons.arrow_upward_rounded, color: AppTheme.primary, size: 48)
-                  .animate(onPlay: (controller) => controller.repeat(reverse: true))
-                  .slideY(begin: 0.0, end: 0.15, duration: 600.ms),
-            
-            Container(
-              margin: EdgeInsets.only(top: _tourStep <= 2 ? 16 : 0, bottom: _tourStep > 2 ? 16 : 0),
-              decoration: AppTheme.glassCardDecoration(radius: 20),
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    description,
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14, height: 1.4),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      TextButton(
-                        onPressed: () async {
-                          setState(() => _tourStep = 0);
-                          final prefs = await SharedPreferences.getInstance();
-                          await prefs.setBool('onboarding_tutorial_shown', true);
-                        },
-                        child: const Text('Пропустить', style: TextStyle(color: AppTheme.textSecondary)),
-                      ),
-                      ElevatedButton(
-                        onPressed: () async {
-                          if (_tourStep < 4) {
-                            setState(() => _tourStep++);
-                          } else {
-                            setState(() => _tourStep = 0);
-                            final prefs = await SharedPreferences.getInstance();
-                            await prefs.setBool('onboarding_tutorial_shown', true);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('🎉 Обучение завершено! Начните управлять финансами.'),
-                                backgroundColor: AppTheme.income,
-                              ),
-                            );
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primary,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                        ),
-                        child: Text(
-                          _tourStep < 4 ? 'Далее' : 'Готово',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            
-            if (_tourStep > 2)
-              const Icon(Icons.arrow_downward_rounded, color: AppTheme.primary, size: 48)
-                  .animate(onPlay: (controller) => controller.repeat(reverse: true))
-                  .slideY(begin: 0.0, end: -0.15, duration: 600.ms),
-          ],
-        ),
-      ),
-    );
   }
 
   void _quickAdd(BuildContext context, AppState appState, QuickAddTemplate template) async {
@@ -240,13 +87,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       controller: amountController,
                       keyboardType: TextInputType.number,
                       style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Сумма',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        suffixText: '₸',
-                        suffixStyle: TextStyle(color: Colors.white70),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                        labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                        suffixText: cu.currencySymbol(selectedAccount?.currency ?? appState.baseCurrency),
+                        suffixStyle: const TextStyle(color: Colors.white70),
+                        enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -421,7 +268,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         child: ListTile(
                           leading: Text(template.categoryEmoji, style: const TextStyle(fontSize: 24)),
                           title: Text(template.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          subtitle: Text('${template.amount} ₸ • ${template.categoryName}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                          subtitle: Text('${_formatBase(template.amount)} • ${template.categoryName}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                           trailing: const Icon(Icons.edit_outlined, color: AppTheme.primary, size: 20),
                           onTap: () async {
                             final changed = await _showEditQuickAddTemplateDialog(context, appState, template);
@@ -495,13 +342,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       controller: amountController,
                       keyboardType: TextInputType.number,
                       style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Сумма по умолчанию',
-                        labelStyle: TextStyle(color: AppTheme.textSecondary),
-                        suffixText: '₸',
-                        suffixStyle: TextStyle(color: Colors.white70),
-                        enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                        focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                        labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                        suffixText: cu.currencySymbol(appState.baseCurrency),
+                        suffixStyle: const TextStyle(color: Colors.white70),
+                        enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                        focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -599,24 +446,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   String _formatKzt(int amountMinor) {
-    return _formatCurrency(amountMinor, 'KZT');
+    return _formatBase(amountMinor);
   }
 
   String _formatCurrency(int amount, String currency) {
-    String symbol = '₸';
-    String locale = 'kk_KZ';
-    if (currency == 'USD') {
-      symbol = '\$';
-      locale = 'en_US';
-    } else if (currency == 'EUR') {
-      symbol = '€';
-      locale = 'de_DE';
-    } else if (currency == 'RUB') {
-      symbol = '₽';
-      locale = 'ru_RU';
-    }
-    final formatter = NumberFormat.currency(locale: locale, symbol: symbol, decimalDigits: 0);
-    return formatter.format(amount);
+    return cu.formatCurrency(amount, currency);
+  }
+
+  /// Format amount in user's base currency
+  String _formatBase(int amount) {
+    final appState = Provider.of<AppState>(context, listen: false);
+    return cu.formatCurrency(amount, appState.baseCurrency);
   }
 
   String _getRussianPlural(int number, String one, String two, String many) {
@@ -1217,12 +1057,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 controller: amountController,
                 keyboardType: TextInputType.number,
                 style: const TextStyle(color: AppTheme.textPrimary),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Сумма',
-                  labelStyle: TextStyle(color: AppTheme.textSecondary),
-                  suffixText: '₸',
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                  labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                  suffixText: cu.currencySymbol(tx.currency),
+                  enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                  focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
                 ),
               ),
               const SizedBox(height: 16),
@@ -1551,40 +1391,90 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => const AccountsScreen()),
-                            );
-                          },
-                          child: Container(
-                            color: Colors.transparent,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'ОБЩИЙ БАЛАНС',
-                                  style: TextStyle(
-                                    color: AppTheme.textSecondary,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 1.1,
+                        // Total balance section
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const AccountsScreen()),
+                              );
+                            },
+                            child: Container(
+                              color: Colors.transparent,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'ОБЩИЙ БАЛАНС',
+                                    style: TextStyle(
+                                      color: AppTheme.textSecondary,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 1.1,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  _formatKzt(totalBal),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _formatBase(totalBal),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                  // Multi-currency breakdown (only if multiple currencies exist)
+                                  if (appState.hasMultipleCurrencies) ...[
+                                    const SizedBox(height: 4),
+                                    Builder(builder: (_) {
+                                      final byCurrency = appState.balancesByCurrency;
+                                      final parts = <Widget>[];
+                                      for (final entry in byCurrency.entries) {
+                                        if (entry.value == 0) continue;
+                                        parts.add(
+                                          Text(
+                                            '${cu.currencySymbol(entry.key)}${cu.formatAmount(entry.value)}',
+                                            style: TextStyle(
+                                              color: entry.key == appState.baseCurrency
+                                                  ? AppTheme.textSecondary
+                                                  : AppTheme.accentBlue.withOpacity(0.8),
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return Wrap(
+                                        spacing: 8,
+                                        children: parts,
+                                      );
+                                    }),
+                                    const SizedBox(height: 2),
+                                    GestureDetector(
+                                      onTap: () => _showExchangeRatesBottomSheet(context, appState),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.currency_exchange_rounded, size: 10, color: AppTheme.textSecondary.withOpacity(0.6)),
+                                          const SizedBox(width: 3),
+                                          Text(
+                                            '≈ ${_formatBase(totalBal)} по курсу',
+                                            style: TextStyle(
+                                              color: AppTheme.textSecondary.withOpacity(0.6),
+                                              fontSize: 9,
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
+                        // Savings column
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
@@ -1613,15 +1503,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              _showSavings ? _formatKzt(appState.savingsBalance) : '•••• ₸',
+                              _showSavings ? _formatBase(appState.savingsBalance) : '•••• ${cu.currencySymbol(appState.baseCurrency)}',
                               style: const TextStyle(
                                 color: AppTheme.secondary,
-                                fontSize: 16,
+                                fontSize: 15,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                           ],
                         ),
+                        const SizedBox(width: 12),
+                        // Deposits column
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
@@ -1636,10 +1528,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              _formatKzt(appState.depositBalance),
+                              _formatBase(appState.depositBalance),
                               style: const TextStyle(
                                 color: AppTheme.income,
-                                fontSize: 16,
+                                fontSize: 15,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -1659,7 +1551,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             color: Colors.transparent,
                             child: _buildMiniMetric(
                               label: 'Расходы за период',
-                              value: _formatKzt(monthlyExp),
+                              value: _formatBase(monthlyExp),
                               color: AppTheme.expense,
                             ),
                           ),
@@ -1727,7 +1619,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        '${template.amount} ₸',
+                                        _formatBase(template.amount),
                                         style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
                                       ),
                                     ],
@@ -2009,7 +1901,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 Text(
-                                  '${isExpense ? '-' : '+'}${_formatKzt(tx.amount)}',
+                                  '${isExpense ? '-' : '+'}${_formatCurrency(tx.amount, tx.currency)}',
                                   style: TextStyle(
                                     color: isExpense ? AppTheme.expense : AppTheme.income,
                                     fontWeight: FontWeight.bold,
@@ -2035,13 +1927,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     ),
-    if (_tourStep > 0)
-      Positioned.fill(
-        child: Container(
-          color: Colors.black.withOpacity(0.6),
-          child: _buildTourOverlay(),
-        ),
-      ),
     ],
   );
 }
@@ -2131,6 +2016,264 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
+
+  void _showExchangeRatesBottomSheet(BuildContext context, AppState appState) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: StatefulBuilder(
+            builder: (context, setModalState) {
+              final baseCurrency = appState.baseCurrency;
+              final list = ['KZT', 'USD', 'EUR', 'RUB'];
+
+              return Container(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Курсы валют',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Относительно вашей базовой валюты: ${cu.currencyFlag(baseCurrency)} $baseCurrency',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    if (appState.ratesUpdatedAt != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Обновлено: ${DateFormat('dd.MM.yyyy HH:mm').format(DateTime.parse(appState.ratesUpdatedAt!).toLocal())}',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary.withOpacity(0.5),
+                          fontSize: 10,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    ...list.map((curr) {
+                      if (curr == baseCurrency) return const SizedBox.shrink();
+
+                      final rate = (appState.exchangeRates[baseCurrency] ?? 1.0) /
+                          (appState.exchangeRates[curr] ?? 1.0);
+
+                      final isOverridden = curr == 'USD'
+                          ? appState.customRatesOverride.containsKey(baseCurrency)
+                          : appState.customRatesOverride.containsKey(curr);
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.surfaceCard,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: isOverridden ? AppTheme.accentBlue.withOpacity(0.5) : Colors.white.withOpacity(0.05),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Text(
+                              cu.currencyFlag(curr),
+                              style: const TextStyle(fontSize: 24),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Text(
+                                        curr,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        cu.currencyName(curr),
+                                        style: const TextStyle(
+                                          color: AppTheme.textSecondary,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '1 ${cu.currencySymbol(curr)} = ${rate.toStringAsFixed(rate > 10 ? 2 : 4)} ${cu.currencySymbol(baseCurrency)}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (isOverridden) ...[
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.accentBlue.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Text(
+                                  'Свой курс',
+                                  style: TextStyle(
+                                    color: AppTheme.accentBlue,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                icon: const Icon(Icons.refresh_rounded, color: AppTheme.textSecondary, size: 18),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () async {
+                                  await appState.removeCustomRate(curr);
+                                  setModalState(() {});
+                                },
+                              ),
+                            ] else ...[
+                              IconButton(
+                                icon: const Icon(Icons.edit_rounded, color: AppTheme.accentBlue, size: 18),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () {
+                                  _showEditRateDialog(context, appState, curr, rate, () {
+                                    setModalState(() {});
+                                  });
+                                },
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    if (appState.customRatesOverride.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      TextButton.icon(
+                        icon: const Icon(Icons.restart_alt_rounded, size: 18, color: AppTheme.expense),
+                        label: const Text(
+                          'Сбросить все свои курсы',
+                          style: TextStyle(color: AppTheme.expense, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        onPressed: () async {
+                          await appState.clearCustomRates();
+                          setModalState(() {});
+                        },
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  void _showEditRateDialog(BuildContext context, AppState appState, String currency, double currentRate, VoidCallback onUpdated) {
+    final controller = TextEditingController(text: currentRate.toStringAsFixed(currency == 'RUB' ? 4 : 2));
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            'Установить курс для $currency',
+            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Укажите стоимость 1 ${cu.currencySymbol(currency)} в ${appState.baseCurrency}:',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  suffixText: cu.currencySymbol(appState.baseCurrency),
+                  suffixStyle: const TextStyle(color: AppTheme.textSecondary),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppTheme.accentBlue),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена', style: TextStyle(color: AppTheme.textSecondary)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.accentBlue,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () async {
+                final double? newRate = double.tryParse(controller.text.replaceAll(',', '.'));
+                if (newRate != null && newRate > 0) {
+                  await appState.setCustomRate(currency, newRate);
+                  onUpdated();
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Сохранить', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
-
-

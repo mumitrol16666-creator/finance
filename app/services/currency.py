@@ -4,7 +4,7 @@ from typing import Dict, Tuple
 
 # In-memory cache structure: (from_currency, to_currency) -> (rate, timestamp)
 _CACHE: Dict[Tuple[str, str], Tuple[float, float]] = {}
-CACHE_TTL = 3600  # 1 hour in seconds
+CACHE_TTL = 86400  # 24 hours in seconds
 
 async def get_exchange_rate(from_currency: str, to_currency: str) -> float:
     """Fetch the exchange rate from from_currency to to_currency.

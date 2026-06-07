@@ -15,14 +15,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _currency = 'KZT (₸)';
   bool _quietHours = true;
   bool _notifications = true;
+  bool _telegramNotifications = true;
+  bool _dailyReportEnabled = false;
   TimeOfDay _dailyReportTime = const TimeOfDay(hour: 21, minute: 0);
   TimeOfDay _quietHoursStart = const TimeOfDay(hour: 22, minute: 0);
   TimeOfDay _quietHoursEnd = const TimeOfDay(hour: 8, minute: 0);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final appState = Provider.of<AppState>(context, listen: false);
+      setState(() {
+        _currency = _mapCodeToDisplay(appState.baseCurrency);
+        _notifications = appState.pushNotificationsEnabled;
+        _telegramNotifications = appState.telegramNotificationsEnabled;
+        _quietHours = appState.quietHoursEnabled;
+        _dailyReportEnabled = appState.dailyReportEnabled;
+        _language = _mapLanguageCodeToDisplay(appState.language);
+        _dailyReportTime = _parseTime(appState.dailyReportTime, const TimeOfDay(hour: 21, minute: 0));
+        _quietHoursStart = _parseTime(appState.quietHoursStart, const TimeOfDay(hour: 22, minute: 0));
+        _quietHoursEnd = _parseTime(appState.quietHoursEnd, const TimeOfDay(hour: 8, minute: 0));
+      });
+    });
+  }
+
+  String _mapCodeToDisplay(String code) {
+    switch (code.toUpperCase()) {
+      case 'KZT': return 'KZT (₸)';
+      case 'RUB': return 'RUB (₽)';
+      case 'USD': return 'USD (\$)';
+      case 'EUR': return 'EUR (€)';
+      default: return 'KZT (₸)';
+    }
+  }
+
+  String _mapDisplayToCode(String display) {
+    if (display.startsWith('KZT')) return 'KZT';
+    if (display.startsWith('RUB')) return 'RUB';
+    if (display.startsWith('USD')) return 'USD';
+    if (display.startsWith('EUR')) return 'EUR';
+    return 'KZT';
+  }
+
+  String _mapLanguageCodeToDisplay(String code) {
+    if (code == 'en') return 'English';
+    if (code == 'kk') return 'Қазақша';
+    return 'Русский';
+  }
+
+  String _mapLanguageDisplayToCode(String display) {
+    if (display == 'English') return 'en';
+    if (display == 'Қазақша') return 'kk';
+    return 'ru';
+  }
 
   String _formatTimeOfDay(TimeOfDay time) {
     final hour = time.hour.toString().padLeft(2, '0');
     final minute = time.minute.toString().padLeft(2, '0');
     return '$hour:$minute';
+  }
+
+  TimeOfDay _parseTime(String value, TimeOfDay fallback) {
+    final parts = value.split(':');
+    if (parts.length != 2) return fallback;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      return fallback;
+    }
+    return TimeOfDay(hour: hour, minute: minute);
   }
 
   Future<void> _selectTime(BuildContext context, TimeOfDay initialTime, ValueChanged<TimeOfDay> onSelected) async {
@@ -94,19 +156,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: 'Язык интерфейса',
                         value: _language,
                         items: ['Русский', 'English', 'Қазақша'],
-                        onChanged: (val) {
-                          if (val != null) setState(() => _language = val);
+                        onChanged: (val) async {
+                          if (val != null) {
+                            await appState.updateSettings(language: _mapLanguageDisplayToCode(val));
+                            if (mounted) setState(() => _language = val);
+                          }
                         },
                       ),
                       const Divider(color: AppTheme.border, height: 1),
-                      // Currency
-                      _buildDropdownTile(
+                       _buildDropdownTile(
                         icon: Icons.monetization_on_rounded,
                         title: 'Основная валюта',
                         value: _currency,
                         items: ['KZT (₸)', 'RUB (₽)', 'USD (\$)', 'EUR (€)'],
-                        onChanged: (val) {
-                          if (val != null) setState(() => _currency = val);
+                        onChanged: (val) async {
+                          if (val != null) {
+                            final code = _mapDisplayToCode(val);
+                            try {
+                              await appState.updateSettings(currency: code);
+                              if (mounted) setState(() => _currency = val);
+                            } catch (e) {
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')), backgroundColor: AppTheme.expense),
+                              );
+                            }
+                          }
                         },
                       ),
                       const Divider(color: AppTheme.border, height: 1),
@@ -116,11 +191,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: 'День начала периода',
                         value: appState.budgetCycleStartDay.toString(),
                         items: List.generate(28, (i) => (i + 1).toString()),
-                        onChanged: (val) {
+                        onChanged: (val) async {
                           if (val != null) {
                             final day = int.tryParse(val);
                             if (day != null) {
-                              appState.updateSettings(budgetCycleStartDay: day);
+                              try {
+                                await appState.updateSettings(budgetCycleStartDay: day);
+                              } catch (e) {
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')), backgroundColor: AppTheme.expense),
+                                );
+                              }
                             }
                           }
                         },
@@ -144,9 +226,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         icon: Icons.notifications_rounded,
                         title: 'Пуш-уведомления',
                         value: _notifications,
-                        onChanged: (val) => setState(() => _notifications = val),
+                        onChanged: (val) async {
+                          await appState.updateSettings(pushNotificationsEnabled: val);
+                          if (mounted) setState(() => _notifications = val);
+                        },
                       ),
-                      if (_notifications) ...[
+                      const Divider(color: AppTheme.border, height: 1),
+                      _buildSwitchTile(
+                        icon: Icons.telegram_rounded,
+                        title: 'Telegram-уведомления',
+                        value: _telegramNotifications,
+                        onChanged: (val) async {
+                          await appState.updateSettings(telegramNotificationsEnabled: val);
+                          if (mounted) setState(() => _telegramNotifications = val);
+                        },
+                      ),
+                      const Divider(color: AppTheme.border, height: 1),
+                      _buildSwitchTile(
+                        icon: Icons.summarize_rounded,
+                        title: 'Ежедневный отчет',
+                        value: _dailyReportEnabled,
+                        onChanged: (val) async {
+                          await appState.updateSettings(dailyReportEnabled: val);
+                          if (mounted) setState(() => _dailyReportEnabled = val);
+                        },
+                      ),
+                      if (_dailyReportEnabled) ...[
                         const Divider(color: AppTheme.border, height: 1),
                         _buildTimeTile(
                           icon: Icons.access_time_rounded,
@@ -155,7 +260,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onTap: () => _selectTime(
                             context,
                             _dailyReportTime,
-                            (time) => setState(() => _dailyReportTime = time),
+                            (time) async {
+                              await appState.updateSettings(
+                                dailyReportEnabled: true,
+                                dailyReportTime: _formatTimeOfDay(time),
+                              );
+                              if (mounted) {
+                                setState(() {
+                                  _dailyReportEnabled = true;
+                                  _dailyReportTime = time;
+                                });
+                              }
+                            },
                           ),
                         ),
                       ],
@@ -165,7 +281,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         icon: Icons.do_not_disturb_on_rounded,
                         title: 'Режим тишины (${_formatTimeOfDay(_quietHoursStart)} - ${_formatTimeOfDay(_quietHoursEnd)})',
                         value: _quietHours,
-                        onChanged: (val) => setState(() => _quietHours = val),
+                        onChanged: (val) async {
+                          await appState.updateSettings(quietHoursEnabled: val);
+                          if (mounted) setState(() => _quietHours = val);
+                        },
                       ),
                       if (_quietHours) ...[
                         const Divider(color: AppTheme.border, height: 1),
@@ -176,7 +295,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onTap: () => _selectTime(
                             context,
                             _quietHoursStart,
-                            (time) => setState(() => _quietHoursStart = time),
+                            (time) async {
+                              await appState.updateSettings(quietHoursStart: _formatTimeOfDay(time));
+                              if (mounted) setState(() => _quietHoursStart = time);
+                            },
                           ),
                         ),
                         const Divider(color: AppTheme.border, height: 1),
@@ -187,7 +309,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onTap: () => _selectTime(
                             context,
                             _quietHoursEnd,
-                            (time) => setState(() => _quietHoursEnd = time),
+                            (time) async {
+                              await appState.updateSettings(quietHoursEnd: _formatTimeOfDay(time));
+                              if (mounted) setState(() => _quietHoursEnd = time);
+                            },
                           ),
                         ),
                       ],

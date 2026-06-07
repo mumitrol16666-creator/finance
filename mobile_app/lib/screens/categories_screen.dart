@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../core/theme.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class CategoriesScreen extends StatelessWidget {
   const CategoriesScreen({super.key});
@@ -170,13 +171,13 @@ class CategoriesScreen extends StatelessWidget {
                         controller: limitController,
                         keyboardType: TextInputType.number,
                         style: const TextStyle(color: AppTheme.textPrimary),
-                        decoration: const InputDecoration(
-                          labelText: 'Лимит на период (₸)',
+                        decoration: InputDecoration(
+                          labelText: 'Лимит на период (${cu.currencySymbol(appState.baseCurrency)})',
                           hintText: 'Без лимита',
-                          hintStyle: TextStyle(color: Colors.white24),
-                          labelStyle: TextStyle(color: AppTheme.textSecondary),
-                          enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
-                          focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
+                          hintStyle: const TextStyle(color: Colors.white24),
+                          labelStyle: const TextStyle(color: AppTheme.textSecondary),
+                          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
+                          focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
                         ),
                       ),
                     ],
@@ -330,9 +331,11 @@ class CategoriesScreen extends StatelessWidget {
       itemCount: list.length,
       itemBuilder: (context, index) {
         final cat = list[index];
+        final limitFormatted = cat.limitAmount == null ? '' : cu.formatCurrency(cat.limitAmount!, appState.baseCurrency);
+        final spentFormatted = cu.formatCurrency(cat.spentAmount, appState.baseCurrency);
         final limitTxt = (cat.kind == 'expense' && cat.limitAmount != null && cat.limitAmount! > 0)
-            ? 'Лимит: ${cat.limitAmount} ₸ • Потрачено: ${cat.spentAmount} ₸'
-            : (cat.kind == 'expense' ? 'Без установленного лимита' : 'Получено: ${cat.spentAmount} ₸');
+            ? 'Лимит: $limitFormatted • Потрачено: $spentFormatted'
+            : (cat.kind == 'expense' ? 'Без установленного лимита' : 'Получено: $spentFormatted');
         
         return GestureDetector(
           onTap: () => _showEditCategoryDialog(context, appState, cat),

@@ -447,6 +447,21 @@ def _parse_hhmm(hhmm: str) -> tuple[int, int]:
     return hh, mm
 
 
+def _is_in_quiet_hours(local_now: datetime, enabled: int, start: str, end: str) -> bool:
+    if int(enabled or 0) != 1:
+        return False
+    start_h, start_m = _parse_hhmm(start or "22:00")
+    end_h, end_m = _parse_hhmm(end or "08:00")
+    current = local_now.hour * 60 + local_now.minute
+    start_minutes = start_h * 60 + start_m
+    end_minutes = end_h * 60 + end_m
+    if start_minutes == end_minutes:
+        return True
+    if start_minutes < end_minutes:
+        return start_minutes <= current < end_minutes
+    return current >= start_minutes or current < end_minutes
+
+
 def _fmt_money(n: int) -> str:
     s = str(abs(int(n)))
     parts = []
@@ -582,6 +597,10 @@ async def tick_notify(bot):
                 inc_days,
                 exp_enabled,
                 exp_days,
+                telegram_notifications_enabled,
+                quiet_hours_enabled,
+                quiet_hours_start,
+                quiet_hours_end,
 
         ) in targets:
             try:
@@ -594,9 +613,12 @@ async def tick_notify(bot):
 
                 local_now = now_utc.astimezone(tz)
 
-                # Quiet hours flag (22:00 - 08:00 user local time)
-                # Only suppress nudges/reminders, NOT scheduled daily reports
-                is_quiet = local_now.hour >= 22 or local_now.hour < 8
+                is_quiet = _is_in_quiet_hours(
+                    local_now,
+                    int(quiet_hours_enabled or 0),
+                    str(quiet_hours_start or "22:00"),
+                    str(quiet_hours_end or "08:00"),
+                )
 
                 local_date = local_now.date().isoformat()
 
@@ -606,29 +628,31 @@ async def tick_notify(bot):
                 report_local = local_now.replace(hour=rep_h, minute=rep_m, second=0, microsecond=0)
                 pre_local = report_local - timedelta(hours=1)
 
-                # --- Suppress recurring reminders, debt reminders, and nudges during quiet hours ---
-                if not is_quiet:
-                    await _send_recurring_reminders(
-                        bot, db, uid, str(currency or "KZT"), tz_norm, str(lang or "ru"), now_utc,
-                        int(inc_enabled or 1), int(inc_days or 0),
-                        int(exp_enabled or 1), int(exp_days or 1)
-                    )
+                # Quiet hours suppress every notification, including reports.
+                if is_quiet:
+                    continue
 
-                    if int(debts_enabled or 0) == 1:
-                        try:
-                            await _send_debt_reminders(
-                                bot, db, uid,
-                                str(currency or "KZT"),
-                                tz_norm,
-                                str(lang or "ru"),
-                                int(debts_days_before or 3),
-                                now_utc,
-                            )
-                        except Exception as e:
-                            logger.warning(f"debt reminders failed uid={uid}: {e}")
+                await _send_recurring_reminders(
+                    bot, db, uid, str(currency or "KZT"), tz_norm, str(lang or "ru"), now_utc,
+                    int(inc_enabled or 1), int(inc_days or 0),
+                    int(exp_enabled or 1), int(exp_days or 1)
+                )
+
+                if int(debts_enabled or 0) == 1:
+                    try:
+                        await _send_debt_reminders(
+                            bot, db, uid,
+                            str(currency or "KZT"),
+                            tz_norm,
+                            str(lang or "ru"),
+                            int(debts_days_before or 3),
+                            now_utc,
+                        )
+                    except Exception as e:
+                        logger.warning(f"debt reminders failed uid={uid}: {e}")
 
                 # ---------------- NUDGES (suppressed during quiet hours) ----------------
-                if not is_quiet and int(nudge_enabled or 0) == 1:
+                if int(nudge_enabled or 0) == 1:
                     interval = int(nudge_interval_min or 180)
                     nudge_end = report_local - timedelta(hours=1)
                     end_cap = local_now.replace(hour=22, minute=0, second=0, microsecond=0)
@@ -1075,12 +1099,16 @@ async def _send_debt_reminders(
             "id": row[0], "title": row[1], "payment_amount": row[2], "next_payment_date": row[3],
             "remaining_amount": row[4], "dtype": row[5], "direction": row[6], "is_active": row[7],
         }
+        reminder_enabled = 1 if row[8] is None else int(row[8] or 0)
+        reminder_days_before = int(days_before or 3) if row[9] is None else int(row[9] or 0)
+        if reminder_enabled != 1:
+            continue
         try:
             due = datetime.strptime(str(debt.get("next_payment_date")), "%Y-%m-%d").date()
         except Exception:
             continue
         days_left = (due - local_now.date()).days
-        if days_left > int(days_before or 3):
+        if days_left > reminder_days_before:
             continue
         reminder_kind, text = _build_debt_reminder_text(lang, debt, days_left, currency)
         if await debt_reminder_already_sent(db, int(user_id), int(debt["id"]), reminder_kind, local_date):
@@ -1306,6 +1334,5 @@ async def _build_daily_text(
         await build_smart_suggestion(db, user_id, lang)
     ]
     return "\n".join(lines)
-
 
 

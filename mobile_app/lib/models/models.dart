@@ -163,6 +163,8 @@ class Debt {
   final String? nextPaymentDate;
   final String? note;
   final String status;
+  final bool reminderEnabled;
+  final int reminderDaysBefore;
 
   Debt({
     required this.id,
@@ -175,6 +177,8 @@ class Debt {
     this.nextPaymentDate,
     this.note,
     required this.status,
+    this.reminderEnabled = true,
+    this.reminderDaysBefore = 3,
   });
 
   factory Debt.fromJson(Map<String, dynamic> json) {
@@ -189,6 +193,8 @@ class Debt {
       nextPaymentDate: json['nextPaymentDate'] as String? ?? json['next_payment_date'] as String?,
       note: json['note'] as String?,
       status: json['status'] as String? ?? 'active',
+      reminderEnabled: json['reminderEnabled'] as bool? ?? true,
+      reminderDaysBefore: json['reminderDaysBefore'] as int? ?? 3,
     );
   }
 }
@@ -202,6 +208,8 @@ class RecurringTemplate {
   final int intervalValue; // day_of_month
   final String? nextRunDate;
   final String categoryEmoji;
+  final int? accountId;
+  final String currency;
 
   RecurringTemplate({
     required this.id,
@@ -212,6 +220,8 @@ class RecurringTemplate {
     required this.intervalValue,
     this.nextRunDate,
     required this.categoryEmoji,
+    this.accountId,
+    this.currency = 'KZT',
   });
 
   factory RecurringTemplate.fromJson(Map<String, dynamic> json) {
@@ -224,6 +234,8 @@ class RecurringTemplate {
       intervalValue: json['intervalValue'] as int? ?? json['day_of_month'] as int? ?? 1,
       nextRunDate: json['nextRunDate'] as String? ?? json['next_run_date'] as String?,
       categoryEmoji: json['categoryEmoji'] as String? ?? json['category_emoji'] as String? ?? '🔁',
+      accountId: json['accountId'] as int? ?? json['account_id'] as int?,
+      currency: json['currency'] as String? ?? 'KZT',
     );
   }
 }
@@ -236,6 +248,8 @@ class PlannedTx {
   final String kind; // 'expense' or 'income'
   final String status;
   final String categoryEmoji;
+  final int? accountId;
+  final String currency;
 
   PlannedTx({
     required this.id,
@@ -245,6 +259,8 @@ class PlannedTx {
     required this.kind,
     required this.status,
     required this.categoryEmoji,
+    this.accountId,
+    this.currency = 'KZT',
   });
 
   factory PlannedTx.fromJson(Map<String, dynamic> json) {
@@ -256,6 +272,8 @@ class PlannedTx {
       kind: json['kind'] as String? ?? 'expense',
       status: json['status'] as String? ?? 'pending',
       categoryEmoji: json['categoryEmoji'] as String? ?? json['category_emoji'] as String? ?? '📅',
+      accountId: json['accountId'] as int? ?? json['account_id'] as int?,
+      currency: json['currency'] as String? ?? 'KZT',
     );
   }
 }

@@ -467,13 +467,78 @@ async def apply_debt_payment(
     if commit:
         await db.commit()
 
+
+async def add_debt_payment_history(
+    db: aiosqlite.Connection,
+    user_id: int,
+    debt_id: int,
+    amount: int,
+    *,
+    tx_id: int | None = None,
+    account_id: int | None = None,
+    comment: str | None = None,
+) -> int:
+    cur = await db.execute(
+        """
+        INSERT INTO debt_payments (
+            debt_id, user_id, tx_id, account_id, amount, payment_date, comment, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, date('now'), ?, datetime('now'))
+        """,
+        (debt_id, user_id, tx_id, account_id, int(amount), comment),
+    )
+    return int(cur.lastrowid)
+
+
+async def list_debt_payments(
+    db: aiosqlite.Connection,
+    user_id: int,
+    debt_id: int,
+):
+    cur = await db.execute(
+        """
+        SELECT id, debt_id, tx_id, account_id, amount, payment_date, comment, created_at
+        FROM debt_payments
+        WHERE user_id=? AND debt_id=?
+        ORDER BY payment_date DESC, id DESC
+        """,
+        (user_id, debt_id),
+    )
+    return await cur.fetchall()
+
+
+async def set_debt_reminder_preference(
+    db: aiosqlite.Connection,
+    user_id: int,
+    debt_id: int,
+    enabled: int,
+    days_before: int,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO debt_reminder_preferences(debt_id, user_id, enabled, days_before, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(debt_id) DO UPDATE SET
+          enabled=excluded.enabled,
+          days_before=excluded.days_before,
+          updated_at=excluded.updated_at
+        WHERE debt_reminder_preferences.user_id=excluded.user_id
+        """,
+        (debt_id, user_id, int(enabled), max(0, min(int(days_before), 30))),
+    )
+
+
 async def list_due_debts_for_reminders(db: aiosqlite.Connection, user_id: int):
     cur = await db.execute(
         """
-        SELECT id, title, payment_amount, next_payment_date, remaining_amount, dtype, direction, is_active
-        FROM debts
-        WHERE user_id = ? AND is_active = 1 AND next_payment_date IS NOT NULL AND next_payment_date != ''
-        ORDER BY next_payment_date ASC
+        SELECT d.id, d.title, d.payment_amount, d.next_payment_date, d.remaining_amount,
+               d.dtype, d.direction, d.is_active, p.enabled, p.days_before
+        FROM debts d
+        LEFT JOIN debt_reminder_preferences p
+          ON p.debt_id=d.id AND p.user_id=d.user_id
+        WHERE d.user_id = ? AND d.is_active = 1
+          AND d.next_payment_date IS NOT NULL AND d.next_payment_date != ''
+        ORDER BY d.next_payment_date ASC
         """,
         (user_id,),
     )

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme.dart';
 import 'providers/app_state.dart';
 import 'screens/login_screen.dart';
@@ -100,6 +101,8 @@ class MainNavigationFrame extends StatefulWidget {
 class _MainNavigationFrameState extends State<MainNavigationFrame> {
   int _currentIndex = 0;
   late PageController _pageController;
+  bool _plannedAssistantShown = false;
+  int _tutorialStep = 0;
 
   final List<Widget> _screens = [
     const DashboardScreen(),
@@ -112,6 +115,114 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _showPlannedAssistant();
+      await _checkInteractiveTutorial();
+    });
+  }
+
+  Future<void> _checkInteractiveTutorial() async {
+    final prefs = await SharedPreferences.getInstance();
+    if ((prefs.getBool('onboarding_tutorial_shown') ?? false) || !mounted) return;
+    final start = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Быстрое обучение'),
+        content: const Text('Вместе внесем первую операцию, затем откроем раздел сервисов.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Пропустить')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Начать')),
+        ],
+      ),
+    );
+    if (start == true && mounted) {
+      setState(() => _tutorialStep = 1);
+    } else {
+      await prefs.setBool('onboarding_tutorial_shown', true);
+    }
+  }
+
+  Future<void> _finishTutorial() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_tutorial_shown', true);
+    if (mounted) setState(() => _tutorialStep = 0);
+  }
+
+  Future<void> _openTransactionSheet() async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final beforeCount = appState.transactions.length;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.background,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.85,
+        child: const ClipRRect(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          child: Scaffold(
+            backgroundColor: AppTheme.background,
+            body: SafeArea(child: AddTransactionScreen()),
+          ),
+        ),
+      ),
+    );
+    if (_tutorialStep == 1 && mounted) {
+      if (appState.transactions.length > beforeCount) {
+        setState(() => _tutorialStep = 2);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Заполните и сохраните операцию, чтобы продолжить обучение.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showPlannedAssistant() async {
+    if (_plannedAssistantShown || !mounted) return;
+    _plannedAssistantShown = true;
+    final appState = Provider.of<AppState>(context, listen: false);
+    final today = DateTime.now().toIso8601String().split('T').first;
+    final due = appState.plannedEvents.where((item) => item.date == today && item.status == 'pending').toList();
+    for (final item in due) {
+      if (!mounted) return;
+      final execute = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: AppTheme.surface,
+          title: const Text('Запланированная операция на сегодня'),
+          content: Text('${item.title}\n${item.amount} ${item.currency}'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Позже'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context, true),
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('Внести'),
+            ),
+          ],
+        ),
+      );
+      if (execute == true) {
+        try {
+          await appState.executePlanned(item.id);
+        } catch (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.toString().replaceFirst('Exception: ', '')),
+              backgroundColor: AppTheme.expense,
+            ),
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -134,11 +245,10 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
         setState(() {
           _currentIndex = index;
         });
-        _pageController.animateToPage(
-          index,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-        );
+        _pageController.jumpToPage(index);
+        if (_tutorialStep == 2 && index == 3) {
+          _finishTutorial();
+        }
       },
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -198,6 +308,7 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
           SafeArea(
             child: PageView(
               controller: _pageController,
+              physics: const NeverScrollableScrollPhysics(),
               onPageChanged: (index) {
                 final appState = Provider.of<AppState>(context, listen: false);
                 final isLocked = index == 2 && !appState.hasFeature('ai');
@@ -215,39 +326,53 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
               children: _screens,
             ),
           ),
+          if (_tutorialStep > 0)
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 16,
+              child: Material(
+                color: AppTheme.surface,
+                elevation: 12,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.touch_app_rounded, color: AppTheme.primary),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _tutorialStep == 1
+                              ? 'Нажмите выделенную кнопку +, заполните операцию и сохраните ее.'
+                              : 'Отлично. Теперь нажмите «Сервисы» внизу экрана.',
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Пропустить обучение',
+                        onPressed: _finishTutorial,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
       floatingActionButton: isKeyboardVisible
           ? null
           : FloatingActionButton(
-              onPressed: () {
-                showModalBottomSheet(
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: AppTheme.background,
-                  shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                  ),
-                  builder: (context) => SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.85,
-                    child: const ClipRRect(
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                      child: Scaffold(
-                        backgroundColor: AppTheme.background,
-                        body: SafeArea(child: AddTransactionScreen()),
-                      ),
-                    ),
-                  ),
-                );
-              },
+              onPressed: _openTransactionSheet,
               backgroundColor: Colors.transparent,
-              elevation: 0,
+              elevation: _tutorialStep == 1 ? 12 : 0,
               child: Container(
                 width: 56,
                 height: 56,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: AppTheme.primaryGradient,
+                  border: _tutorialStep == 1 ? Border.all(color: Colors.white, width: 3) : null,
                 ),
                 child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
               ),

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
+import '../utils/currency_utils.dart' as cu;
 
 class UserSession {
   final String token;
@@ -127,11 +128,150 @@ class AppState extends ChangeNotifier {
   List<ChatMessage> _chatHistory = [];
   List<ChatMessage> get chatHistory => _chatHistory;
 
-  int get totalBalance => _accounts.where((acc) => acc.isBusiness == _isBusinessMode && !acc.isSaving && acc.accType != 'deposit').fold(0, (sum, acc) => sum + acc.balance);
-  int get savingsBalance => _accounts.where((acc) => acc.isBusiness == _isBusinessMode && acc.isSaving && acc.accType != 'deposit').fold(0, (sum, acc) => sum + acc.balance);
-  int get depositBalance => _accounts.where((acc) => acc.isBusiness == _isBusinessMode && acc.accType == 'deposit').fold(0, (sum, acc) => sum + acc.balance);
+  // Server-converted balances (already converted to base currency)
+  int _serverTotalBalance = 0;
+  int _serverSavingsBalance = 0;
+  int _serverDepositBalance = 0;
+
+  // Exchange rates from server (currency -> rate_to_usd)
+  Map<String, double> _exchangeRates = {};
+  Map<String, double> _customRatesOverride = {};
+
+  Map<String, double> get exchangeRates => {..._exchangeRates, ..._customRatesOverride};
+  Map<String, double> get customRatesOverride => _customRatesOverride;
+
+  String? _ratesUpdatedAt;
+  String? get ratesUpdatedAt => _ratesUpdatedAt;
+
+  // User's preferred base currency
+  String _baseCurrency = 'KZT';
+  String get baseCurrency => _baseCurrency;
+
+  bool _telegramNotificationsEnabled = true;
+  bool get telegramNotificationsEnabled => _telegramNotificationsEnabled;
+
+  bool _pushNotificationsEnabled = true;
+  bool get pushNotificationsEnabled => _pushNotificationsEnabled;
+
+  bool _dailyReportEnabled = false;
+  bool get dailyReportEnabled => _dailyReportEnabled;
+
+  String _dailyReportTime = '21:00';
+  String get dailyReportTime => _dailyReportTime;
+
+  bool _quietHoursEnabled = true;
+  bool get quietHoursEnabled => _quietHoursEnabled;
+
+  String _quietHoursStart = '22:00';
+  String get quietHoursStart => _quietHoursStart;
+
+  String _quietHoursEnd = '08:00';
+  String get quietHoursEnd => _quietHoursEnd;
+
+  String _language = 'ru';
+  String get language => _language;
+
+  // Recalculate locally so personal/business mode and custom rates are respected.
+  int get totalBalance {
+    if (_accounts.isEmpty) return _serverTotalBalance;
+    return _recalculateBalance((acc) => !acc.isSaving && acc.accType != 'deposit');
+  }
+
+  int get savingsBalance {
+    if (_accounts.isEmpty) return _serverSavingsBalance;
+    return _recalculateBalance((acc) => acc.isSaving && acc.accType != 'deposit');
+  }
+
+  int get depositBalance {
+    if (_accounts.isEmpty) return _serverDepositBalance;
+    return _recalculateBalance((acc) => acc.accType == 'deposit');
+  }
+
+  int _recalculateBalance(bool Function(Account) filter) {
+    int total = 0;
+    for (final acc in _accounts.where((a) => a.isBusiness == _isBusinessMode && filter(a))) {
+      total += convertAmount(acc.balance, acc.currency, _baseCurrency) ?? acc.balance;
+    }
+    return total;
+  }
+
   int get monthlyExpenses => categories.where((c) => c.kind == 'expense').fold(0, (sum, cat) => sum + cat.spentAmount);
   int get monthlyIncome => categories.where((c) => c.kind == 'income').fold(0, (sum, cat) => sum + cat.spentAmount);
+
+  /// Raw balances grouped by currency (e.g. {'KZT': 250000, 'USD': 1200})
+  Map<String, int> get balancesByCurrency {
+    final map = <String, int>{};
+    for (final acc in _accounts.where((a) => a.isBusiness == _isBusinessMode && !a.isSaving && a.accType != 'deposit')) {
+      map[acc.currency] = (map[acc.currency] ?? 0) + acc.balance;
+    }
+    return map;
+  }
+
+  /// Whether user has accounts in multiple currencies
+  bool get hasMultipleCurrencies => balancesByCurrency.keys.length > 1;
+
+  /// Convert amount from one currency to another
+  int? convertAmount(int amount, String from, String to) {
+    return cu.convertCurrency(amount, from, to, exchangeRates);
+  }
+
+  String get _customRatesStorageKey => 'custom_rates_override_${_token ?? "anonymous"}';
+
+  Future<void> _loadCustomRates() async {
+    final prefs = await SharedPreferences.getInstance();
+    final customRatesStr = prefs.getString(_customRatesStorageKey);
+    if (customRatesStr == null || customRatesStr.isEmpty) {
+      _customRatesOverride = {};
+      return;
+    }
+    try {
+      final map = json.decode(customRatesStr) as Map<String, dynamic>;
+      _customRatesOverride = map.map((k, v) => MapEntry(k, (v as num).toDouble()));
+    } catch (_) {
+      _customRatesOverride = {};
+    }
+  }
+
+  Future<void> _saveCustomRates() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_customRatesOverride.isEmpty) {
+      await prefs.remove(_customRatesStorageKey);
+    } else {
+      await prefs.setString(_customRatesStorageKey, json.encode(_customRatesOverride));
+    }
+  }
+
+  Future<void> setCustomRate(String currency, double rateInBase) async {
+    if (currency == _baseCurrency) return;
+    final baseRate = _exchangeRates[_baseCurrency] ?? 1.0;
+    if (rateInBase > 0) {
+      if (currency == 'USD') {
+        _customRatesOverride[_baseCurrency] = rateInBase;
+        _customRatesOverride['USD'] = 1.0;
+      } else {
+        _customRatesOverride[currency] = baseRate / rateInBase;
+      }
+    }
+    await _saveCustomRates();
+    notifyListeners();
+  }
+
+  Future<void> removeCustomRate(String currency) async {
+    if (currency == 'USD') {
+      _customRatesOverride.remove(_baseCurrency);
+      _customRatesOverride.remove('USD');
+    } else {
+      _customRatesOverride.remove(currency);
+    }
+    await _saveCustomRates();
+    notifyListeners();
+  }
+
+  Future<void> clearCustomRates() async {
+    _customRatesOverride.clear();
+    await _saveCustomRates();
+    notifyListeners();
+  }
 
   List<Debt> _debts = [];
   List<Debt> get debts => _debts;
@@ -144,6 +284,14 @@ class AppState extends ChangeNotifier {
 
   String? _token;
   final String _baseUrl = 'http://178.105.162.123:8000';
+
+  String _apiError(http.Response response, String fallback) {
+    try {
+      return (json.decode(response.body)['detail'] ?? fallback).toString();
+    } catch (_) {
+      return fallback;
+    }
+  }
 
   // Authentication & Session management
   Future<void> initSessions() async {
@@ -159,6 +307,7 @@ class AppState extends ChangeNotifier {
       if (activeToken != null) {
         final session = _savedSessions.firstWhere((s) => s.token == activeToken, orElse: () => _savedSessions.first);
         _token = session.token;
+        await _loadCustomRates();
         _isAuthenticated = true;
         notifyListeners();
         await loadDashboardData();
@@ -174,6 +323,7 @@ class AppState extends ChangeNotifier {
     
     _token = session.token;
     _isAuthenticated = true;
+    await _loadCustomRates();
     
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('active_token', session.token);
@@ -226,6 +376,7 @@ class AppState extends ChangeNotifier {
         final name = data['name'] as String;
 
         _token = token;
+        await _loadCustomRates();
         _isAuthenticated = true;
         _isLoading = false;
         
@@ -286,6 +437,7 @@ class AppState extends ChangeNotifier {
         final name = data['name'] as String;
 
         _token = token;
+        await _loadCustomRates();
         _isAuthenticated = true;
         _isLoading = false;
         
@@ -341,7 +493,18 @@ class AppState extends ChangeNotifier {
     return false;
   }
 
-  Future<void> updateSettings({int? budgetCycleStartDay}) async {
+  Future<void> updateSettings({
+    int? budgetCycleStartDay,
+    String? currency,
+    String? language,
+    bool? telegramNotificationsEnabled,
+    bool? pushNotificationsEnabled,
+    bool? dailyReportEnabled,
+    String? dailyReportTime,
+    bool? quietHoursEnabled,
+    String? quietHoursStart,
+    String? quietHoursEnd,
+  }) async {
     if (_token == null) return;
     _isLoading = true;
     notifyListeners();
@@ -349,6 +512,15 @@ class AppState extends ChangeNotifier {
     try {
       final Map<String, dynamic> bodyMap = {};
       if (budgetCycleStartDay != null) bodyMap['budget_cycle_start_day'] = budgetCycleStartDay;
+      if (currency != null) bodyMap['currency'] = currency;
+      if (language != null) bodyMap['lang'] = language;
+      if (telegramNotificationsEnabled != null) bodyMap['telegram_notifications_enabled'] = telegramNotificationsEnabled;
+      if (pushNotificationsEnabled != null) bodyMap['push_notifications_enabled'] = pushNotificationsEnabled;
+      if (dailyReportEnabled != null) bodyMap['daily_report_enabled'] = dailyReportEnabled;
+      if (dailyReportTime != null) bodyMap['daily_report_time'] = dailyReportTime;
+      if (quietHoursEnabled != null) bodyMap['quiet_hours_enabled'] = quietHoursEnabled;
+      if (quietHoursStart != null) bodyMap['quiet_hours_start'] = quietHoursStart;
+      if (quietHoursEnd != null) bodyMap['quiet_hours_end'] = quietHoursEnd;
 
       final response = await http.post(
         Uri.parse('$_baseUrl/api/user/settings'),
@@ -360,10 +532,17 @@ class AppState extends ChangeNotifier {
       );
 
       if (response.statusCode == 200) {
+        if (currency != null && currency != _baseCurrency) {
+          await clearCustomRates();
+          _baseCurrency = currency;
+        }
         await loadDashboardData();
+      } else {
+        throw Exception(_apiError(response, 'Не удалось обновить настройки'));
       }
     } catch (e) {
       print('Update settings error: $e');
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -508,12 +687,31 @@ class AppState extends ChangeNotifier {
         _cycleEnd = data['cycleEnd'] as String?;
         _currentStreak = data['currentStreak'] as int? ?? 0;
         _maxStreak = data['maxStreak'] as int? ?? 0;
+
+        // Parse server-converted balances (already converted to base currency)
+        _serverTotalBalance = data['totalBalance'] as int? ?? 0;
+        _serverSavingsBalance = data['savingsBalance'] as int? ?? 0;
+        _serverDepositBalance = data['depositBalance'] as int? ?? 0;
+
+        // Parse base currency
+        _baseCurrency = data['baseCurrency'] as String? ?? 'KZT';
+
+        // Parse exchange rates
+        final ratesData = data['exchangeRates'] as Map<String, dynamic>?;
+        if (ratesData != null) {
+          final ratesMap = ratesData['rates'] as Map<String, dynamic>?;
+          if (ratesMap != null) {
+            _exchangeRates = ratesMap.map((k, v) => MapEntry(k, (v as num?)?.toDouble() ?? 0.0));
+          }
+          _ratesUpdatedAt = ratesData['updated_at'] as String?;
+        }
       }
 
       await Future.wait([
         _fetchDebtsSilent(),
         _fetchRecurringSilent(),
         _fetchPlannedSilent(),
+        _fetchSettingsSilent(),
       ]);
     } catch (e) {
       print('Load dashboard error: $e');
@@ -532,6 +730,26 @@ class AppState extends ChangeNotifier {
       if (response.statusCode == 200) {
         final list = json.decode(response.body) as List;
         _debts = list.map((item) => Debt.fromJson(item as Map<String, dynamic>)).toList();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _fetchSettingsSilent() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/user/settings'),
+        headers: {'Authorization': 'Bearer $_token'},
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        _telegramNotificationsEnabled = (data['telegram_notifications_enabled'] as int? ?? 1) == 1;
+        _pushNotificationsEnabled = (data['push_notifications_enabled'] as int? ?? 1) == 1;
+        _dailyReportEnabled = (data['daily_report_enabled'] as int? ?? 0) == 1;
+        _dailyReportTime = data['daily_report_time'] as String? ?? '21:00';
+        _quietHoursEnabled = (data['quiet_hours_enabled'] as int? ?? 1) == 1;
+        _quietHoursStart = data['quiet_hours_start'] as String? ?? '22:00';
+        _quietHoursEnd = data['quiet_hours_end'] as String? ?? '08:00';
+        _language = data['lang'] as String? ?? 'ru';
       }
     } catch (_) {}
   }
@@ -607,34 +825,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> upgradeToPremium() async {
-    if (_token == null) return;
-    _isLoading = true;
-    notifyListeners();
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/api/profile/upgrade'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $_token',
-        },
-      );
-      if (response.statusCode == 200) {
-        _isPremium = true;
-        notifyListeners();
-        await loadDashboardData();
-      } else {
-        throw Exception('Failed to upgrade');
-      }
-    } catch (e) {
-      print('Upgrade to premium error: $e');
-      rethrow;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
   void logout() async {
     _token = null;
     _isAuthenticated = false;
@@ -647,6 +837,9 @@ class AppState extends ChangeNotifier {
     _debts = [];
     _recurringTemplates = [];
     _plannedEvents = [];
+    _customRatesOverride = {};
+    _exchangeRates = {};
+    _baseCurrency = 'KZT';
     _weeklyStreak = [false, false, false, false, false, false, false];
     _chatHistory = [
       ChatMessage(
@@ -673,6 +866,7 @@ class AppState extends ChangeNotifier {
     required String accountName,
     String? toAccountName,
     String? note,
+    double? customRate,
   }) async {
     if (_token == null) return;
     _isLoading = true;
@@ -704,31 +898,43 @@ class AppState extends ChangeNotifier {
         categoryId = cat.id;
       } catch (_) {}
 
+      final Map<String, dynamic> bodyMap = {
+        'amount': amount,
+        'kind': kind,
+        'account_id': accountId,
+        'to_account_id': toAccountId,
+        'category_id': categoryId,
+        'note': note,
+      };
+      if (customRate != null) {
+        bodyMap['custom_rate'] = customRate;
+      }
+
       final response = await http.post(
         Uri.parse('$_baseUrl/api/transactions'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $_token',
         },
-        body: json.encode({
-          'amount': amount,
-          'kind': kind,
-          'account_id': accountId,
-          'to_account_id': toAccountId,
-          'category_id': categoryId,
-          'note': note,
-        }),
+        body: json.encode(bodyMap),
       );
 
       if (response.statusCode == 200) {
         await loadDashboardData();
+      } else {
+        String detail = 'Failed to add transaction';
+        try {
+          detail = (json.decode(response.body)['detail'] ?? detail).toString();
+        } catch (_) {}
+        throw Exception(detail);
       }
     } catch (e) {
       print('Add transaction error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
-
-    _isLoading = false;
-    notifyListeners();
   }
 
   Future<Uint8List?> exportExcelReport(String period) async {
@@ -898,9 +1104,12 @@ class AppState extends ChangeNotifier {
       );
       if (response.statusCode == 200) {
         await loadDashboardData();
+      } else {
+        throw Exception(_apiError(response, 'Не удалось добавить долг'));
       }
     } catch (e) {
       print('Add debt error: $e');
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -929,13 +1138,33 @@ class AppState extends ChangeNotifier {
       );
       if (response.statusCode == 200) {
         await loadDashboardData();
+      } else {
+        throw Exception(_apiError(response, 'Не удалось внести платеж'));
       }
     } catch (e) {
       print('Pay debt error: $e');
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> setDebtReminder(int debtId, {required bool enabled, required int daysBefore}) async {
+    if (_token == null) return;
+    final response = await http.post(
+      Uri.parse('$_baseUrl/api/debts/$debtId/reminder'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token',
+      },
+      body: json.encode({'enabled': enabled, 'days_before': daysBefore}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception(_apiError(response, 'Не удалось сохранить напоминание'));
+    }
+    await _fetchDebtsSilent();
+    notifyListeners();
   }
 
   Future<void> addRecurring({
@@ -969,9 +1198,12 @@ class AppState extends ChangeNotifier {
       );
       if (response.statusCode == 200) {
         await loadDashboardData();
+      } else {
+        throw Exception(_apiError(response, 'Не удалось создать регулярный платеж'));
       }
     } catch (e) {
       print('Add recurring error: $e');
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -1067,9 +1299,12 @@ class AppState extends ChangeNotifier {
       );
       if (response.statusCode == 200) {
         await loadDashboardData();
+      } else {
+        throw Exception(_apiError(response, 'Не удалось создать плановую операцию'));
       }
     } catch (e) {
       print('Add planned error: $e');
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -1276,6 +1511,18 @@ class AppState extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> executePlanned(int plannedId) async {
+    if (_token == null) return;
+    final response = await http.post(
+      Uri.parse('$_baseUrl/api/planned/$plannedId/execute'),
+      headers: {'Authorization': 'Bearer $_token'},
+    );
+    if (response.statusCode != 200) {
+      throw Exception(_apiError(response, 'Не удалось внести запланированную операцию'));
+    }
+    await loadDashboardData();
   }
 
   Future<void> loadQuickAddTemplates() async {
