@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/theme.dart';
+import '../core/tutorial_controller.dart';
 import '../providers/app_state.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -321,7 +322,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                const SizedBox(height: 20),
+                _buildSectionHeader('ПОМОЩЬ'),
+                const SizedBox(height: 10),
+                Container(
+                  decoration: AppTheme.glassCardDecoration(radius: 16),
+                  padding: const EdgeInsets.all(8),
+                  child: ListTile(
+                    leading: const Icon(Icons.school_rounded, color: AppTheme.primary, size: 24),
+                    title: const Text('Пройти обучение', style: TextStyle(fontSize: 14, color: AppTheme.textPrimary, fontWeight: FontWeight.bold)),
+                    subtitle: const Text('Показать основные разделы и действия', style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+                    trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Future.delayed(const Duration(milliseconds: 250), TutorialController.start);
+                    },
+                  ),
+                ),
 
                 const SizedBox(height: 24),
                 _buildSectionHeader('ОПАСНАЯ ЗОНА'),
