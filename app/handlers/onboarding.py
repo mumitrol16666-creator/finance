@@ -48,6 +48,14 @@ def back_kb(btn_text: str) -> ReplyKeyboardMarkup:
     builder.button(text=f"⬅️ {btn_text}")
     return builder.as_markup(resize_keyboard=True)
 
+async def _try_delete(bot, chat_id: int, message_id: int | None) -> None:
+    if not message_id:
+        return
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=int(message_id))
+    except Exception:
+        pass
+
 # Helper to sync DB and FSM state
 async def set_state_db(db: aiosqlite.Connection, user_id: int, state_name: str):
     await db.execute("UPDATE users SET onboarding_state = ? WHERE id = ?", (state_name, user_id))
@@ -411,7 +419,7 @@ async def ob_acc_name(m: Message, state: FSMContext, db: aiosqlite.Connection):
     await state.update_data(acc_name=name)
     await set_state_db(db, m.from_user.id, "tg_reg_acc_balance")
     await state.set_state(TelegramOnboarding.tg_reg_acc_balance)
-    sent = await m.answer(get_text(lang, 'ASK_ACC_BAL'), reply_markup=cancel_kb(lang))
+    sent = await m.answer(get_text(lang, 'ASK_ACC_BAL'), reply_markup=cancel_kb(lang), parse_mode=PARSE_MODE)
     await state.update_data(prompt_message_id=sent.message_id)
 
 @router.message(TelegramOnboarding.tg_reg_acc_balance, F.text)
@@ -439,7 +447,7 @@ async def ob_acc_bal(m: Message, state: FSMContext, db: aiosqlite.Connection):
     
     await set_state_db(db, m.from_user.id, "tg_reg_daily")
     await state.set_state(TelegramOnboarding.tg_reg_daily)
-    await m.answer(get_text(lang, 'ASK_DAILY'), reply_markup=yes_no_kb('ob:daily', lang))
+    await m.answer(get_text(lang, 'ASK_DAILY'), reply_markup=yes_no_kb('ob:daily', lang), parse_mode=PARSE_MODE)
 
 @router.callback_query(TelegramOnboarding.tg_reg_daily, F.data.startswith('ob:daily:'))
 async def ob_daily_selected(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
