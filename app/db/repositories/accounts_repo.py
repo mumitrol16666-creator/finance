@@ -89,27 +89,32 @@ async def create_account(
     if existing:
         acc_id = existing[0]
         is_archived = existing[3]
-        if int(is_archived or 0) == 1:
+        if int(is_archived or 0) != 1:
+            raise ValueError('active_name_exists')
+        if await account_has_transactions(db, user_id, int(acc_id)):
+            raise ValueError('archived_name_exists')
+        await db.execute(
+            "UPDATE accounts SET balance=?, starting_balance=?, is_archived=0, updated_at=?, currency=?, is_saving=?, acc_type=?, interest_rate=?, accrual_period=?, last_interest_accrued_at=NULL, is_business=? WHERE user_id=? AND id=?",
+            (balance, balance, ts, currency, is_saving, acc_type, interest_rate, accrual_period, is_business, user_id, acc_id),
+        )
+        if balance != 0:
+            cur_lang = await db.execute("SELECT lang FROM settings WHERE user_id=? LIMIT 1", (user_id,))
+            row = await cur_lang.fetchone()
+            lang = row[0] if row else 'ru'
+            note = {
+                "ru": "Стартовый баланс",
+                "en": "Starting balance",
+                "kk": "Бастапқы баланс",
+            }.get(lang, "Стартовый баланс")
+
             await db.execute(
-                "UPDATE accounts SET balance=?, starting_balance=?, is_archived=0, updated_at=?, currency=?, is_saving=?, acc_type=?, interest_rate=?, accrual_period=?, last_interest_accrued_at=NULL, is_business=? WHERE user_id=? AND id=?",
-                (balance, balance, ts, currency, is_saving, acc_type, interest_rate, accrual_period, is_business, user_id, acc_id),
+                "INSERT INTO transactions(user_id, ts, type, amount, account_id, category_id, note, created_at) "
+                "VALUES(?,?,?,?,?,NULL,?,?)",
+                (user_id, ts, "starting_balance", balance, acc_id, note, ts),
             )
-            if balance != 0:
-                cur_lang = await db.execute("SELECT lang FROM settings WHERE user_id=? LIMIT 1", (user_id,))
-                row = await cur_lang.fetchone()
-                lang = row[0] if row else 'ru'
-                note = {
-                    "ru": "Стартовый баланс",
-                    "en": "Starting balance",
-                    "kk": "Бастапқы баланс",
-                }.get(lang, "Стартовый баланс")
-                
-                await db.execute(
-                    "INSERT INTO transactions(user_id, ts, type, amount, account_id, category_id, note, created_at) "
-                    "VALUES(?,?,?,?,?,NULL,?,?)",
-                    (user_id, ts, "starting_balance", balance, acc_id, note, ts),
-                )
-            return acc_id, 'restored'
+        return acc_id, 'restored'
+
+    if await has_active_account_with_name(db, user_id, name):
         raise ValueError('active_name_exists')
 
     cur = await db.execute(
@@ -139,7 +144,8 @@ async def create_account(
 
 
 async def rename_account(db: aiosqlite.Connection, user_id: int, account_id: int, new_name: str, ts: str):
-    if await has_active_account_with_name(db, user_id, new_name, exclude_account_id=account_id):
+    existing = await get_account_by_name(db, user_id, new_name)
+    if existing and int(existing[0]) != account_id:
         raise ValueError('active_name_exists')
     await db.execute(
         "UPDATE accounts SET name=?, updated_at=? WHERE user_id=? AND id=?",

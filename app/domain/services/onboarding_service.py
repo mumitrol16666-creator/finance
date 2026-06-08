@@ -22,7 +22,7 @@ async def save_currency(db: aiosqlite.Connection, user_id: int, currency: str):
 
 async def add_account(db: aiosqlite.Connection, user_id: int, name: str, balance: int):
     now = utcnow_iso()
-    acc_id = await create_account(db, user_id, name, balance, now)
+    acc_id, _status = await create_account(db, user_id, name, balance, now)
     await db.commit()
     return acc_id
 

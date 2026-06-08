@@ -598,11 +598,11 @@ async def _account_card_text(db: aiosqlite.Connection, user_id: int, account_id:
     return "\n".join(lines)
 
 
-def _account_archive_confirm_text(name: str, balance: int, lang: str) -> str:
+def _account_archive_confirm_text(name: str, balance: int, lang: str, currency: str = "KZT") -> str:
     return {
-        "ru": f"🗂 <b>Архивировать счёт</b>\n\nСчёт: <b>{escape(str(name))}</b>\nБаланс: <b>{_fmt_money(int(balance or 0))}</b>\n\nСчёт исчезнет из активных, но останется в архиве и его можно будет восстановить.",
-        "en": f"🗂 <b>Archive account</b>\n\nAccount: <b>{escape(str(name))}</b>\nBalance: <b>{_fmt_money(int(balance or 0))}</b>\n\nThe account will disappear from active ones, but it will remain in archive and can be restored.",
-        "kk": f"🗂 <b>Шотты архивке жіберу</b>\n\nШот: <b>{escape(str(name))}</b>\nБаланс: <b>{_fmt_money(int(balance or 0))}</b>\n\nШот белсенді тізімнен жоғалады, бірақ архивте қалады және оны қайта қалпына келтіруге болады.",
+        "ru": f"🗂 <b>Архивировать счёт</b>\n\nСчёт: <b>{escape(str(name))}</b>\nБаланс: <b>{_fmt_money(int(balance or 0), currency)}</b>\n\nСчёт исчезнет из активных, но останется в архиве и его можно будет восстановить.",
+        "en": f"🗂 <b>Archive account</b>\n\nAccount: <b>{escape(str(name))}</b>\nBalance: <b>{_fmt_money(int(balance or 0), currency)}</b>\n\nThe account will disappear from active ones, but it will remain in archive and can be restored.",
+        "kk": f"🗂 <b>Шотты архивке жіберу</b>\n\nШот: <b>{escape(str(name))}</b>\nБаланс: <b>{_fmt_money(int(balance or 0), currency)}</b>\n\nШот белсенді тізімнен жоғалады, бірақ архивте қалады және оны қайта қалпына келтіруге болады.",
     }.get(lang, "")
 
 
@@ -893,7 +893,7 @@ async def st_acc_view_archive(c: CallbackQuery, state: FSMContext, db: aiosqlite
         return
     await state.set_state(None)
     await state.update_data(settings_return_to="account_card", acc_id=acc_id, ui_scope=SETTINGS_SCOPE)
-    await _render_screen(c, state, _account_archive_confirm_text(acc[1], int(acc[2] or 0), lang), reply_markup=_account_archive_confirm_kb(acc_id, lang))
+    await _render_screen(c, state, _account_archive_confirm_text(acc[1], int(acc[2] or 0), lang, acc[4]), reply_markup=_account_archive_confirm_kb(acc_id, lang))
     await c.answer()
 
 
@@ -1057,9 +1057,9 @@ async def st_acc_view_balance(c: CallbackQuery, state: FSMContext, db: aiosqlite
         c,
         state,
         screen_text={
-            "ru": f"💰 <b>Новый баланс</b>\n\nСчёт: <b>{escape(str(acc[1]))}</b>\nТекущий баланс: <b>{_fmt_money(int(acc[2] or 0))}</b>",
-            "en": f"💰 <b>New balance</b>\n\nAccount: <b>{escape(str(acc[1]))}</b>\nCurrent balance: <b>{_fmt_money(int(acc[2] or 0))}</b>",
-            "kk": f"💰 <b>Жаңа баланс</b>\n\nШот: <b>{escape(str(acc[1]))}</b>\nАғымдағы баланс: <b>{_fmt_money(int(acc[2] or 0))}</b>",
+            "ru": f"💰 <b>Новый баланс</b>\n\nСчёт: <b>{escape(str(acc[1]))}</b>\nТекущий баланс: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>",
+            "en": f"💰 <b>New balance</b>\n\nAccount: <b>{escape(str(acc[1]))}</b>\nCurrent balance: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>",
+            "kk": f"💰 <b>Жаңа баланс</b>\n\nШот: <b>{escape(str(acc[1]))}</b>\nАғымдағы баланс: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>",
         }.get(lang),
         prompt_text={
             "ru": "Пример: <code>15000</code> или <code>-5000</code>",
@@ -1086,9 +1086,9 @@ async def st_acc_balance_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite
         c,
         state,
         screen_text={
-            "ru": f"💰 <b>Новый баланс</b>\n\nСчёт: <b>{escape(str(acc[1]))}</b>\nТекущий баланс: <b>{_fmt_money(int(acc[2] or 0))}</b>",
-            "en": f"💰 <b>New balance</b>\n\nAccount: <b>{escape(str(acc[1]))}</b>\nCurrent balance: <b>{_fmt_money(int(acc[2] or 0))}</b>",
-            "kk": f"💰 <b>Жаңа баланс</b>\n\nШот: <b>{escape(str(acc[1]))}</b>\nАғымдағы баланс: <b>{_fmt_money(int(acc[2] or 0))}</b>",
+            "ru": f"💰 <b>Новый баланс</b>\n\nСчёт: <b>{escape(str(acc[1]))}</b>\nТекущий баланс: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>",
+            "en": f"💰 <b>New balance</b>\n\nAccount: <b>{escape(str(acc[1]))}</b>\nCurrent balance: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>",
+            "kk": f"💰 <b>Жаңа баланс</b>\n\nШот: <b>{escape(str(acc[1]))}</b>\nАғымдағы баланс: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>",
         }.get(lang),
         prompt_text={
             "ru": "Пример: <code>15000</code> или <code>-5000</code>",
@@ -1107,7 +1107,7 @@ async def st_acc_add(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connecti
     
     from app.domain.services.access_service import get_user_context
     ctx = await get_user_context(db, c.from_user.id)
-    if not ctx.full_access:
+    if ctx.mode != "full":
         active_count = await count_accounts(db, c.from_user.id)
         if active_count >= 2:
             if lang == "en":
@@ -1239,12 +1239,23 @@ async def st_acc_add_balance(m: Message, state: FSMContext, db: aiosqlite.Connec
 
 
 @router.callback_query(SettingsFlow.add_currency, F.data.startswith("acc:cur:"))
-async def st_acc_add_currency(c: CallbackQuery, state: FSMContext):
+async def st_acc_add_currency(c: CallbackQuery, state: FSMContext, db: aiosqlite.Connection):
     currency = c.data.split(":")[-1]
+    lang = (await state.get_data()).get("lang", "ru")
+    from app.domain.services.access_service import get_user_context
+    ctx = await get_user_context(db, c.from_user.id)
+    if currency != "KZT" and ctx.mode != "full":
+        msg = {
+            "ru": "Валютные счета доступны только в Premium версии.",
+            "en": "Foreign-currency accounts are only available in Premium.",
+            "kk": "Валюталық шоттар тек Premium нұсқасында қолжетімді.",
+        }.get(lang)
+        await c.answer(msg, show_alert=True)
+        return
+
     await state.update_data(add_currency=currency)
     await state.set_state(SettingsFlow.add_type)
     
-    lang = (await state.get_data()).get("lang", "ru")
     text = {
         "ru": "📌 <b>Тип счёта</b>\n\nОбычные счета учитываются в общем балансе. Копилки (сбережения) спрятаны из общего итога, чтобы вы видели только свободные деньги.",
         "en": "📌 <b>Account type</b>\n\nRegular accounts are included in total balance. Savings (goals) are hidden from total to show only free cash.",
@@ -1279,6 +1290,22 @@ async def st_acc_add_type(c: CallbackQuery, state: FSMContext, db: aiosqlite.Con
                 "en": "⚠️ <b>An active account with this name already exists.</b>\n\nPlease enter a different, unique name for this account.",
                 "kk": "⚠️ <b>Осындай атаумен белсенді шот бар.</b>\n\nБұл шот үшін басқа, бірегей атауды енгізіңіз.",
             }.get(lang, "⚠️ Счёт с таким названием уже существует.")
+            await state.update_data(add_name=None)
+            await _enter_input_mode(
+                c,
+                state,
+                screen_text=error_screen,
+                prompt_text=_s(lang, "example_kaspi"),
+                next_state=SettingsFlow.add_name,
+                return_to="accounts_menu",
+            )
+            return
+        if str(e) == "archived_name_exists":
+            error_screen = {
+                "ru": "⚠️ <b>Такое название уже есть в архиве.</b>\n\nУ архивного счёта есть история, поэтому я не буду перетирать его новым балансом. Восстанови счёт из архива или введи другое название.",
+                "en": "⚠️ <b>This name already exists in archive.</b>\n\nThe archived account has history, so I will not overwrite it with a new balance. Restore it from archive or enter a different name.",
+                "kk": "⚠️ <b>Бұл атау архивте бар.</b>\n\nАрхивтегі шотта тарих бар, сондықтан оны жаңа баланспен қайта жазбаймын. Архивтен қалпына келтіріңіз немесе басқа атау енгізіңіз.",
+            }.get(lang, "⚠️ Такое название уже есть в архиве.")
             await state.update_data(add_name=None)
             await _enter_input_mode(
                 c,
@@ -1368,10 +1395,10 @@ async def st_acc_rename_new(m: Message, state: FSMContext, db: aiosqlite.Connect
         if str(e) == "active_name_exists":
             lang = (await state.get_data()).get("lang", "ru")
             msg = {
-                "ru": "⚠️ <b>Активный счёт с таким названием уже существует.</b>\n\nВведи другое название для этого счёта:",
-                "en": "⚠️ <b>An active account with this name already exists.</b>\n\nPlease enter a different name for this account:",
-                "kk": "⚠️ <b>Осындай атаумен белсенді шот бар.</b>\n\nБұл шот үшін басқа атау енгізіңіз:",
-            }.get(lang, "⚠️ Активный счёт с таким названием уже существует.")
+                "ru": "⚠️ <b>Счёт с таким названием уже существует.</b>\n\nВведи другое название для этого счёта:",
+                "en": "⚠️ <b>An account with this name already exists.</b>\n\nPlease enter a different name for this account:",
+                "kk": "⚠️ <b>Осындай атаумен шот бар.</b>\n\nБұл шот үшін басқа атау енгізіңіз:",
+            }.get(lang, "⚠️ Счёт с таким названием уже существует.")
             await m.answer(msg, parse_mode=PARSE_MODE)
             return
         raise
@@ -1485,7 +1512,7 @@ async def st_acc_archive_pick(c: CallbackQuery, state: FSMContext, db: aiosqlite
         return
     await state.set_state(None)
     await state.update_data(settings_return_to="accounts_menu", acc_id=acc_id, ui_scope=SETTINGS_SCOPE)
-    await _render_screen(c, state, _account_archive_confirm_text(acc[1], int(acc[2] or 0), lang), reply_markup=_account_archive_confirm_kb(acc_id, lang))
+    await _render_screen(c, state, _account_archive_confirm_text(acc[1], int(acc[2] or 0), lang, acc[4]), reply_markup=_account_archive_confirm_kb(acc_id, lang))
     await c.answer()
 
 
@@ -1516,6 +1543,34 @@ async def st_acc_view_currency_set(c: CallbackQuery, state: FSMContext, db: aios
     parts = c.data.split(":")
     acc_id = int(parts[3])
     currency = parts[4]
+    lang = await get_lang(db, c.from_user.id)
+    acc = await get_account(db, c.from_user.id, acc_id)
+    if not acc:
+        await c.answer({
+            "ru": "Счёт не найден.",
+            "en": "Account not found.",
+            "kk": "Шот табылмады.",
+        }.get(lang), show_alert=True)
+        return
+
+    current_currency = str(acc[4] or "KZT").upper()
+    if currency != current_currency and await account_has_transactions(db, c.from_user.id, acc_id):
+        await c.answer({
+            "ru": "Валюту можно менять только у счёта без операций.",
+            "en": "Currency can only be changed for an account without transactions.",
+            "kk": "Валютаны тек операциялары жоқ шотта өзгертуге болады.",
+        }.get(lang), show_alert=True)
+        return
+
+    from app.domain.services.access_service import get_user_context
+    ctx = await get_user_context(db, c.from_user.id)
+    if currency != current_currency and currency != "KZT" and ctx.mode != "full":
+        await c.answer({
+            "ru": "Валютные счета доступны только в Premium версии.",
+            "en": "Foreign-currency accounts are only available in Premium.",
+            "kk": "Валюталық шоттар тек Premium нұсқасында қолжетімді.",
+        }.get(lang), show_alert=True)
+        return
     
     await update_account_currency(db, c.from_user.id, acc_id, currency, now_iso())
     await db.commit()
@@ -1551,9 +1606,9 @@ async def st_acc_archived_pick(c: CallbackQuery, state: FSMContext, db: aiosqlit
 
     lang = await get_lang(db, c.from_user.id)
     title = {
-        "ru": f"🗄 <b>{escape(str(acc[1]))}</b>\n\nБаланс: <b>{_fmt_money(int(acc[2] or 0))}</b>\n\nВыбери действие.",
-        "en": f"🗄 <b>{escape(str(acc[1]))}</b>\n\nBalance: <b>{_fmt_money(int(acc[2] or 0))}</b>\n\nChoose an action.",
-        "kk": f"🗄 <b>{escape(str(acc[1]))}</b>\n\nБаланс: <b>{_fmt_money(int(acc[2] or 0))}</b>\n\nӘрекетті таңдаңыз.",
+        "ru": f"🗄 <b>{escape(str(acc[1]))}</b>\n\nБаланс: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>\n\nВыбери действие.",
+        "en": f"🗄 <b>{escape(str(acc[1]))}</b>\n\nBalance: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>\n\nChoose an action.",
+        "kk": f"🗄 <b>{escape(str(acc[1]))}</b>\n\nБаланс: <b>{_fmt_money(int(acc[2] or 0), acc[4])}</b>\n\nӘрекетті таңдаңыз.",
     }.get(lang)
     await _render_screen(c, state, title, reply_markup=archived_account_actions_kb(acc_id, lang))
     await c.answer()
@@ -1567,7 +1622,7 @@ async def st_acc_restore(c: CallbackQuery, state: FSMContext, db: aiosqlite.Conn
 
     from app.domain.services.access_service import get_user_context
     ctx = await get_user_context(db, c.from_user.id)
-    if not ctx.full_access:
+    if ctx.mode != "full":
         active_count = await count_accounts(db, c.from_user.id)
         if active_count >= 2:
             if lang == "en":
@@ -2557,4 +2612,3 @@ async def set_password_callback(c: CallbackQuery, state: FSMContext, db: aiosqli
     sent = await c.message.answer(prompt, parse_mode="HTML", reply_markup=cancel_kb(lang))
     await state.update_data(prompt_message_id=sent.message_id)
     await c.answer()
-

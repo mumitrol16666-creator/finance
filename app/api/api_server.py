@@ -15,11 +15,12 @@ from app.config.settings import settings
 from app.db.connection import get_db
 from app.db.migrate import run_migrations
 from app.db.repositories.users_repo import get_onboarded
-from app.db.repositories.accounts_repo import list_accounts, apply_balance_delta
+from app.db.repositories.accounts_repo import list_accounts, apply_balance_delta, count_accounts
 from app.db.repositories.categories_repo import list_categories
 from app.db.repositories.tx_repo import create_tx, create_transfer
-from app.domain.services.access_service import can_use_feature
+from app.domain.services.access_service import can_use_feature, get_user_context
 from app.domain.auth import hash_password, verify_password
+from app.domain.validators import clean_name
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -735,7 +736,6 @@ async def add_transaction(req: TransactionCreateRequest, user_id: int = Depends(
                 raise HTTPException(status_code=404, detail="Category not found")
 
         if req.kind == "transfer":
-            from app.domain.services.access_service import can_use_feature, get_user_context
             if not await can_use_feature(db, user_id, "transfer"):
                 raise HTTPException(status_code=403, detail="Функция перевода доступна только в Premium версии")
             if not req.to_account_id:
@@ -1065,10 +1065,34 @@ async def post_analytics_audit(
 async def add_account(req: AccountCreateRequest, user_id: int = Depends(get_current_user)):
     now_str = datetime.now(timezone.utc).isoformat()
     currency = normalize_currency(req.currency)
+    name = clean_name(req.name)
+    is_saving = req.is_saving if req.is_saving is not None else 0
+    acc_type = req.acc_type or "regular"
+    interest_rate = req.interest_rate if req.interest_rate is not None else 0.0
+    accrual_period = req.accrual_period or "month"
+    is_business = req.is_business if req.is_business is not None else 0
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Название должно быть от 2 до 24 символов")
+    if is_saving not in (0, 1):
+        raise HTTPException(status_code=400, detail="is_saving must be 0 or 1")
+    if is_business not in (0, 1):
+        raise HTTPException(status_code=400, detail="is_business must be 0 or 1")
+    if acc_type not in {"regular", "saving", "deposit"}:
+        raise HTTPException(status_code=400, detail="Unsupported account type")
+    if accrual_period not in {"month", "year"}:
+        raise HTTPException(status_code=400, detail="Unsupported accrual period")
+    if not math.isfinite(interest_rate) or interest_rate < 0:
+        raise HTTPException(status_code=400, detail="interest_rate must be non-negative")
+
     async with get_db() as db:
         # Check premium logic for non-KZT currency
-        from app.domain.services.access_service import get_user_context
         ctx = await get_user_context(db, user_id)
+        if ctx.mode != "full" and await count_accounts(db, user_id) >= 2:
+            raise HTTPException(
+                status_code=403,
+                detail="В бесплатной версии доступно не более 2 активных счетов"
+            )
         if currency != "KZT" and ctx.mode != "full":
             raise HTTPException(
                 status_code=403,
@@ -1078,19 +1102,21 @@ async def add_account(req: AccountCreateRequest, user_id: int = Depends(get_curr
         try:
             from app.db.repositories.accounts_repo import create_account
             acc_id, status = await create_account(
-                db, user_id, req.name, req.balance, now_str,
+                db, user_id, name, req.balance, now_str,
                 currency=currency,
-                is_saving=req.is_saving or 0,
-                acc_type=req.acc_type or "regular",
-                interest_rate=req.interest_rate or 0.0,
-                accrual_period=req.accrual_period or "month",
-                is_business=req.is_business or 0
+                is_saving=is_saving,
+                acc_type=acc_type,
+                interest_rate=interest_rate,
+                accrual_period=accrual_period,
+                is_business=is_business
             )
             await db.commit()
             return {"status": status, "id": acc_id}
         except ValueError as e:
             if str(e) == 'active_name_exists':
                 raise HTTPException(status_code=400, detail="Счёт с таким именем уже существует")
+            if str(e) == 'archived_name_exists':
+                raise HTTPException(status_code=400, detail="Счёт с таким именем уже есть в архиве и содержит историю. Восстановите его из архива или выберите другое название")
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/debts")
@@ -1563,14 +1589,29 @@ async def export_report_endpoint(
 async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_id: int = Depends(get_current_user)):
     async with get_db() as db:
         now_str = datetime.now(timezone.utc).isoformat()
+        from app.db.repositories.accounts_repo import get_account
+
+        current_account = await get_account(db, user_id, acc_id)
+        if not current_account:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        if req.is_saving is not None and req.is_saving not in (0, 1):
+            raise HTTPException(status_code=400, detail="is_saving must be 0 or 1")
+        if req.is_archived is not None and req.is_archived not in (0, 1):
+            raise HTTPException(status_code=400, detail="is_archived must be 0 or 1")
+        if req.is_business is not None and req.is_business not in (0, 1):
+            raise HTTPException(status_code=400, detail="is_business must be 0 or 1")
+        if req.acc_type is not None and req.acc_type not in {"regular", "saving", "deposit"}:
+            raise HTTPException(status_code=400, detail="Unsupported account type")
+        if req.accrual_period is not None and req.accrual_period not in {"month", "year"}:
+            raise HTTPException(status_code=400, detail="Unsupported accrual period")
+        if req.interest_rate is not None and (not math.isfinite(req.interest_rate) or req.interest_rate < 0):
+            raise HTTPException(status_code=400, detail="interest_rate must be non-negative")
 
         normalized_currency = None
         if req.currency is not None:
             normalized_currency = normalize_currency(req.currency)
             from app.db.repositories.accounts_repo import get_account, account_has_transactions
-            current_account = await get_account(db, user_id, acc_id)
-            if not current_account:
-                raise HTTPException(status_code=404, detail="Account not found")
             current_currency = normalize_currency(current_account[4])
             if normalized_currency != current_currency and await account_has_transactions(db, user_id, acc_id):
                 raise HTTPException(
@@ -1580,11 +1621,12 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
         
         # 1. Update name
         if req.name is not None:
-            from app.db.repositories.accounts_repo import rename_account, has_active_account_with_name
-            name = req.name.strip()
+            from app.db.repositories.accounts_repo import rename_account, get_account_by_name
+            name = clean_name(req.name)
             if not name:
-                raise HTTPException(status_code=400, detail="Название не может быть пустым")
-            if await has_active_account_with_name(db, user_id, name, exclude_account_id=acc_id):
+                raise HTTPException(status_code=400, detail="Название должно быть от 2 до 24 символов")
+            existing = await get_account_by_name(db, user_id, name)
+            if existing and int(existing[0]) != acc_id:
                 raise HTTPException(status_code=400, detail="Счёт с таким названием уже существует")
             await rename_account(db, user_id, acc_id, name, now_str)
             
@@ -1603,19 +1645,19 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
                     lang = lang_row[0] if lang_row else 'ru'
                     
                     sign = "+" if delta > 0 else ""
+                    currency = normalize_currency(acc[4])
                     note = {
-                        "ru": f"Корректировка баланса ({sign}{delta} ₸)",
-                        "en": f"Balance adjustment ({sign}{delta} ₸)",
-                        "kk": f"Балансты түзету ({sign}{delta} ₸)"
-                    }.get(lang, f"Корректировка баланса ({sign}{delta} ₸)")
+                        "ru": f"Корректировка баланса ({sign}{delta} {currency})",
+                        "en": f"Balance adjustment ({sign}{delta} {currency})",
+                        "kk": f"Балансты түзету ({sign}{delta} {currency})"
+                    }.get(lang, f"Корректировка баланса ({sign}{delta} {currency})")
                     
-                    tx_type = 'income' if delta > 0 else 'expense'
                     from app.db.repositories.tx_repo import create_tx
                     await create_tx(
                         db=db,
                         user_id=user_id,
                         ts_iso=now_str,
-                        tx_type=tx_type,
+                        tx_type="adjustment",
                         amount=delta,
                         account_id=acc_id,
                         category_id=None,
@@ -1639,7 +1681,19 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
             if req.is_archived == 1:
                 await archive_account(db, user_id, acc_id, now_str)
             else:
-                await restore_account(db, user_id, acc_id, now_str)
+                if int(current_account[3] or 0) == 1:
+                    ctx = await get_user_context(db, user_id)
+                    if ctx.mode != "full" and await count_accounts(db, user_id) >= 2:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="В бесплатной версии доступно не более 2 активных счетов"
+                        )
+                    try:
+                        await restore_account(db, user_id, acc_id, now_str)
+                    except ValueError as e:
+                        if str(e) == "active_name_exists":
+                            raise HTTPException(status_code=400, detail="Счёт с таким названием уже существует")
+                        raise
 
         # 5. Update type, rate, period, business, and currency fields
         if req.acc_type is not None:
@@ -1665,7 +1719,7 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
         if normalized_currency is not None:
             from app.domain.services.access_service import get_user_context
             ctx = await get_user_context(db, user_id)
-            if normalized_currency != "KZT" and ctx.mode != "full":
+            if normalized_currency != current_currency and normalized_currency != "KZT" and ctx.mode != "full":
                 raise HTTPException(
                     status_code=403,
                     detail="Использование валютных счетов доступно только в Premium версии"
@@ -1681,7 +1735,9 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
 @app.delete("/api/accounts/{acc_id}")
 async def delete_account_endpoint(acc_id: int, user_id: int = Depends(get_current_user)):
     async with get_db() as db:
-        from app.db.repositories.accounts_repo import archive_account
+        from app.db.repositories.accounts_repo import archive_account, get_account
+        if not await get_account(db, user_id, acc_id):
+            raise HTTPException(status_code=404, detail="Account not found")
         now_str = datetime.now(timezone.utc).isoformat()
         await archive_account(db, user_id, acc_id, now_str)
         await db.commit()
