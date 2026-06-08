@@ -30,8 +30,8 @@ def parse_positive_int(text: str, max_value: int = 9_999_999) -> int | None:
     """Legacy entry point — delegates to ``parse_money``.
 
     Kept so existing handlers keep working unchanged; new handlers should call
-    ``parse_money(text, currency=user_currency)`` directly so cents/тиын
-    are supported per-user.
+    ``parse_money(text, currency=user_currency)`` directly so the selected
+    currency rules are applied consistently.
     """
     return parse_money(text, currency="KZT", max_minor=max_value)
 

@@ -20,6 +20,7 @@ from app.db.repositories.categories_repo import list_categories
 from app.db.repositories.tx_repo import create_tx, create_transfer
 from app.domain.services.access_service import can_use_feature, get_user_context
 from app.domain.auth import hash_password, verify_password
+from app.domain.money import fmt_exchange_rate
 from app.domain.validators import clean_name
 
 @asynccontextmanager
@@ -187,7 +188,7 @@ async def sum_converted_amounts(
     return total
 
 class TransactionCreateRequest(BaseModel):
-    amount: int  # in minor units (e.g. 100 for 1.00 KZT)
+    amount: int  # whole currency units
     kind: str  # 'expense', 'income', 'transfer'
     account_id: int
     category_id: Optional[int] = None
@@ -765,7 +766,7 @@ async def add_transaction(req: TransactionCreateRequest, user_id: int = Depends(
                     from app.services.currency_service import get_exchange_rate
                     rate = await get_exchange_rate(db, from_curr, to_curr)
                 to_amount = int(round(req.amount * rate))
-                conversion_note = f"{req.note or ''} (Курс: {rate:.4f})".strip()
+                conversion_note = f"{req.note or ''} (Курс: {fmt_exchange_rate(from_curr, to_curr, rate)})".strip()
             else:
                 to_amount = req.amount
                 conversion_note = req.note

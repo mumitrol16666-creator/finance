@@ -640,7 +640,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                                             child: Row(
                                               children: [
                                                 Text(
-                                                  '1 ${cu.currencySymbol(fromAcc.currency)} = ${rateToUse.toStringAsFixed(4)} ${cu.currencySymbol(toAcc.currency)}',
+                                                  cu.formatDirectExchangeRate(fromAcc.currency, toAcc.currency, rateToUse),
                                                   style: TextStyle(
                                                     color: _isCustomRateActive ? AppTheme.accentBlue : Colors.white70,
                                                     fontSize: 12,
@@ -1515,7 +1515,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   }
 
   void _showEditTransferRateDialog(BuildContext context, String fromCurrency, String toCurrency, double currentRate) {
-    final controller = TextEditingController(text: currentRate.toStringAsFixed(4));
+    final invertForDisplay = currentRate < 1;
+    final displayFromCurrency = invertForDisplay ? toCurrency : fromCurrency;
+    final displayToCurrency = invertForDisplay ? fromCurrency : toCurrency;
+    final displayRate = invertForDisplay ? 1 / currentRate : currentRate;
+    final displayRateText = displayRate.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+    final controller = TextEditingController(text: displayRateText);
     showDialog(
       context: context,
       builder: (context) {
@@ -1531,7 +1536,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Укажите сколько $toCurrency стоит 1 $fromCurrency:',
+                'Укажите сколько $displayToCurrency стоит 1 $displayFromCurrency:',
                 style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 12),
@@ -1540,7 +1545,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  suffixText: toCurrency,
+                  suffixText: displayToCurrency,
                   suffixStyle: const TextStyle(color: AppTheme.textSecondary),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -1565,10 +1570,10 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () {
-                final double? newRate = double.tryParse(controller.text.replaceAll(',', '.'));
-                if (newRate != null && newRate > 0) {
+                final double? enteredRate = double.tryParse(controller.text.replaceAll(',', '.'));
+                if (enteredRate != null && enteredRate > 0) {
                   setState(() {
-                    _customTransferRate = newRate;
+                    _customTransferRate = invertForDisplay ? 1 / enteredRate : enteredRate;
                     _isCustomRateActive = true;
                   });
                   Navigator.pop(context);

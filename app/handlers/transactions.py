@@ -16,7 +16,7 @@ from aiogram.fsm.context import FSMContext
 
 from app.fsm.states import ExpenseFlow, IncomeFlow, TransferFlow
 from app.domain.validators import parse_positive_int, clean_note
-from app.domain.money import parse_money_for_user
+from app.domain.money import fmt_exchange_rate, parse_money_for_user
 from app.domain.services.ai_service import simple_feedback
 from app.domain.services.accounting_service import (
     get_balance_after,
@@ -2230,7 +2230,7 @@ async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext)
                 f"📥 To: <b>{escape(str(data['to_name']))}</b> ({to_currency})",
                 "",
                 f"💰 Debit: <b>{fmt_money(int(data['amount']), from_currency)}</b>",
-                f"📊 Rate: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📊 Rate: {fmt_exchange_rate(from_currency, to_currency, rate)}",
                 f"📥 Credit: <b>{fmt_money(converted_amount, to_currency)}</b>",
                 f"📊 Balance: {fmt_money(int(from_before), from_currency)} → {fmt_money(int(from_after), from_currency)}",
             ]
@@ -2242,7 +2242,7 @@ async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext)
                 f"📥 Қайда: <b>{escape(str(data['to_name']))}</b> ({to_currency})",
                 "",
                 f"💰 Шығын: <b>{fmt_money(int(data['amount']), from_currency)}</b>",
-                f"📊 Бағам: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📊 Бағам: {fmt_exchange_rate(from_currency, to_currency, rate)}",
                 f"📥 Түседі: <b>{fmt_money(converted_amount, to_currency)}</b>",
                 f"📊 Баланс: {fmt_money(int(from_before), from_currency)} → {fmt_money(int(from_after), from_currency)}",
             ]
@@ -2254,7 +2254,7 @@ async def _tr_render_confirm(target: Message | CallbackQuery, state: FSMContext)
                 f"📥 Куда: <b>{escape(str(data['to_name']))}</b> ({to_currency})",
                 "",
                 f"💰 Списание: <b>{fmt_money(int(data['amount']), from_currency)}</b>",
-                f"📊 Курс: 1 {from_currency} = {rate:.4f} {to_currency}",
+                f"📊 Курс: {fmt_exchange_rate(from_currency, to_currency, rate)}",
                 f"📥 Зачисление: <b>{fmt_money(converted_amount, to_currency)}</b>",
                 f"📊 Баланс: {fmt_money(int(from_before), from_currency)} → {fmt_money(int(from_after), from_currency)}",
             ]
@@ -2369,9 +2369,9 @@ async def tr_to(c: CallbackQuery, state: FSMContext, db):
     converted_amount = int(data["amount"])
 
     if from_currency != to_currency:
-        from app.services.currency import get_exchange_rate
+        from app.services.currency_service import get_exchange_rate
         try:
-            rate = await get_exchange_rate(from_currency, to_currency)
+            rate = await get_exchange_rate(db, from_currency, to_currency)
             converted_amount = int(round(int(data["amount"]) * rate))
         except Exception:
             lang = data.get("lang", "ru")
@@ -2541,7 +2541,7 @@ async def _tr_save(ctx: Message | CallbackQuery, state: FSMContext, db):
             f"{_i18n_t(lang, 'TX_FROM')}: <b>{escape(str(data['from_name']))} ({from_currency})</b>\n"
             f"{_i18n_t(lang, 'TX_TO')}: <b>{escape(str(data['to_name']))} ({to_currency})</b>\n"
             f"📊 {_i18n_t(lang, 'TX_SUM')}: <b>{fmt_money(int(data['amount']), from_currency)}</b>\n"
-            f"📈 {rate_lbl}: <b>1 {from_currency} = {rate:.4f} {to_currency}</b>\n"
+            f"📈 {rate_lbl}: <b>{fmt_exchange_rate(from_currency, to_currency, rate)}</b>\n"
             f"📥 {credited_lbl}: <b>{fmt_money(converted_amount, to_currency)}</b>\n\n"
             f"📊 {escape(str(data['from_name']))}: <b>{from_balance_txt}</b>\n"
             f"📊 {escape(str(data['to_name']))}: <b>{to_balance_txt}</b>\n"

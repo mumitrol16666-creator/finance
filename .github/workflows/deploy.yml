@@ -32,7 +32,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Deploy via SSH ──────────────────────────────────────────────
+      # ── 2. Build the Flutter web app from source ──────────────────────
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Flutter web app
+        working-directory: mobile_app
+        run: |
+          flutter pub get
+          flutter build web --release
+
+      # ── 3. Deploy backend via SSH ──────────────────────────────────────
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -152,4 +165,33 @@ jobs:
             ps aux | grep python || true
 
             trap - ERR
+            rm -rf /tmp/finance-web-next
             echo "✓ Deploy complete"
+
+      # ── 4. Upload the freshly built web app ───────────────────────────
+      - name: Upload Flutter web build
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.PORT || 22 }}
+          source: "mobile_app/build/web/*"
+          target: "/tmp/finance-web-next"
+          strip_components: 3
+          overwrite: true
+
+      - name: Activate Flutter web build
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.PORT || 22 }}
+          script: |
+            set -e
+            rm -rf /opt/finance-bot/mobile_app/build/web
+            mkdir -p /opt/finance-bot/mobile_app/build
+            mv /tmp/finance-web-next /opt/finance-bot/mobile_app/build/web
+            sudo systemctl restart finance-web
+            curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8080/ >/dev/null
