@@ -10,13 +10,6 @@ const Map<String, String> currencySymbols = {
   'RUB': '₽',
 };
 
-const Map<String, String> currencyLocales = {
-  'KZT': 'kk_KZ',
-  'USD': 'en_US',
-  'EUR': 'de_DE',
-  'RUB': 'ru_RU',
-};
-
 const Map<String, String> currencyFlags = {
   'KZT': '🇰🇿',
   'USD': '🇺🇸',
@@ -35,9 +28,7 @@ const Map<String, String> currencyNames = {
 /// E.g. formatCurrency(250000, 'KZT') => '250 000 ₸'
 String formatCurrency(int amount, String currency) {
   final symbol = currencySymbols[currency.toUpperCase()] ?? currency;
-  final locale = currencyLocales[currency.toUpperCase()] ?? 'kk_KZ';
-  final formatter = NumberFormat.currency(locale: locale, symbol: symbol, decimalDigits: 0);
-  return formatter.format(amount);
+  return '${formatAmount(amount)} $symbol';
 }
 
 /// Format an integer amount with a compact form (no symbol, just number).
@@ -80,7 +71,7 @@ int? convertCurrency(int amount, String fromCurrency, String toCurrency, Map<Str
 }
 
 /// Format a compact currency breakdown string.
-/// E.g. '$1 200 · €800 · ₽15 000'
+/// E.g. '1 200 $ · 800 € · 15 000 ₽'
 String formatCurrencyBreakdown(Map<String, int> balancesByCurrency, {String? excludeCurrency}) {
   final parts = <String>[];
   for (final entry in balancesByCurrency.entries) {
@@ -88,7 +79,7 @@ String formatCurrencyBreakdown(Map<String, int> balancesByCurrency, {String? exc
     if (entry.value == 0) continue;
     final symbol = currencySymbols[entry.key] ?? entry.key;
     final formatted = formatAmount(entry.value.abs());
-    parts.add('$symbol$formatted');
+    parts.add('$formatted $symbol');
   }
   return parts.join(' · ');
 }
@@ -111,4 +102,23 @@ String formatExchangeRate(String fromCurrency, String toCurrency, Map<String, do
     final inverse = 1.0 / rate;
     return '1 $toSymbol = ${inverse.toStringAsFixed(inverse > 100 ? 0 : 2)} $fromSymbol';
   }
+}
+
+/// Format a direct conversion rate in the readable direction.
+/// For example, KZT -> USD at 0.0021 is shown as `1 $ = 476.19 ₸`.
+String formatDirectExchangeRate(String fromCurrency, String toCurrency, double rate) {
+  if (!rate.isFinite || rate <= 0) return '—';
+
+  var displayFrom = fromCurrency.toUpperCase();
+  var displayTo = toCurrency.toUpperCase();
+  var displayRate = rate;
+  if (displayRate < 1) {
+    final previousFrom = displayFrom;
+    displayFrom = displayTo;
+    displayTo = previousFrom;
+    displayRate = 1 / displayRate;
+  }
+
+  final rateText = displayRate.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+  return '1 ${currencySymbol(displayFrom)} = $rateText ${currencySymbol(displayTo)}';
 }

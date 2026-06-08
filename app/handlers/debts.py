@@ -94,7 +94,7 @@ async def _parse_money(db, user_id: int, text: str | None) -> int | None:
     """Parse amount using the user's currency scale.
 
     Backward-compatible name; now async so we can fetch the user's currency.
-    Returns minor units (1 KZT == 1, 1 USD == 100).
+    Returns whole currency units.
     """
     from app.domain.money import parse_money_for_user
     return await parse_money_for_user(db, user_id, text)

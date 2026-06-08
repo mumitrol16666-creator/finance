@@ -1,8 +1,7 @@
 """Money parsing and formatting — single source of truth.
 
-Amounts are stored in the ledger as INTEGER minor units (1 unit == 1 KZT/RUB/UZS,
-1 cent for USD/EUR). The scale per currency is centralized in ``CURRENCY_SCALE``
-so the bot can be migrated to fractional currencies without touching call sites.
+Amounts are stored in the ledger as whole currency units. This matches the
+mobile app's integer amount model and keeps bot/app balances identical.
 
 The parser accepts the formats real users type:
 - "500", "1000"
@@ -30,9 +29,9 @@ CURRENCY_SCALE: dict[str, int] = {
     "RUB": 1,
     "UZS": 1,
     "KGS": 1,
-    "USD": 100,
-    "EUR": 100,
-    "GBP": 100,
+    "USD": 1,
+    "EUR": 1,
+    "GBP": 1,
 }
 
 CURRENCY_SYMBOL: dict[str, str] = {
@@ -178,6 +177,18 @@ def fmt_money(amount: int | None, currency: str | None = DEFAULT_CURRENCY, *, wi
 def fmt_money_compact(amount: int | None, currency: str | None = DEFAULT_CURRENCY) -> str:
     """Compact form for inline buttons / balances where space is precious."""
     return fmt_money(amount, currency)
+
+
+def fmt_exchange_rate(from_currency: str, to_currency: str, rate: float) -> str:
+    """Format a direct rate in the readable direction, avoiding tiny decimals."""
+    from_code = (from_currency or DEFAULT_CURRENCY).upper()
+    to_code = (to_currency or DEFAULT_CURRENCY).upper()
+    if rate <= 0:
+        return "—"
+    if rate < 1:
+        from_code, to_code, rate = to_code, from_code, 1 / rate
+    rate_text = f"{rate:.2f}".rstrip("0").rstrip(".")
+    return f"1 {from_code} = {rate_text} {to_code}"
 
 
 async def get_user_currency(db: aiosqlite.Connection, user_id: int) -> str:
