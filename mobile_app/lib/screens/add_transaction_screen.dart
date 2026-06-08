@@ -7,7 +7,9 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../utils/currency_utils.dart' as cu;
 
 class AddTransactionScreen extends StatefulWidget {
-  const AddTransactionScreen({super.key});
+  final bool showTutorialHint;
+
+  const AddTransactionScreen({super.key, this.showTutorialHint = false});
 
   @override
   State<AddTransactionScreen> createState() => _AddTransactionScreenState();
@@ -399,6 +401,29 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.showTutorialHint) ...[
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.primary.withOpacity(0.45)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.school_rounded, color: AppTheme.primary, size: 20),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Выберите тип операции, введите сумму, укажите счёт и нажмите «Сохранить операцию».',
+                      style: TextStyle(color: AppTheme.textPrimary, fontSize: 11, height: 1.3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           // Scrollable fields to prevent keyboard overlap/overflow
           Expanded(
             child: SingleChildScrollView(

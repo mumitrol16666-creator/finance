@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme.dart';
+import 'core/tutorial_controller.dart';
 import 'providers/app_state.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
@@ -10,6 +11,7 @@ import 'screens/add_transaction_screen.dart';
 import 'screens/ai_consultant_screen.dart';
 import 'screens/analytics_screen.dart';
 import 'screens/hub_screen.dart';
+import 'widgets/guided_tour_overlay.dart';
 
 void main() {
   runApp(
@@ -102,7 +104,12 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
   int _currentIndex = 0;
   late PageController _pageController;
   bool _plannedAssistantShown = false;
-  int _tutorialStep = 0;
+  int _tutorialStep = -1;
+  final GlobalKey _overviewKey = GlobalKey();
+  final GlobalKey _analyticsKey = GlobalKey();
+  final GlobalKey _aiKey = GlobalKey();
+  final GlobalKey _servicesKey = GlobalKey();
+  final GlobalKey _addKey = GlobalKey();
 
   final List<Widget> _screens = [
     const DashboardScreen(),
@@ -115,6 +122,7 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
+    TutorialController.requests.addListener(_restartTutorial);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _showPlannedAssistant();
       await _checkInteractiveTutorial();
@@ -123,14 +131,14 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
 
   Future<void> _checkInteractiveTutorial() async {
     final prefs = await SharedPreferences.getInstance();
-    if ((prefs.getBool('onboarding_tutorial_shown') ?? false) || !mounted) return;
+    if ((prefs.getBool('guided_tutorial_v2_shown') ?? false) || !mounted) return;
     final start = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.surface,
-        title: const Text('Быстрое обучение'),
-        content: const Text('Вместе внесем первую операцию, затем откроем раздел сервисов.'),
+        title: const Text('Познакомимся с FinTrack'),
+        content: const Text('Покажем основные разделы, откроем форму операции и объясним, где находятся инструменты. Это займет меньше минуты.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Пропустить')),
           ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Начать')),
@@ -138,19 +146,41 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
       ),
     );
     if (start == true && mounted) {
-      setState(() => _tutorialStep = 1);
+      _showTutorialStep(0);
     } else {
-      await prefs.setBool('onboarding_tutorial_shown', true);
+      await prefs.setBool('guided_tutorial_v2_shown', true);
     }
   }
 
   Future<void> _finishTutorial() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('onboarding_tutorial_shown', true);
-    if (mounted) setState(() => _tutorialStep = 0);
+    await prefs.setBool('guided_tutorial_v2_shown', true);
+    if (mounted) setState(() => _tutorialStep = -1);
   }
 
-  Future<void> _openTransactionSheet() async {
+  void _restartTutorial() {
+    if (mounted) _showTutorialStep(0);
+  }
+
+  void _showTutorialStep(int step) {
+    if (!mounted) return;
+    final appState = Provider.of<AppState>(context, listen: false);
+    final pageByStep = {0: 0, 2: 1, 3: appState.hasFeature('ai') ? 2 : 1, 4: 3};
+    final page = pageByStep[step];
+    setState(() {
+      _tutorialStep = step;
+      if (page != null) _currentIndex = page;
+    });
+    if (page != null) _pageController.jumpToPage(page);
+  }
+
+  Future<void> _advanceFromAddStep() async {
+    setState(() => _tutorialStep = -1);
+    await _openTransactionSheet(tutorialMode: true);
+    if (mounted) _showTutorialStep(2);
+  }
+
+  Future<void> _openTransactionSheet({bool tutorialMode = false}) async {
     final appState = Provider.of<AppState>(context, listen: false);
     final beforeCount = appState.transactions.length;
     await showModalBottomSheet(
@@ -162,23 +192,19 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
       ),
       builder: (context) => SizedBox(
         height: MediaQuery.of(context).size.height * 0.85,
-        child: const ClipRRect(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        child: ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           child: Scaffold(
             backgroundColor: AppTheme.background,
-            body: SafeArea(child: AddTransactionScreen()),
+            body: SafeArea(child: AddTransactionScreen(showTutorialHint: tutorialMode)),
           ),
         ),
       ),
     );
-    if (_tutorialStep == 1 && mounted) {
-      if (appState.transactions.length > beforeCount) {
-        setState(() => _tutorialStep = 2);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Заполните и сохраните операцию, чтобы продолжить обучение.')),
-        );
-      }
+    if (appState.transactions.length > beforeCount && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Операция сохранена. Балансы и аналитика обновлены.')),
+      );
     }
   }
 
@@ -227,16 +253,18 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
 
   @override
   void dispose() {
+    TutorialController.requests.removeListener(_restartTutorial);
     _pageController.dispose();
     super.dispose();
   }
 
-  Widget _buildTabItem(int index, IconData icon, String label) {
+  Widget _buildTabItem(int index, IconData icon, String label, GlobalKey key) {
     final isSelected = _currentIndex == index;
     final appState = Provider.of<AppState>(context);
     final isLocked = index == 2 && !appState.hasFeature('ai');
 
     return GestureDetector(
+      key: key,
       onTap: () {
         if (isLocked) {
           AppTheme.showPremiumBlockDialog(context);
@@ -246,9 +274,6 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
           _currentIndex = index;
         });
         _pageController.jumpToPage(index);
-        if (_tutorialStep == 2 && index == 3) {
-          _finishTutorial();
-        }
       },
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -290,7 +315,26 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
   Widget build(BuildContext context) {
     final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
 
-    return Scaffold(
+    final tutorialTargets = [_overviewKey, _addKey, _analyticsKey, _aiKey, _servicesKey];
+    final tutorialTitles = ['Главный экран', 'Добавление операции', 'Аналитика', 'ИИ-консультант', 'Сервисы'];
+    final tutorialDescriptions = [
+      'Здесь собраны общий баланс, последние операции, быстрые расходы и основные показатели.',
+      'Главная рабочая кнопка. Откроем форму, где можно добавить расход, доход или перевод между счетами.',
+      'Раздел уже открыт. Здесь видны динамика денег, категории расходов и финансовые показатели.',
+      'ИИ-консультант отвечает по вашим данным и помогает разобрать расходы.${Provider.of<AppState>(context).hasFeature('ai') ? '' : ' Раздел станет доступен после подключения Premium.'}',
+      'Раздел уже открыт. Здесь находятся счета, категории, долги, автоплатежи и планы.',
+    ];
+    final tutorialIcons = [
+      Icons.grid_view_rounded,
+      Icons.add_rounded,
+      Icons.analytics_rounded,
+      Icons.android_rounded,
+      Icons.explore_rounded,
+    ];
+
+    return Stack(
+      children: [
+        Scaffold(
       body: Stack(
         children: [
           // Background Glowing Blobs for Space Aesthetic
@@ -326,53 +370,21 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
               children: _screens,
             ),
           ),
-          if (_tutorialStep > 0)
-            Positioned(
-              left: 20,
-              right: 20,
-              bottom: 16,
-              child: Material(
-                color: AppTheme.surface,
-                elevation: 12,
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.touch_app_rounded, color: AppTheme.primary),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _tutorialStep == 1
-                              ? 'Нажмите выделенную кнопку +, заполните операцию и сохраните ее.'
-                              : 'Отлично. Теперь нажмите «Сервисы» внизу экрана.',
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Пропустить обучение',
-                        onPressed: _finishTutorial,
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
       floatingActionButton: isKeyboardVisible
           ? null
           : FloatingActionButton(
+              key: _addKey,
               onPressed: _openTransactionSheet,
               backgroundColor: Colors.transparent,
-              elevation: _tutorialStep == 1 ? 12 : 0,
+              elevation: 0,
               child: Container(
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: AppTheme.primaryGradient,
-                  border: _tutorialStep == 1 ? Border.all(color: Colors.white, width: 3) : null,
                 ),
                 child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
               ),
@@ -389,15 +401,42 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _buildTabItem(0, Icons.grid_view_rounded, 'Обзор'),
-                    _buildTabItem(1, Icons.analytics_rounded, 'Аналитика'),
+                    _buildTabItem(0, Icons.grid_view_rounded, 'Обзор', _overviewKey),
+                    _buildTabItem(1, Icons.analytics_rounded, 'Аналитика', _analyticsKey),
                     const SizedBox(width: 48), // Placeholder for FAB
-                    _buildTabItem(2, Icons.android_rounded, 'ИИ Чат'),
-                    _buildTabItem(3, Icons.explore_rounded, 'Сервисы'),
+                    _buildTabItem(2, Icons.android_rounded, 'ИИ Чат', _aiKey),
+                    _buildTabItem(3, Icons.explore_rounded, 'Сервисы', _servicesKey),
                   ],
                 ),
               ),
             ),
+        ),
+        if (_tutorialStep >= 0)
+          GuidedTourOverlay(
+            targetKey: tutorialTargets[_tutorialStep],
+            title: tutorialTitles[_tutorialStep],
+            description: tutorialDescriptions[_tutorialStep],
+            primaryLabel: _tutorialStep == 1
+                ? 'Открыть'
+                : _tutorialStep == tutorialTargets.length - 1
+                    ? 'Готово'
+                    : 'Далее',
+            icon: tutorialIcons[_tutorialStep],
+            step: _tutorialStep,
+            totalSteps: tutorialTargets.length,
+            onSkip: _finishTutorial,
+            onBack: _tutorialStep == 0 ? null : () => _showTutorialStep(_tutorialStep - 1),
+            onPrimary: () {
+              if (_tutorialStep == 1) {
+                _advanceFromAddStep();
+              } else if (_tutorialStep == tutorialTargets.length - 1) {
+                _finishTutorial();
+              } else {
+                _showTutorialStep(_tutorialStep + 1);
+              }
+            },
+          ),
+      ],
     );
   }
 }
