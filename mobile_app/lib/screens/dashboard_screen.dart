@@ -2135,7 +2135,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    '1 ${cu.currencySymbol(curr)} = ${rate.toStringAsFixed(rate > 10 ? 2 : 4)} ${cu.currencySymbol(baseCurrency)}',
+                                    cu.formatDirectExchangeRate(curr, baseCurrency, rate),
                                     style: const TextStyle(
                                       color: Colors.white70,
                                       fontSize: 13,
@@ -2212,7 +2212,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _showEditRateDialog(BuildContext context, AppState appState, String currency, double currentRate, VoidCallback onUpdated) {
-    final controller = TextEditingController(text: currentRate.toStringAsFixed(currency == 'RUB' ? 4 : 2));
+    final invertForDisplay = currentRate < 1;
+    final displayFromCurrency = invertForDisplay ? appState.baseCurrency : currency;
+    final displayToCurrency = invertForDisplay ? currency : appState.baseCurrency;
+    final displayRate = invertForDisplay ? 1 / currentRate : currentRate;
+    final displayRateText = displayRate.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+    final controller = TextEditingController(text: displayRateText);
     showDialog(
       context: context,
       builder: (context) {
@@ -2228,7 +2233,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Укажите стоимость 1 ${cu.currencySymbol(currency)} в ${appState.baseCurrency}:',
+                'Укажите стоимость 1 ${cu.currencySymbol(displayFromCurrency)} в ${cu.currencySymbol(displayToCurrency)}:',
                 style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 12),
@@ -2237,7 +2242,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  suffixText: cu.currencySymbol(appState.baseCurrency),
+                  suffixText: cu.currencySymbol(displayToCurrency),
                   suffixStyle: const TextStyle(color: AppTheme.textSecondary),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -2262,9 +2267,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () async {
-                final double? newRate = double.tryParse(controller.text.replaceAll(',', '.'));
-                if (newRate != null && newRate > 0) {
-                  await appState.setCustomRate(currency, newRate);
+                final double? enteredRate = double.tryParse(controller.text.replaceAll(',', '.'));
+                if (enteredRate != null && enteredRate > 0) {
+                  final directRateInBase = invertForDisplay ? 1 / enteredRate : enteredRate;
+                  await appState.setCustomRate(currency, directRateInBase);
                   onUpdated();
                   Navigator.pop(context);
                 }

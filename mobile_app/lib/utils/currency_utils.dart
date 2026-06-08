@@ -91,17 +91,8 @@ String formatExchangeRate(String fromCurrency, String toCurrency, Map<String, do
   final toRate = ratesToUsd[toCurrency.toUpperCase()];
   
   if (fromRate == null || toRate == null || fromRate == 0) return '—';
-  
-  final rate = toRate / fromRate;
-  final fromSymbol = currencySymbols[fromCurrency] ?? fromCurrency;
-  final toSymbol = currencySymbols[toCurrency] ?? toCurrency;
-  
-  if (rate >= 1) {
-    return '1 $fromSymbol = ${rate.toStringAsFixed(rate > 100 ? 0 : 2)} $toSymbol';
-  } else {
-    final inverse = 1.0 / rate;
-    return '1 $toSymbol = ${inverse.toStringAsFixed(inverse > 100 ? 0 : 2)} $fromSymbol';
-  }
+
+  return formatDirectExchangeRate(fromCurrency, toCurrency, toRate / fromRate);
 }
 
 /// Format a direct conversion rate in the readable direction.
