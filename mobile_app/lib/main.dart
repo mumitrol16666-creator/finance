@@ -430,7 +430,7 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _buildTabItem(0, Icons.grid_view_rounded, 'Обзор', _overviewKey),
+                    _buildTabItem(0, Icons.grid_view_rounded, 'Главная', _overviewKey),
                     _buildTabItem(1, Icons.analytics_rounded, 'Аналитика', _analyticsKey),
                     const SizedBox(width: 48), // Placeholder for FAB
                     _buildTabItem(2, Icons.android_rounded, 'ИИ Чат', _aiKey),
