@@ -1233,6 +1233,8 @@ async def pay_debt_endpoint(debt_id: int, req: DebtPayRequest, user_id: int = De
 @app.get("/api/debts/{debt_id}/payments")
 async def get_debt_payments_endpoint(debt_id: int, user_id: int = Depends(get_current_user)):
     async with get_db() as db:
+        if not await can_use_feature(db, user_id, "debts"):
+            raise HTTPException(status_code=403, detail="Функция долгов доступна только в Premium версии")
         cur = await db.execute("SELECT 1 FROM debts WHERE id=? AND user_id=?", (debt_id, user_id))
         if not await cur.fetchone():
             raise HTTPException(status_code=404, detail="Debt not found")
@@ -1261,6 +1263,8 @@ async def update_debt_reminder_endpoint(
     if req.days_before < 0 or req.days_before > 30:
         raise HTTPException(status_code=400, detail="days_before must be between 0 and 30")
     async with get_db() as db:
+        if not await can_use_feature(db, user_id, "debts"):
+            raise HTTPException(status_code=403, detail="Функция долгов доступна только в Premium версии")
         cur = await db.execute(
             "SELECT 1 FROM debts WHERE id=? AND user_id=? AND is_active=1",
             (debt_id, user_id),
@@ -1677,6 +1681,11 @@ async def update_account_endpoint(acc_id: int, req: AccountUpdateRequest, user_i
                         raise HTTPException(
                             status_code=403,
                             detail="В бесплатной версии доступно не более 2 активных счетов"
+                        )
+                    if ctx.mode != "full" and normalize_currency(current_account[4]) != "KZT":
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Восстановление валютных счетов доступно только в Premium версии"
                         )
                     try:
                         await restore_account(db, user_id, acc_id, now_str)
