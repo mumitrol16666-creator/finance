@@ -21,6 +21,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   int _activeTab = 0; // 0: Expenses, 1: Incomes, 2: Savings
   int _activeTimeframe = 1; // 0: Week, 1: Month, 2: Year
   bool _isExporting = false;
+  bool _initialPeriodSynced = false;
   int touchedIndex = -1;
 
   // AI Audit states
@@ -38,6 +39,71 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   DateTime? _customEndDate;
   bool _isCustomRangeActive = false;
 
+  DateTime _normalizeDate(DateTime value) => DateTime(value.year, value.month, value.day);
+
+  (DateTime start, DateTime endInclusive) _budgetCycleBounds(DateTime ref, int startDay) {
+    final clampedStartDay = startDay.clamp(1, 28);
+    final DateTime cycleStart;
+    final DateTime cycleEndExclusive;
+
+    if (ref.day >= clampedStartDay) {
+      cycleStart = DateTime(ref.year, ref.month, clampedStartDay);
+      if (ref.month == 12) {
+        cycleEndExclusive = DateTime(ref.year + 1, 1, clampedStartDay);
+      } else {
+        cycleEndExclusive = DateTime(ref.year, ref.month + 1, clampedStartDay);
+      }
+    } else {
+      if (ref.month == 1) {
+        cycleStart = DateTime(ref.year - 1, 12, clampedStartDay);
+      } else {
+        cycleStart = DateTime(ref.year, ref.month - 1, clampedStartDay);
+      }
+      cycleEndExclusive = DateTime(ref.year, ref.month, clampedStartDay);
+    }
+
+    return (cycleStart, cycleEndExclusive.subtract(const Duration(days: 1)));
+  }
+
+  (DateTime start, DateTime endInclusive) _getActivePeriodBounds(AppState appState) {
+    if (_isCustomRangeActive && _customStartDate != null && _customEndDate != null) {
+      return (_customStartDate!, _customEndDate!);
+    }
+
+    final ref = _normalizeDate(_currentRefDate);
+    if (_activeTimeframe == 0) {
+      final monday = ref.subtract(Duration(days: ref.weekday - 1));
+      final sunday = ref.add(Duration(days: 7 - ref.weekday));
+      return (monday, sunday);
+    }
+    if (_activeTimeframe == 1) {
+      return _budgetCycleBounds(ref, appState.budgetCycleStartDay);
+    }
+    return (DateTime(ref.year, 1, 1), DateTime(ref.year, 12, 31));
+  }
+
+  String _formatPeriodLabel(AppState appState) {
+    final bounds = _getActivePeriodBounds(appState);
+    final startLabel = DateFormat('dd.MM.yy').format(bounds.$1);
+    final endLabel = DateFormat('dd.MM.yy').format(bounds.$2);
+    return '$startLabel — $endLabel';
+  }
+
+  int _customRangeDayCount() {
+    if (_customStartDate == null || _customEndDate == null) return 0;
+    return _customEndDate!.difference(_customStartDate!).inDays + 1;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _initialPeriodSynced) return;
+      _initialPeriodSynced = true;
+      _reloadPeriodData();
+    });
+  }
+
   String _formatKzt(int amountMinor) {
     final appState = Provider.of<AppState>(context, listen: false);
     return cu.formatCurrency(amountMinor, appState.baseCurrency);
@@ -53,32 +119,40 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   void _previousPeriod() {
     setState(() {
-      if (_activeTimeframe == 0) { // Week
-        _currentRefDate = _currentRefDate.subtract(const Duration(days: 7));
-      } else if (_activeTimeframe == 1) { // Month
-        _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month - 1, 1);
-      } else { // Year
-        _currentRefDate = DateTime(_currentRefDate.year - 1, _currentRefDate.month, 1);
+      if (_isCustomRangeActive && _customStartDate != null && _customEndDate != null) {
+        final dayCount = _customRangeDayCount();
+        _customEndDate = _customStartDate!.subtract(const Duration(days: 1));
+        _customStartDate = _customEndDate!.subtract(Duration(days: dayCount - 1));
+        return;
       }
-      _isCustomRangeActive = false;
-      _customStartDate = null;
-      _customEndDate = null;
+
+      if (_activeTimeframe == 0) {
+        _currentRefDate = _currentRefDate.subtract(const Duration(days: 7));
+      } else if (_activeTimeframe == 1) {
+        _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month - 1, _currentRefDate.day);
+      } else {
+        _currentRefDate = DateTime(_currentRefDate.year - 1, _currentRefDate.month, _currentRefDate.day);
+      }
     });
     _reloadPeriodData();
   }
 
   void _nextPeriod() {
     setState(() {
-      if (_activeTimeframe == 0) { // Week
-        _currentRefDate = _currentRefDate.add(const Duration(days: 7));
-      } else if (_activeTimeframe == 1) { // Month
-        _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month + 1, 1);
-      } else { // Year
-        _currentRefDate = DateTime(_currentRefDate.year + 1, _currentRefDate.month, 1);
+      if (_isCustomRangeActive && _customStartDate != null && _customEndDate != null) {
+        final dayCount = _customRangeDayCount();
+        _customStartDate = _customEndDate!.add(const Duration(days: 1));
+        _customEndDate = _customStartDate!.add(Duration(days: dayCount - 1));
+        return;
       }
-      _isCustomRangeActive = false;
-      _customStartDate = null;
-      _customEndDate = null;
+
+      if (_activeTimeframe == 0) {
+        _currentRefDate = _currentRefDate.add(const Duration(days: 7));
+      } else if (_activeTimeframe == 1) {
+        _currentRefDate = DateTime(_currentRefDate.year, _currentRefDate.month + 1, _currentRefDate.day);
+      } else {
+        _currentRefDate = DateTime(_currentRefDate.year + 1, _currentRefDate.month, _currentRefDate.day);
+      }
     });
     _reloadPeriodData();
   }
@@ -93,33 +167,32 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     _reloadPeriodData();
   }
 
-  void _reloadPeriodData() {
+  Future<void> _reloadPeriodData({
+    DateTime? customStart,
+    DateTime? customEnd,
+    bool? useCustom,
+  }) async {
     final appState = Provider.of<AppState>(context, listen: false);
-    if (_isCustomRangeActive && _customStartDate != null && _customEndDate != null) {
-      final startStr = DateFormat('yyyy-MM-dd').format(_customStartDate!);
-      final endStr = DateFormat('yyyy-MM-dd').format(_customEndDate!);
-      appState.loadDashboardData(startDate: startStr, endDate: endStr);
+    final isCustom = useCustom ?? _isCustomRangeActive;
+    final start = customStart ?? _customStartDate;
+    final end = customEnd ?? _customEndDate;
+
+    if (isCustom && start != null && end != null) {
+      final startStr = DateFormat('yyyy-MM-dd').format(_normalizeDate(start));
+      final endStr = DateFormat('yyyy-MM-dd').format(_normalizeDate(end));
+      await appState.loadDashboardData(startDate: startStr, endDate: endStr);
     } else {
-      if (_activeTimeframe == 0) { // Week
-        final monday = _currentRefDate.subtract(Duration(days: _currentRefDate.weekday - 1));
-        final sunday = _currentRefDate.add(Duration(days: 7 - _currentRefDate.weekday));
-        final startStr = DateFormat('yyyy-MM-dd').format(monday);
-        final endStr = DateFormat('yyyy-MM-dd').format(sunday);
-        appState.loadDashboardData(startDate: startStr, endDate: endStr);
-      } else if (_activeTimeframe == 1) { // Month
-        final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
-        appState.loadDashboardData(refDate: dateStr);
-      } else { // Year
-        final jan1 = DateTime(_currentRefDate.year, 1, 1);
-        final dec31 = DateTime(_currentRefDate.year, 12, 31);
-        final startStr = DateFormat('yyyy-MM-dd').format(jan1);
-        final endStr = DateFormat('yyyy-MM-dd').format(dec31);
-        appState.loadDashboardData(startDate: startStr, endDate: endStr);
-      }
+      final bounds = _getActivePeriodBounds(appState);
+      final startStr = DateFormat('yyyy-MM-dd').format(bounds.$1);
+      final endStr = DateFormat('yyyy-MM-dd').format(bounds.$2);
+      await appState.loadDashboardData(startDate: startStr, endDate: endStr);
     }
-    setState(() {
-      _aiAuditText = null;
-    });
+
+    if (mounted) {
+      setState(() {
+        _aiAuditText = null;
+      });
+    }
   }
 
   Future<void> _runAiAudit() async {
@@ -129,14 +202,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     });
     final appState = Provider.of<AppState>(context, listen: false);
     String result;
-    if (_isCustomRangeActive && _customStartDate != null && _customEndDate != null) {
-      final startStr = DateFormat('yyyy-MM-dd').format(_customStartDate!);
-      final endStr = DateFormat('yyyy-MM-dd').format(_customEndDate!);
-      result = await appState.fetchAIBudgetAudit(startDate: startStr, endDate: endStr);
-    } else {
-      final dateStr = DateFormat('yyyy-MM-dd').format(_currentRefDate);
-      result = await appState.fetchAIBudgetAudit(refDate: dateStr);
-    }
+    final bounds = _getActivePeriodBounds(appState);
+    final startStr = DateFormat('yyyy-MM-dd').format(bounds.$1);
+    final endStr = DateFormat('yyyy-MM-dd').format(bounds.$2);
+    result = await appState.fetchAIBudgetAudit(startDate: startStr, endDate: endStr);
     if (mounted) {
       setState(() {
         _aiAuditText = result;
@@ -169,12 +238,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
 
     if (picked != null) {
+      final start = _normalizeDate(picked.start);
+      final end = _normalizeDate(picked.end);
       setState(() {
-        _customStartDate = picked.start;
-        _customEndDate = picked.end;
+        _customStartDate = start;
+        _customEndDate = end;
         _isCustomRangeActive = true;
       });
-      _reloadPeriodData();
+      await _reloadPeriodData(customStart: start, customEnd: end, useCustom: true);
     }
   }
 
@@ -184,7 +255,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       _customStartDate = null;
       _customEndDate = null;
     });
-    _reloadPeriodData();
+    _reloadPeriodData(useCustom: false);
   }
 
   Future<void> _exportExcel() async {
@@ -300,8 +371,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Expanded(
       child: GestureDetector(
         onTap: () {
-          setState(() => _activeTimeframe = index);
-          _reloadPeriodData();
+          setState(() {
+            _activeTimeframe = index;
+            _isCustomRangeActive = false;
+            _customStartDate = null;
+            _customEndDate = null;
+          });
+          _reloadPeriodData(useCustom: false);
         },
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
@@ -332,7 +408,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final appState = Provider.of<AppState>(context);
     final allCategories = appState.categories;
     final transactions = appState.transactions;
-    final bool isCurrentPeriod = !_isCustomRangeActive && DateTime.now().year == _currentRefDate.year && DateTime.now().month == _currentRefDate.month;
+    final now = _normalizeDate(DateTime.now());
+    final currentBounds = _getActivePeriodBounds(appState);
+    final bool isCurrentPeriod = !_isCustomRangeActive &&
+        !now.isBefore(currentBounds.$1) &&
+        !now.isAfter(currentBounds.$2);
 
     // Filter categories based on Expenses vs Incomes
     final expensesCategories = allCategories.where((c) => c.kind == 'expense' && !c.excludeFromAnalytics).toList();
@@ -466,10 +546,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                 onPressed: _previousPeriod,
                               ),
                               Text(
-                                appState.cycleStart != null && appState.cycleEnd != null
-                                    ? '${DateFormat('dd.MM.yy').format(DateTime.parse(appState.cycleStart!))} — ${DateFormat('dd.MM.yy').format(DateTime.parse(appState.cycleEnd!))}'
-                                    : 'Весь период',
-                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 12),
+                                _formatPeriodLabel(appState),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: _isCustomRangeActive ? AppTheme.primary : Colors.white,
+                                  fontSize: 12,
+                                ),
                               ),
                               IconButton(
                                 icon: const Icon(Icons.chevron_right_rounded, color: Colors.white70, size: 20),
@@ -633,7 +715,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     children: [
                       _buildTimeframeTab(0, 'Неделя'),
                       const SizedBox(width: 8),
-                      _buildTimeframeTab(1, 'Месяц'),
+                      _buildTimeframeTab(1, 'Бюджет'),
                       const SizedBox(width: 8),
                       _buildTimeframeTab(2, 'Год'),
                     ],
