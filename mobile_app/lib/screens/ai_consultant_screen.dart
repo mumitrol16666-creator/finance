@@ -49,13 +49,17 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    _messageController.clear();
     final appState = Provider.of<AppState>(context, listen: false);
+    if (!appState.hasFeature('ai')) {
+      _showPremiumPaywall();
+      return;
+    }
+    _messageController.clear();
     
     try {
       await appState.sendAiMessage(text);
     } catch (e) {
-      if (e.toString().contains('limit_exceeded')) {
+      if (e.toString().contains('premium_required')) {
         _showPremiumPaywall();
       }
     }
@@ -72,9 +76,9 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
             borderRadius: BorderRadius.circular(16),
             side: const BorderSide(color: AppTheme.border),
           ),
-          title: const Text('👑 Лимит сообщений исчерпан', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          title: const Text('ИИ доступен в Premium', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
           content: const Text(
-            'Вы отправили 50 сообщений за сегодня. Чтобы продолжить общаться с ИИ без ограничений, перейдите на Premium версию.',
+            'Подключите Premium, чтобы пользоваться ИИ-консультантом без ограничений.',
             style: TextStyle(color: AppTheme.textSecondary),
           ),
           actions: [
@@ -100,6 +104,43 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
     final appState = Provider.of<AppState>(context);
     final history = appState.chatHistory;
     final isLoading = appState.isLoading;
+
+    if (!appState.hasFeature('ai')) {
+      return Scaffold(
+        backgroundColor: AppTheme.background,
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_rounded, color: AppTheme.primary, size: 52),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'ИИ-консультант доступен в Premium',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppTheme.textPrimary, fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Получайте ответы по своим финансам и персональный анализ без ограничений.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 14, height: 1.4),
+                  ),
+                  const SizedBox(height: 22),
+                  ElevatedButton.icon(
+                    onPressed: () => AppTheme.showPremiumBlockDialog(context),
+                    icon: const Icon(Icons.workspace_premium_rounded),
+                    label: const Text('Подключить Premium'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 

@@ -922,39 +922,6 @@ async def chat_with_ai(req: ChatRequest, user_id: int = Depends(get_current_user
     async with get_db() as db:
         if not await can_use_feature(db, user_id, "ai"):
             raise HTTPException(status_code=403, detail="ИИ-консультант доступен только в Premium версии")
-        
-        # Check daily limit for non-premium users
-        from app.domain.services.access_service import get_user_context
-        ctx = await get_user_context(db, user_id)
-        if ctx.mode != "full":
-            from datetime import date
-            today_str = date.today().isoformat()
-            
-            # Fetch daily AI chat usage
-            cur = await db.execute("SELECT ai_chat_daily_date, ai_chat_daily_used FROM settings WHERE user_id=?", (user_id,))
-            row = await cur.fetchone()
-            if row:
-                daily_date, daily_used = row
-                daily_used = daily_used or 0
-            else:
-                daily_date, daily_used = None, 0
-                
-            if daily_date == today_str:
-                if daily_used >= 50:
-                    raise HTTPException(
-                        status_code=429,
-                        detail="Вы превысили дневной лимит в 50 сообщений ИИ. Перейдите на Premium, чтобы снять ограничения."
-                    )
-                new_used = daily_used + 1
-            else:
-                new_used = 1
-                
-            # Update settings
-            await db.execute(
-                "UPDATE settings SET ai_chat_daily_date=?, ai_chat_daily_used=?, updated_at=? WHERE user_id=?",
-                (today_str, new_used, datetime.now(timezone.utc).isoformat(), user_id)
-            )
-            await db.commit()
 
         try:
             from app.domain.services.ai_llm_service import chat_with_user_ai
