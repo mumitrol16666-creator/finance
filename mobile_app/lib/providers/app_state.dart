@@ -120,6 +120,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   void toggleBusinessMode(bool val) {
     _isBusinessMode = val;
+    loadQuickAddTemplates();
     notifyListeners();
   }
 
@@ -377,6 +378,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _debts = [];
     _recurringTemplates = [];
     _plannedEvents = [];
+    _quickAddTemplates = [];
     
     await loadDashboardData();
     
@@ -431,6 +433,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         _debts = [];
         _recurringTemplates = [];
         _plannedEvents = [];
+        _quickAddTemplates = [];
         
         if (saveLogin) {
           final existingIndex = _savedSessions.indexWhere((s) => s.userId == userId);
@@ -495,6 +498,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         _debts = [];
         _recurringTemplates = [];
         _plannedEvents = [];
+        _quickAddTemplates = [];
         
         if (saveLogin) {
           final existingIndex = _savedSessions.indexWhere((s) => s.userId == userId);
@@ -900,6 +904,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _debts = [];
     _recurringTemplates = [];
     _plannedEvents = [];
+    _quickAddTemplates = [];
     _customRatesOverride = {};
     _exchangeRates = {};
     _baseCurrency = 'KZT';
@@ -1618,11 +1623,22 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> loadQuickAddTemplates() async {
     final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('quick_add_templates');
+    final storageKey = _quickAddStorageKey;
+    String? jsonStr = prefs.getString(storageKey);
+    if (jsonStr == null && _currentUserId != null && !_isBusinessMode) {
+      jsonStr = prefs.getString('quick_add_templates');
+      if (jsonStr != null) {
+        await prefs.setString(storageKey, jsonStr);
+        await prefs.remove('quick_add_templates');
+      }
+    }
     if (jsonStr != null && jsonStr.isNotEmpty) {
       try {
         final List<dynamic> list = json.decode(jsonStr);
-        _quickAddTemplates = list.map((x) => QuickAddTemplate.fromJson(x as Map<String, dynamic>)).toList();
+        _quickAddTemplates = list
+            .map((x) => _normalizeQuickAddTemplate(QuickAddTemplate.fromJson(x as Map<String, dynamic>)))
+            .toList();
+        await saveQuickAddTemplates();
         notifyListeners();
         return;
       } catch (e) {
@@ -1630,33 +1646,98 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     // Default templates
-    _quickAddTemplates = [
-      QuickAddTemplate(id: 1, title: 'Кофе', amount: 800, categoryName: 'Еда и рестораны', categoryEmoji: '🍔'),
-      QuickAddTemplate(id: 2, title: 'Такси', amount: 1500, categoryName: 'Транспорт', categoryEmoji: '🚗'),
-      QuickAddTemplate(id: 3, title: 'Обед', amount: 2500, categoryName: 'Еда и рестораны', categoryEmoji: '🍔'),
-      QuickAddTemplate(id: 4, title: 'Подписка', amount: 2000, categoryName: 'Услуги', categoryEmoji: '🛠️'),
-    ];
+    _quickAddTemplates = _isBusinessMode
+        ? []
+        : [
+            QuickAddTemplate(id: 1, title: 'Кофе', amount: 800, categoryName: 'Еда', categoryEmoji: '🍔'),
+            QuickAddTemplate(id: 2, title: 'Такси', amount: 1500, categoryName: 'Транспорт', categoryEmoji: '🚕'),
+            QuickAddTemplate(id: 3, title: 'Обед', amount: 2500, categoryName: 'Еда', categoryEmoji: '🍔'),
+          ];
     await saveQuickAddTemplates();
   }
+
+  QuickAddTemplate _normalizeQuickAddTemplate(QuickAddTemplate template) {
+    final legacyCategories = {
+      'Еда и рестораны': ('Еда', '🍔'),
+      'Услуги': ('Подписки', '🧾'),
+    };
+    final replacement = legacyCategories[template.categoryName];
+    if (replacement == null) return template;
+    return QuickAddTemplate(
+      id: template.id,
+      title: template.title,
+      amount: template.amount,
+      kind: template.kind,
+      categoryName: replacement.$1,
+      categoryEmoji: replacement.$2,
+      accountId: template.accountId,
+    );
+  }
+
+  String get _quickAddStorageKey =>
+      'quick_add_templates_${_currentUserId ?? 'guest'}_${_isBusinessMode ? 'business' : 'personal'}';
 
   Future<void> saveQuickAddTemplates() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = json.encode(_quickAddTemplates.map((x) => x.toJson()).toList());
-    await prefs.setString('quick_add_templates', jsonStr);
+    await prefs.setString(_quickAddStorageKey, jsonStr);
     notifyListeners();
   }
 
-  Future<void> updateQuickAddTemplate(int id, {required String title, required int amount, required String categoryName, required String categoryEmoji}) async {
+  Future<void> addQuickAddTemplate({
+    required String title,
+    required int amount,
+    required String kind,
+    required String categoryName,
+    required String categoryEmoji,
+    int? accountId,
+  }) async {
+    final nextId = _quickAddTemplates.fold<int>(0, (maxId, item) => item.id > maxId ? item.id : maxId) + 1;
+    _quickAddTemplates.add(QuickAddTemplate(
+      id: nextId,
+      title: title,
+      amount: amount,
+      kind: kind,
+      categoryName: categoryName,
+      categoryEmoji: categoryEmoji,
+      accountId: accountId,
+    ));
+    await saveQuickAddTemplates();
+  }
+
+  Future<void> updateQuickAddTemplate(
+    int id, {
+    required String title,
+    required int amount,
+    required String kind,
+    required String categoryName,
+    required String categoryEmoji,
+    int? accountId,
+  }) async {
     final idx = _quickAddTemplates.indexWhere((x) => x.id == id);
     if (idx != -1) {
       _quickAddTemplates[idx] = QuickAddTemplate(
         id: id,
         title: title,
         amount: amount,
+        kind: kind,
         categoryName: categoryName,
         categoryEmoji: categoryEmoji,
+        accountId: accountId,
       );
       await saveQuickAddTemplates();
     }
+  }
+
+  Future<void> deleteQuickAddTemplate(int id) async {
+    _quickAddTemplates.removeWhere((x) => x.id == id);
+    await saveQuickAddTemplates();
+  }
+
+  Future<void> reorderQuickAddTemplates(int oldIndex, int newIndex) async {
+    if (newIndex > oldIndex) newIndex -= 1;
+    final item = _quickAddTemplates.removeAt(oldIndex);
+    _quickAddTemplates.insert(newIndex, item);
+    await saveQuickAddTemplates();
   }
 }
