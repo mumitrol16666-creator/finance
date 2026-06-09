@@ -8,6 +8,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from datetime import datetime, timezone
 import aiosqlite
 import re
+import hashlib
 from loguru import logger
 
 from app.config.settings import settings
@@ -68,6 +69,7 @@ async def _link_app_account_from_token(
     token: str,
 ) -> bool:
     now = datetime.now(timezone.utc)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     cur = await db.execute(
         """
         SELECT t.user_id, t.expires_at, t.used_at, u.telegram_id, u.username, u.display_name
@@ -75,7 +77,7 @@ async def _link_app_account_from_token(
         JOIN users u ON u.id=t.user_id
         WHERE t.token=?
         """,
-        (token,),
+        (token_hash,),
     )
     link = await cur.fetchone()
     if not link:
@@ -95,7 +97,7 @@ async def _link_app_account_from_token(
     if linked_telegram_id not in (None, telegram_id):
         await db.execute(
             "UPDATE telegram_link_tokens SET used_at=? WHERE token=?",
-            (now.isoformat(), token),
+            (now.isoformat(), token_hash),
         )
         await db.commit()
         await m.answer("Этот профиль FinTrack уже связан с другим Telegram-аккаунтом.")
@@ -112,7 +114,7 @@ async def _link_app_account_from_token(
         if current_state == "completed" and not current_username.startswith("tmp_tg_"):
             await db.execute(
                 "UPDATE telegram_link_tokens SET used_at=? WHERE token=?",
-                (now.isoformat(), token),
+                (now.isoformat(), token_hash),
             )
             await db.commit()
             await m.answer(
@@ -177,7 +179,7 @@ async def _link_app_account_from_token(
             )
         await db.execute(
             "UPDATE telegram_link_tokens SET used_at=? WHERE token=?",
-            (now.isoformat(), token),
+            (now.isoformat(), token_hash),
         )
         await db.commit()
     except Exception as exc:

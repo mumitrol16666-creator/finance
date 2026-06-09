@@ -1758,6 +1758,7 @@ async def create_telegram_link(user_id: int = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=15)
     token = secrets.token_urlsafe(24)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     async with get_db() as db:
         cur = await db.execute(
             "SELECT telegram_id FROM users WHERE id=?",
@@ -1775,7 +1776,7 @@ async def create_telegram_link(user_id: int = Depends(get_current_user)):
             INSERT INTO telegram_link_tokens(token, user_id, purpose, expires_at, created_at)
             VALUES (?, ?, 'premium', ?, ?)
             """,
-            (token, user_id, expires_at.isoformat(), now.isoformat()),
+            (token_hash, user_id, expires_at.isoformat(), now.isoformat()),
         )
         await db.commit()
         username = settings.bot_username.lstrip("@")

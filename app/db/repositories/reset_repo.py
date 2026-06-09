@@ -27,6 +27,7 @@ async def wipe_user_data(db: aiosqlite.Connection, user_id: int) -> None:
         "debt_notify_log",
         "export_logs",
         "login_codes",
+        "telegram_link_tokens",
     ]
 
     for table in tables:
@@ -129,5 +130,12 @@ async def delete_user_account(db: aiosqlite.Connection, user_id: int) -> None:
     except Exception:
         pass
 
-    await db.commit()
+    try:
+        await db.execute(
+            "DELETE FROM user_id_aliases WHERE old_user_id=? OR current_user_id=?",
+            (user_id, user_id),
+        )
+    except Exception:
+        pass
 
+    await db.commit()
