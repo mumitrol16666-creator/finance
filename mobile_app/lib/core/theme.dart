@@ -2,6 +2,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../providers/app_state.dart';
 
 class AppTheme {
   // Ultra-premium space color palette
@@ -89,6 +92,20 @@ class AppTheme {
     );
   }
 
+  static Future<void> openPremiumInTelegram(BuildContext context) async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final url = await appState.createTelegramPremiumLink();
+    if (url != null && await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+      return;
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось открыть Telegram. Попробуйте ещё раз.')),
+      );
+    }
+  }
+
   static void showPremiumBlockDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -113,7 +130,15 @@ class AppTheme {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Хорошо', style: TextStyle(color: primary, fontWeight: FontWeight.bold)),
+              child: const Text('Позже', style: TextStyle(color: textSecondary)),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                await openPremiumInTelegram(context);
+                if (context.mounted) Navigator.pop(context);
+              },
+              icon: const Icon(Icons.telegram_rounded),
+              label: const Text('Открыть Telegram-бота'),
             ),
           ],
         );

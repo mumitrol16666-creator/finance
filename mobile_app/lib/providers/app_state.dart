@@ -36,7 +36,11 @@ class ChatMessage {
   ChatMessage({required this.text, required this.isUser, required this.timestamp});
 }
 
-class AppState extends ChangeNotifier {
+class AppState extends ChangeNotifier with WidgetsBindingObserver {
+  AppState() {
+    WidgetsBinding.instance.addObserver(this);
+  }
+
   bool _isAuthenticated = false;
   bool get isAuthenticated => _isAuthenticated;
 
@@ -299,6 +303,29 @@ class AppState extends ChangeNotifier {
       return (json.decode(response.body)['detail'] ?? fallback).toString();
     } catch (_) {
       return fallback;
+    }
+  }
+
+  Future<Uri?> createTelegramPremiumLink() async {
+    if (_token == null) return null;
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/telegram/link'),
+        headers: {'Authorization': 'Bearer $_token'},
+      );
+      if (response.statusCode != 200) return null;
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      return Uri.tryParse(data['url'] as String? ?? '');
+    } catch (e) {
+      print('Create Telegram link error: $e');
+      return null;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _isAuthenticated && !_isLoading) {
+      loadDashboardData();
     }
   }
 
@@ -893,6 +920,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   // Operations
   Future<void> addTransaction({
     required int amount,
@@ -976,24 +1009,42 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<Uint8List?> exportExcelReport(String period) async {
+  Future<Uint8List?> exportExcelReport({
+    String? period,
+    String? startDate,
+    String? endDate,
+  }) async {
     if (_token == null) return null;
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/api/reports/export?period=$period'),
-        headers: {
-          'Authorization': 'Bearer $_token',
-        },
-      );
-      if (response.statusCode == 200) {
-        return response.bodyBytes;
-      } else {
-        print('Export excel response code: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Export excel error: $e');
+
+    final query = <String, String>{};
+    if (startDate != null && endDate != null) {
+      query['start_date'] = startDate;
+      query['end_date'] = endDate;
+    } else {
+      query['period'] = period ?? 'month';
     }
-    return null;
+
+    final uri = Uri.parse('$_baseUrl/api/reports/export').replace(queryParameters: query);
+    final response = await http.get(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $_token',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      return response.bodyBytes;
+    }
+
+    String message = 'Не удалось экспортировать отчёт';
+    try {
+      final body = json.decode(response.body);
+      if (body is Map && body['detail'] != null) {
+        message = body['detail'].toString();
+      }
+    } catch (_) {}
+
+    throw Exception(message);
   }
 
   Future<void> addAccount({

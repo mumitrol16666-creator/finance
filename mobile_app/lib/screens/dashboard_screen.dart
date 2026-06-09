@@ -569,6 +569,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onPressed: () => Navigator.pop(context),
               child: const Text('Хорошо', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
             ),
+            if (!isPremium)
+              ElevatedButton.icon(
+                onPressed: () async {
+                  await AppTheme.openPremiumInTelegram(context);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                icon: const Icon(Icons.telegram_rounded),
+                label: const Text('Открыть Telegram-бота'),
+              ),
           ],
         );
       },

@@ -87,11 +87,11 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
               child: const Text('Позже', style: TextStyle(color: AppTheme.textSecondary)),
             ),
             TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                AppTheme.showPremiumBlockDialog(context);
+              onPressed: () async {
+                await AppTheme.openPremiumInTelegram(context);
+                if (context.mounted) Navigator.pop(context);
               },
-              child: const Text('Купить Premium', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+              child: const Text('Открыть Telegram-бота', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -130,9 +130,9 @@ class _AiConsultantScreenState extends State<AiConsultantScreen> {
                   ),
                   const SizedBox(height: 22),
                   ElevatedButton.icon(
-                    onPressed: () => AppTheme.showPremiumBlockDialog(context),
+                    onPressed: () => AppTheme.openPremiumInTelegram(context),
                     icon: const Icon(Icons.workspace_premium_rounded),
-                    label: const Text('Подключить Premium'),
+                    label: const Text('Открыть Telegram-бота'),
                   ),
                 ],
               ),
