@@ -21,7 +21,7 @@ from app.domain.services.ai_consultant_service import build_main_menu_text
 from app.domain.money import get_user_currency, get_scale
 from app.ui.texts import get_text
 from app.ui.keyboards import (
-    lang_selection_kb, currency_kb, cancel_kb, yes_no_kb, daily_time_quick_kb
+    lang_selection_kb, currency_kb, cancel_kb, yes_no_kb, daily_time_quick_kb, upgrade_info_kb
 )
 from app.domain.validators import clean_name, parse_hhmm
 from app.domain.services.onboarding_service import (
@@ -61,9 +61,161 @@ async def set_state_db(db: aiosqlite.Connection, user_id: int, state_name: str):
     await db.execute("UPDATE users SET onboarding_state = ? WHERE id = ?", (state_name, user_id))
     await db.commit()
 
+async def _link_app_account_from_token(
+    m: Message,
+    state: FSMContext,
+    db: aiosqlite.Connection,
+    token: str,
+) -> bool:
+    now = datetime.now(timezone.utc)
+    cur = await db.execute(
+        """
+        SELECT t.user_id, t.expires_at, t.used_at, u.telegram_id, u.username, u.display_name
+        FROM telegram_link_tokens t
+        JOIN users u ON u.id=t.user_id
+        WHERE t.token=?
+        """,
+        (token,),
+    )
+    link = await cur.fetchone()
+    if not link:
+        await m.answer("Ссылка недействительна. Откройте Premium в приложении и попробуйте ещё раз.")
+        return True
+
+    app_user_id, expires_at, used_at, linked_telegram_id, username, display_name = link
+    try:
+        expired = datetime.fromisoformat(str(expires_at)) < now
+    except ValueError:
+        expired = True
+    if used_at is not None or expired:
+        await m.answer("Ссылка уже использована или устарела. Создайте новую ссылку в приложении.")
+        return True
+
+    telegram_id = m.from_user.id
+    if linked_telegram_id not in (None, telegram_id):
+        await db.execute(
+            "UPDATE telegram_link_tokens SET used_at=? WHERE token=?",
+            (now.isoformat(), token),
+        )
+        await db.commit()
+        await m.answer("Этот профиль FinTrack уже связан с другим Telegram-аккаунтом.")
+        return True
+
+    current_cur = await db.execute(
+        "SELECT id, username, onboarding_state FROM users WHERE id=? OR telegram_id=? LIMIT 1",
+        (telegram_id, telegram_id),
+    )
+    current = await current_cur.fetchone()
+    if current and int(current[0]) != int(app_user_id):
+        current_username = str(current[1] or "")
+        current_state = str(current[2] or "")
+        if current_state == "completed" and not current_username.startswith("tmp_tg_"):
+            await db.execute(
+                "UPDATE telegram_link_tokens SET used_at=? WHERE token=?",
+                (now.isoformat(), token),
+            )
+            await db.commit()
+            await m.answer(
+                "Вы открыли ссылку в Telegram, который уже связан с другим пользователем FinTrack.\n\n"
+                "Переключитесь на нужный Telegram-аккаунт или сначала отвяжите текущий профиль."
+            )
+            return True
+
+    try:
+        await db.commit()
+        await db.execute("PRAGMA foreign_keys = OFF;")
+        await db.execute("BEGIN IMMEDIATE")
+
+        tables_cur = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+        tables = []
+        for table_row in await tables_cur.fetchall():
+            table_name = str(table_row[0])
+            if table_name in {"users", "migrations"}:
+                continue
+            columns_cur = await db.execute(f"PRAGMA table_info(`{table_name}`)")
+            columns = {str(column[1]) for column in await columns_cur.fetchall()}
+            if "user_id" in columns:
+                tables.append(table_name)
+
+        if current and int(current[0]) != int(app_user_id):
+            for table in tables:
+                await db.execute(f"DELETE FROM `{table}` WHERE user_id=?", (telegram_id,))
+            await db.execute("DELETE FROM users WHERE id=?", (telegram_id,))
+
+        if int(app_user_id) != telegram_id:
+            await db.execute(
+                """
+                INSERT INTO user_id_aliases(old_user_id, current_user_id, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(old_user_id) DO UPDATE SET current_user_id=excluded.current_user_id
+                """,
+                (app_user_id, telegram_id, now.isoformat()),
+            )
+            await db.execute(
+                "UPDATE user_id_aliases SET current_user_id=? WHERE current_user_id=?",
+                (telegram_id, app_user_id),
+            )
+            for table in tables:
+                await db.execute(
+                    f"UPDATE `{table}` SET user_id=? WHERE user_id=?",
+                    (telegram_id, app_user_id),
+                )
+            await db.execute(
+                """
+                UPDATE users
+                SET id=?, telegram_id=?, onboarding_state='completed', onboarded=1
+                WHERE id=?
+                """,
+                (telegram_id, telegram_id, app_user_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE users SET telegram_id=?, onboarding_state='completed', onboarded=1 WHERE id=?",
+                (telegram_id, telegram_id),
+            )
+        await db.execute(
+            "UPDATE telegram_link_tokens SET used_at=? WHERE token=?",
+            (now.isoformat(), token),
+        )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("Failed to link app account from deep link: {}", exc)
+        await m.answer("Не удалось связать аккаунты. Попробуйте создать новую ссылку в приложении.")
+        return True
+    finally:
+        await db.execute("PRAGMA foreign_keys = ON;")
+
+    await state.clear()
+    lang = await get_lang(db, telegram_id)
+    menu_text = await build_main_menu_text(db, telegram_id, lang)
+    await m.answer(
+        f"✅ <b>{display_name or username}, аккаунт приложения подключён к Telegram.</b>\n\n"
+        "Все счета, операции и настройки уже доступны в боте.",
+        parse_mode=PARSE_MODE,
+    )
+    await m.answer(
+        menu_text,
+        reply_markup=await build_main_menu_markup(db, telegram_id, lang),
+        parse_mode=PARSE_MODE,
+    )
+    await m.answer(
+        "Чтобы подключить или продлить Premium, выберите подходящий вариант:",
+        reply_markup=upgrade_info_kb(lang),
+        parse_mode=PARSE_MODE,
+    )
+    return True
+
 @router.message(CommandStart())
 async def start(m: Message, state: FSMContext, db: aiosqlite.Connection):
     await state.clear()
+    text = (m.text or "").strip()
+    payload = text.split(maxsplit=1)[1] if " " in text else ""
+    if payload.startswith("link_"):
+        if await _link_app_account_from_token(m, state, db, payload.removeprefix("link_")):
+            return
     user_id = m.from_user.id
     
     # Check if user exists
@@ -245,6 +397,18 @@ async def process_link_password(m: Message, state: FSMContext, db: aiosqlite.Con
                 (temp_tg_id, app_user_id),
             )
 
+        await db.execute(
+            """
+            INSERT INTO user_id_aliases(old_user_id, current_user_id, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(old_user_id) DO UPDATE SET current_user_id=excluded.current_user_id
+            """,
+            (app_user_id, temp_tg_id, datetime.now(timezone.utc).isoformat()),
+        )
+        await db.execute(
+            "UPDATE user_id_aliases SET current_user_id=? WHERE current_user_id=?",
+            (temp_tg_id, app_user_id),
+        )
         await db.execute("UPDATE users SET id = ?, telegram_id = ? WHERE id = ?", (temp_tg_id, temp_tg_id, app_user_id))
 
         fk_cur = await db.execute("PRAGMA foreign_key_check")

@@ -8,6 +8,7 @@ import hmac
 import math
 from datetime import datetime, timezone, date, timedelta
 import calendar
+import secrets
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 
@@ -97,7 +98,13 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> int:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired session"
         )
-    return user_id
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT current_user_id FROM user_id_aliases WHERE old_user_id=?",
+            (user_id,),
+        )
+        alias = await cur.fetchone()
+        return int(alias[0]) if alias else user_id
 
 class RegisterRequest(BaseModel):
     display_name: str
@@ -1392,6 +1399,8 @@ async def delete_user_account_endpoint(user_id: int = Depends(get_current_user))
 async def export_report_endpoint(
     period: str = "month",
     lang: str = "ru",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     user_id: int = Depends(get_current_user),
 ):
     async with get_db() as db:
@@ -1410,10 +1419,22 @@ async def export_report_endpoint(
         currency = settings[0] if settings else "KZT"
         tz_name = settings[1] if settings else "Asia/Aqtobe"
 
-        try:
-            start_iso, end_iso, label = await _resolve_period(db, user_id, period)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid period: {e}")
+        if start_date and end_date:
+            try:
+                s_date = date.fromisoformat(start_date)
+                e_date = date.fromisoformat(end_date)
+                start_dt = datetime(s_date.year, s_date.month, s_date.day, 0, 0, 0, tzinfo=timezone.utc)
+                end_dt = datetime(e_date.year, e_date.month, e_date.day, 0, 0, 0, tzinfo=timezone.utc) + timedelta(days=1)
+                start_iso = start_dt.isoformat()
+                end_iso = end_dt.isoformat()
+                label = f"{s_date.strftime('%Y-%m-%d')}_{e_date.strftime('%Y-%m-%d')}"
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid date range: {e}")
+        else:
+            try:
+                start_iso, end_iso, label = await _resolve_period(db, user_id, period)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid period: {e}")
 
         rows = await _fetch_rows(db, user_id, start_iso, end_iso)
         if not rows:
@@ -1731,6 +1752,38 @@ async def upgrade_profile_to_premium(user_id: int = Depends(get_current_user)):
         status_code=403,
         detail="Premium activation must be confirmed by the Telegram payment flow",
     )
+
+@app.post("/api/telegram/link")
+async def create_telegram_link(user_id: int = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=15)
+    token = secrets.token_urlsafe(24)
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT telegram_id FROM users WHERE id=?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        await db.execute(
+            "DELETE FROM telegram_link_tokens WHERE user_id=? OR expires_at<? OR used_at IS NOT NULL",
+            (user_id, now.isoformat()),
+        )
+        await db.execute(
+            """
+            INSERT INTO telegram_link_tokens(token, user_id, purpose, expires_at, created_at)
+            VALUES (?, ?, 'premium', ?, ?)
+            """,
+            (token, user_id, expires_at.isoformat(), now.isoformat()),
+        )
+        await db.commit()
+        username = settings.bot_username.lstrip("@")
+        return {
+            "url": f"https://t.me/{username}?start=link_{token}",
+            "telegram_linked": row[0] is not None,
+            "expires_at": expires_at.isoformat(),
+        }
 
 @app.get("/api/user/settings")
 async def get_user_settings(user_id: int = Depends(get_current_user)):

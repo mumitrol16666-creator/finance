@@ -246,11 +246,11 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
               child: const Text('Позже', style: TextStyle(color: AppTheme.textSecondary)),
             ),
             TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                AppTheme.showPremiumBlockDialog(context);
+              onPressed: () async {
+                await AppTheme.openPremiumInTelegram(context);
+                if (context.mounted) Navigator.pop(context);
               },
-              child: const Text('Купить Premium', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+              child: const Text('Открыть Telegram-бота', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -523,11 +523,11 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
               child: const Text('Позже', style: TextStyle(color: AppTheme.textSecondary)),
             ),
             TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                AppTheme.showPremiumBlockDialog(context);
+              onPressed: () async {
+                await AppTheme.openPremiumInTelegram(context);
+                if (context.mounted) Navigator.pop(context);
               },
-              child: const Text('Купить Premium', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+              child: const Text('Открыть Telegram-бота', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
             ),
           ],
         );

@@ -261,36 +261,36 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Future<void> _exportExcel() async {
     setState(() => _isExporting = true);
     final appState = Provider.of<AppState>(context, listen: false);
-    final period = _activeTimeframe == 0
-        ? 'week'
-        : (_activeTimeframe == 1 ? 'month' : 'all');
+    final bounds = _getActivePeriodBounds(appState);
+    final startStr = DateFormat('yyyy-MM-dd').format(bounds.$1);
+    final endStr = DateFormat('yyyy-MM-dd').format(bounds.$2);
+    final fileName = 'finance_${startStr}_${endStr}_report.xlsx';
+
     try {
-      final bytes = await appState.exportExcelReport(period);
+      final bytes = await appState.exportExcelReport(startDate: startStr, endDate: endStr);
       if (bytes != null && bytes.isNotEmpty) {
-        await FileSaver.saveFile(bytes, "finance_${period}_report.xlsx");
+        await FileSaver.saveFile(bytes, fileName);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Отчёт Excel успешно экспортирован и сохранён в загрузки!'),
+            SnackBar(
+              content: Text('✅ Отчёт Excel за ${_formatPeriodLabel(appState)} готов'),
               backgroundColor: AppTheme.income,
             ),
           );
         }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('❌ Не удалось экспортировать отчет. Возможно, нет операций за этот период.'),
-              backgroundColor: AppTheme.expense,
-            ),
-          );
-        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ Не удалось получить файл отчёта'),
+            backgroundColor: AppTheme.expense,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('❌ Ошибка при экспорте отчета: $e'),
+            content: Text('❌ ${e.toString().replaceFirst('Exception: ', '')}'),
             backgroundColor: AppTheme.expense,
           ),
         );
@@ -1179,7 +1179,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                 ),
                                 SizedBox(height: 2),
                                 Text(
-                                  'Сводная книга Excel (XLSX)',
+                                  'Сводная книга Excel за выбранный период',
                                   style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
                                 ),
                               ],
