@@ -1422,8 +1422,12 @@ class AppState extends ChangeNotifier {
   Future<void> sendAiMessage(String text) async {
     if (text.trim().isEmpty) return;
     if (_token == null) return;
+    if (!hasFeature('ai')) {
+      throw Exception('premium_required');
+    }
 
-    _chatHistory.add(ChatMessage(text: text, isUser: true, timestamp: DateTime.now()));
+    final userMessage = ChatMessage(text: text, isUser: true, timestamp: DateTime.now());
+    _chatHistory.add(userMessage);
     notifyListeners();
 
     _isLoading = true;
@@ -1443,13 +1447,9 @@ class AppState extends ChangeNotifier {
         final data = json.decode(response.body);
         final reply = data['text'] as String;
         _chatHistory.add(ChatMessage(text: reply, isUser: false, timestamp: DateTime.now()));
-      } else if (response.statusCode == 429) {
-        _chatHistory.add(ChatMessage(
-          text: 'Вы превысили дневной лимит в 50 сообщений ИИ. Перейдите на Premium, чтобы снять ограничения.',
-          isUser: false,
-          timestamp: DateTime.now(),
-        ));
-        throw Exception('limit_exceeded');
+      } else if (response.statusCode == 403) {
+        _chatHistory.remove(userMessage);
+        throw Exception('premium_required');
       } else {
         _chatHistory.add(ChatMessage(
           text: 'Ошибка связи с сервером. Пожалуйста, попробуйте позже.',
@@ -1459,11 +1459,12 @@ class AppState extends ChangeNotifier {
       }
     } catch (e) {
       print('Chat error: $e');
-      _chatHistory.add(ChatMessage(
-        text: 'Ошибка сети. Проверьте подключение.',
-        isUser: false,
-        timestamp: DateTime.now(),
-      ));
+      if (e.toString().contains('premium_required')) {
+        _isLoading = false;
+        notifyListeners();
+        rethrow;
+      }
+      _chatHistory.add(ChatMessage(text: 'Ошибка сети. Проверьте подключение.', isUser: false, timestamp: DateTime.now()));
     }
 
     _isLoading = false;
