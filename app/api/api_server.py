@@ -126,6 +126,7 @@ class SettingsUpdateRequest(BaseModel):
     quiet_hours_end: Optional[str] = None
     debts_enabled: Optional[bool] = None
     debts_days_before: Optional[int] = None
+    app_tutorial_completed: Optional[bool] = None
 
 class CategoryUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -1773,7 +1774,7 @@ async def get_user_settings(user_id: int = Depends(get_current_user)):
                    telegram_notifications_enabled, push_notifications_enabled,
                    daily_report_enabled, daily_report_time,
                    quiet_hours_enabled, quiet_hours_start, quiet_hours_end,
-                   debts_enabled, debts_days_before
+                   debts_enabled, debts_days_before, app_tutorial_completed
             FROM settings WHERE user_id=?
             """,
             (user_id,),
@@ -1828,6 +1829,7 @@ async def update_settings(req: SettingsUpdateRequest, user_id: int = Depends(get
             "daily_report_enabled": req.daily_report_enabled,
             "quiet_hours_enabled": req.quiet_hours_enabled,
             "debts_enabled": req.debts_enabled,
+            "app_tutorial_completed": req.app_tutorial_completed,
         }
         for field, value in bool_fields.items():
             if value is not None:

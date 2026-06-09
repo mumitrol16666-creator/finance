@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme.dart';
 import 'core/tutorial_controller.dart';
 import 'providers/app_state.dart';
@@ -105,6 +104,9 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
   late PageController _pageController;
   bool _plannedAssistantShown = false;
   int _tutorialStep = -1;
+  int? _tutorialUserId;
+  int? _tutorialCheckedFor;
+  int? _tutorialCheckInProgressFor;
   final GlobalKey _overviewKey = GlobalKey();
   final GlobalKey _analyticsKey = GlobalKey();
   final GlobalKey _aiKey = GlobalKey();
@@ -123,15 +125,42 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
     TutorialController.requests.addListener(_restartTutorial);
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _showPlannedAssistant();
-      await _checkInteractiveTutorial();
-    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final appState = Provider.of<AppState>(context);
+    final userId = appState.currentUserId;
+    if (userId != null && userId != _tutorialUserId) {
+      _tutorialUserId = userId;
+      _tutorialCheckedFor = null;
+      _plannedAssistantShown = false;
+      _tutorialStep = -1;
+    }
+    if (userId != null && appState.appTutorialStatusLoaded && _tutorialCheckedFor != userId) {
+      _tutorialCheckedFor = userId;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _checkInteractiveTutorial();
+        await _showPlannedAssistant();
+      });
+    }
   }
 
   Future<void> _checkInteractiveTutorial() async {
-    final prefs = await SharedPreferences.getInstance();
-    if ((prefs.getBool('guided_tutorial_v2_shown') ?? false) || !mounted) return;
+    final appState = Provider.of<AppState>(context, listen: false);
+    final userId = appState.currentUserId;
+    if (userId == null ||
+        !appState.appTutorialStatusLoaded ||
+        appState.appTutorialCompleted ||
+        _tutorialCheckInProgressFor == userId) {
+      return;
+    }
+    _tutorialCheckInProgressFor = userId;
+    if (!mounted) {
+      _tutorialCheckInProgressFor = null;
+      return;
+    }
     final start = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -148,14 +177,14 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
     if (start == true && mounted) {
       _showTutorialStep(0);
     } else {
-      await prefs.setBool('guided_tutorial_v2_shown', true);
+      await appState.completeAppTutorial();
     }
+    _tutorialCheckInProgressFor = null;
   }
 
   Future<void> _finishTutorial() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('guided_tutorial_v2_shown', true);
     if (mounted) setState(() => _tutorialStep = -1);
+    await Provider.of<AppState>(context, listen: false).completeAppTutorial();
   }
 
   void _restartTutorial() {
