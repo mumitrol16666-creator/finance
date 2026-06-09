@@ -106,6 +106,23 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     });
   }
 
+  void _selectTransfer(AppState appState) {
+    if (!appState.hasFeature('transfer')) {
+      AppTheme.showPremiumBlockDialog(context);
+      return;
+    }
+    if (appState.accounts.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Для перевода нужно создать минимум два счёта'),
+          backgroundColor: AppTheme.expense,
+        ),
+      );
+      return;
+    }
+    setState(() => _kind = 'transfer');
+  }
+
   Future<void> _saveTransaction() async {
     final amountInt = int.tryParse(_amountStr) ?? 0;
     if (amountInt <= 0) {
@@ -140,13 +157,8 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           accountId: account.id,
         );
       } else if (_kind == 'transfer') {
-        if (!appState.isPremium) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('🔒 Функция перевода доступна только в Premium версии'),
-              backgroundColor: AppTheme.expense,
-            ),
-          );
+        if (!appState.hasFeature('transfer')) {
+          AppTheme.showPremiumBlockDialog(context);
           return;
         }
         if (_selectedToAccount == null) {
@@ -465,9 +477,8 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                           title: 'ПЕРЕВОД',
                           active: _kind == 'transfer',
                           activeColor: AppTheme.accentBlue,
-                          onTap: () => setState(() {
-                            _kind = 'transfer';
-                          }),
+                          locked: !appState.hasFeature('transfer'),
+                          onTap: () => _selectTransfer(appState),
                         ),
                       ),
                     ],
@@ -1299,7 +1310,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                   ],
 
                   // Auto-save settings shown only for income operations if savings accounts exist
-                  if (_kind == 'income' && savingsAccounts.isNotEmpty) ...[
+                  if (_kind == 'income' && savingsAccounts.isNotEmpty && appState.hasFeature('transfer')) ...[
                     GlassCard(
                       radius: 12,
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1478,6 +1489,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     required bool active,
     required Color activeColor,
     required VoidCallback onTap,
+    bool locked = false,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -1492,15 +1504,24 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
             width: 1.5,
           ),
         ),
-        child: Center(
-          child: Text(
-            title,
-            style: TextStyle(
-              color: active ? activeColor : AppTheme.textSecondary,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.0,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (locked) ...[
+              const Icon(Icons.lock_rounded, color: AppTheme.textSecondary, size: 13),
+              const SizedBox(width: 4),
+            ],
+            Flexible(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: active ? activeColor : AppTheme.textSecondary,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.0,
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
