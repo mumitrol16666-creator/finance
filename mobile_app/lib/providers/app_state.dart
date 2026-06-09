@@ -40,6 +40,15 @@ class AppState extends ChangeNotifier {
   bool _isAuthenticated = false;
   bool get isAuthenticated => _isAuthenticated;
 
+  int? _currentUserId;
+  int? get currentUserId => _currentUserId;
+
+  bool _appTutorialCompleted = false;
+  bool get appTutorialCompleted => _appTutorialCompleted;
+
+  bool _appTutorialStatusLoaded = false;
+  bool get appTutorialStatusLoaded => _appTutorialStatusLoaded;
+
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
@@ -304,9 +313,12 @@ class AppState extends ChangeNotifier {
       }
       
       final activeToken = prefs.getString('active_token');
-      if (activeToken != null) {
+      if (activeToken != null && _savedSessions.isNotEmpty) {
         final session = _savedSessions.firstWhere((s) => s.token == activeToken, orElse: () => _savedSessions.first);
         _token = session.token;
+        _currentUserId = session.userId;
+        _appTutorialCompleted = false;
+        _appTutorialStatusLoaded = false;
         await _loadCustomRates();
         _isAuthenticated = true;
         notifyListeners();
@@ -322,6 +334,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     
     _token = session.token;
+    _currentUserId = session.userId;
+    _appTutorialCompleted = false;
+    _appTutorialStatusLoaded = false;
     _isAuthenticated = true;
     await _loadCustomRates();
     
@@ -376,6 +391,9 @@ class AppState extends ChangeNotifier {
         final name = data['name'] as String;
 
         _token = token;
+        _currentUserId = userId;
+        _appTutorialCompleted = false;
+        _appTutorialStatusLoaded = false;
         await _loadCustomRates();
         _isAuthenticated = true;
         _isLoading = false;
@@ -437,6 +455,9 @@ class AppState extends ChangeNotifier {
         final name = data['name'] as String;
 
         _token = token;
+        _currentUserId = userId;
+        _appTutorialCompleted = false;
+        _appTutorialStatusLoaded = false;
         await _loadCustomRates();
         _isAuthenticated = true;
         _isLoading = false;
@@ -504,6 +525,7 @@ class AppState extends ChangeNotifier {
     bool? quietHoursEnabled,
     String? quietHoursStart,
     String? quietHoursEnd,
+    bool? appTutorialCompleted,
   }) async {
     if (_token == null) return;
     _isLoading = true;
@@ -521,6 +543,7 @@ class AppState extends ChangeNotifier {
       if (quietHoursEnabled != null) bodyMap['quiet_hours_enabled'] = quietHoursEnabled;
       if (quietHoursStart != null) bodyMap['quiet_hours_start'] = quietHoursStart;
       if (quietHoursEnd != null) bodyMap['quiet_hours_end'] = quietHoursEnd;
+      if (appTutorialCompleted != null) bodyMap['app_tutorial_completed'] = appTutorialCompleted;
 
       final response = await http.post(
         Uri.parse('$_baseUrl/api/user/settings'),
@@ -532,6 +555,10 @@ class AppState extends ChangeNotifier {
       );
 
       if (response.statusCode == 200) {
+        if (appTutorialCompleted != null) {
+          _appTutorialCompleted = appTutorialCompleted;
+          _appTutorialStatusLoaded = true;
+        }
         if (currency != null && currency != _baseCurrency) {
           await clearCustomRates();
           _baseCurrency = currency;
@@ -750,8 +777,14 @@ class AppState extends ChangeNotifier {
         _quietHoursStart = data['quiet_hours_start'] as String? ?? '22:00';
         _quietHoursEnd = data['quiet_hours_end'] as String? ?? '08:00';
         _language = data['lang'] as String? ?? 'ru';
+        _appTutorialCompleted = (data['app_tutorial_completed'] as int? ?? 0) == 1;
+        _appTutorialStatusLoaded = true;
       }
     } catch (_) {}
+  }
+
+  Future<void> completeAppTutorial() async {
+    await updateSettings(appTutorialCompleted: true);
   }
 
   Future<void> _fetchRecurringSilent() async {
@@ -827,6 +860,9 @@ class AppState extends ChangeNotifier {
 
   void logout() async {
     _token = null;
+    _currentUserId = null;
+    _appTutorialCompleted = false;
+    _appTutorialStatusLoaded = false;
     _isAuthenticated = false;
     _isPremium = false;
     _premiumExpirationDate = null;

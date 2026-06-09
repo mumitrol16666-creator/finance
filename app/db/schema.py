@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS settings (
   budget_cycle_start_day INTEGER NOT NULL DEFAULT 1,
   ai_chat_daily_date    TEXT,
   ai_chat_daily_used    INTEGER NOT NULL DEFAULT 0,
+  app_tutorial_completed INTEGER NOT NULL DEFAULT 0,
   created_at            TEXT    NOT NULL,
   updated_at            TEXT    NOT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
