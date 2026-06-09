@@ -10,6 +10,7 @@ import 'screens/add_transaction_screen.dart';
 import 'screens/ai_consultant_screen.dart';
 import 'screens/analytics_screen.dart';
 import 'screens/hub_screen.dart';
+import 'screens/accounts_screen.dart';
 import 'widgets/guided_tour_overlay.dart';
 
 void main() {
@@ -185,6 +186,7 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
   Future<void> _finishTutorial() async {
     if (mounted) setState(() => _tutorialStep = -1);
     await Provider.of<AppState>(context, listen: false).completeAppTutorial();
+    await _showPlannedAssistant();
   }
 
   void _restartTutorial() {
@@ -205,14 +207,78 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
 
   Future<void> _advanceFromAddStep() async {
     setState(() => _tutorialStep = -1);
-    await _openTransactionSheet(tutorialMode: true);
+    final appState = Provider.of<AppState>(context, listen: false);
+    if (appState.accounts.isEmpty && appState.isBusinessMode) {
+      appState.toggleBusinessMode(false);
+    }
+    if (appState.accounts.isEmpty) {
+      final openAccounts = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          backgroundColor: AppTheme.surface,
+          title: const Text('Сначала создадим счёт'),
+          content: const Text(
+            'Счёт нужен, чтобы приложение понимало, откуда списывать и куда зачислять деньги. Создайте первый счёт, затем мы откроем форму операции.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Позже')),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context, true),
+              icon: const Icon(Icons.account_balance_wallet_rounded),
+              label: const Text('Создать счёт'),
+            ),
+          ],
+        ),
+      );
+      if (openAccounts != true || !mounted) {
+        if (mounted) _showTutorialStep(1);
+        return;
+      }
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const AccountsScreen(
+            closeAfterAccountCreated: true,
+            openAddDialogOnStart: true,
+          ),
+        ),
+      );
+      if (!mounted) return;
+      if (appState.accounts.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Создайте счёт, чтобы добавить первую операцию')),
+        );
+        _showTutorialStep(1);
+        return;
+      }
+    }
+    final tutorialCompleted = await _openTransactionSheet(tutorialMode: true);
+    if (!mounted) return;
+    if (!tutorialCompleted) {
+      _showTutorialStep(1);
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Первая операция проведена'),
+        content: const Text(
+          'Отлично! Вы прошли главный сценарий FinTrack. Учебная операция удалена и не повлияла на ваши счета или историю.',
+        ),
+        actions: [
+          ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text('Продолжить обучение')),
+        ],
+      ),
+    );
     if (mounted) _showTutorialStep(2);
   }
 
-  Future<void> _openTransactionSheet({bool tutorialMode = false}) async {
+  Future<bool> _openTransactionSheet({bool tutorialMode = false}) async {
     final appState = Provider.of<AppState>(context, listen: false);
     final beforeCount = appState.transactions.length;
-    await showModalBottomSheet(
+    final tutorialCompleted = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: AppTheme.background,
@@ -235,10 +301,11 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
         const SnackBar(content: Text('Операция сохранена. Балансы и аналитика обновлены.')),
       );
     }
+    return tutorialCompleted == true;
   }
 
   Future<void> _showPlannedAssistant() async {
-    if (_plannedAssistantShown || !mounted) return;
+    if (_plannedAssistantShown || !mounted || _tutorialStep >= 0) return;
     _plannedAssistantShown = true;
     final appState = Provider.of<AppState>(context, listen: false);
     final today = DateTime.now().toIso8601String().split('T').first;
@@ -348,7 +415,9 @@ class _MainNavigationFrameState extends State<MainNavigationFrame> {
     final tutorialTitles = ['Главный экран', 'Добавление операции', 'Аналитика', 'ИИ-консультант', 'Сервисы'];
     final tutorialDescriptions = [
       'Здесь собраны общий баланс, последние операции, быстрые расходы и основные показатели.',
-      'Главная рабочая кнопка. Откроем форму, где можно добавить расход, доход или перевод между счетами.',
+      Provider.of<AppState>(context).accounts.isEmpty
+          ? 'Главная рабочая кнопка. Сначала поможем создать счёт, затем откроем форму первой операции.'
+          : 'Главная рабочая кнопка. Откроем форму, где можно добавить расход, доход или перевод между счетами.',
       'Раздел уже открыт. Здесь видны динамика денег, категории расходов и финансовые показатели.',
       'ИИ-консультант отвечает по вашим данным и помогает разобрать расходы.${Provider.of<AppState>(context).hasFeature('ai') ? '' : ' Раздел станет доступен после подключения Premium.'}',
       'Раздел уже открыт. Здесь находятся счета, категории, долги, автоплатежи и планы.',

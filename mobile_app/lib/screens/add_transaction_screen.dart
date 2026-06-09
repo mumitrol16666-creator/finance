@@ -148,6 +148,11 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
     final appState = Provider.of<AppState>(context, listen: false);
 
+    if (widget.showTutorialHint) {
+      Navigator.pop(context, true);
+      return;
+    }
+
     try {
       if (_selectedDebtId != null) {
         final account = appState.accounts.firstWhere((a) => a.name == _selectedAccount);
@@ -414,22 +419,29 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (widget.showTutorialHint) ...[
-            Container(
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
               margin: const EdgeInsets.only(bottom: 10),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: AppTheme.primary.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppTheme.primary.withOpacity(0.45)),
+                border: Border.all(color: _amountStr == '0' ? AppTheme.secondary : AppTheme.income, width: 1.5),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.school_rounded, color: AppTheme.primary, size: 20),
-                  SizedBox(width: 10),
+                  Icon(
+                    _amountStr == '0' ? Icons.touch_app_rounded : Icons.check_circle_outline_rounded,
+                    color: _amountStr == '0' ? AppTheme.secondary : AppTheme.income,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Выберите тип операции, введите сумму, укажите счёт и нажмите «Сохранить операцию».',
-                      style: TextStyle(color: AppTheme.textPrimary, fontSize: 11, height: 1.3),
+                      _amountStr == '0'
+                          ? 'Учебная операция не попадёт в историю. Шаг 1: введите любую сумму на клавиатуре ниже.'
+                          : 'Шаг 2: проверьте тип, категорию и счёт, затем нажмите подсвеченную кнопку «Сохранить операцию».',
+                      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11, height: 1.3),
                     ),
                   ),
                 ],
@@ -1436,8 +1448,15 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
           const SizedBox(height: 8),
 
           // Custom Numeric Keypad & Save Button in fixed space
-          SizedBox(
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
             height: isKeyboardVisible ? 60 : 260,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: widget.showTutorialHint && _amountStr == '0'
+                  ? Border.all(color: AppTheme.secondary, width: 2)
+                  : null,
+            ),
             child: Column(
               children: [
                 if (!isKeyboardVisible) ...[
@@ -1452,25 +1471,40 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 SizedBox(
                   width: double.infinity,
                   height: 52,
-                  child: ElevatedButton(
-                    onPressed: _saveTransaction,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      shadowColor: Colors.transparent,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: widget.showTutorialHint && _amountStr != '0'
+                          ? [
+                              BoxShadow(
+                                color: AppTheme.income.withOpacity(0.55),
+                                blurRadius: 18,
+                                spreadRadius: 3,
+                              ),
+                            ]
+                          : [],
                     ),
-                    child: Ink(
-                      decoration: BoxDecoration(
-                        gradient: AppTheme.primaryGradient,
-                        borderRadius: BorderRadius.circular(12),
+                    child: ElevatedButton(
+                      onPressed: _saveTransaction,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
-                      child: Container(
-                        alignment: Alignment.center,
-                        child: const Text(
-                          'Сохранить операцию',
-                          style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                      child: Ink(
+                        decoration: BoxDecoration(
+                          gradient: AppTheme.primaryGradient,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Container(
+                          alignment: Alignment.center,
+                          child: Text(
+                            widget.showTutorialHint ? 'Сохранить учебную операцию' : 'Сохранить операцию',
+                            style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                          ),
                         ),
                       ),
                     ),

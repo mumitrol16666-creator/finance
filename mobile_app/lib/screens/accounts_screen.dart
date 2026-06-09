@@ -5,18 +5,42 @@ import '../providers/app_state.dart';
 import '../models/models.dart';
 import '../utils/currency_utils.dart' as cu;
 
-class AccountsScreen extends StatelessWidget {
-  const AccountsScreen({super.key});
+class AccountsScreen extends StatefulWidget {
+  final bool closeAfterAccountCreated;
+  final bool openAddDialogOnStart;
+
+  const AccountsScreen({
+    super.key,
+    this.closeAfterAccountCreated = false,
+    this.openAddDialogOnStart = false,
+  });
+
+  @override
+  State<AccountsScreen> createState() => _AccountsScreenState();
+}
+
+class _AccountsScreenState extends State<AccountsScreen> {
+  bool _initialDialogScheduled = false;
 
   String _formatCurrency(int amount, String currency) {
     return cu.formatCurrency(amount, currency);
   }
 
-  void _showAddAccountDialog(BuildContext context, AppState appState) {
-    showDialog(
+  Future<void> _showAddAccountDialog(BuildContext context, AppState appState) async {
+    final created = await showDialog<bool>(
       context: context,
       builder: (context) => _AddAccountDialog(appState: appState),
     );
+    if (created == true && widget.closeAfterAccountCreated && context.mounted) {
+      Navigator.pop(context);
+    } else if (created == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Счёт успешно создан'),
+          backgroundColor: AppTheme.income,
+        ),
+      );
+    }
   }
 
   void _showEditAccountDialog(BuildContext context, AppState appState, Account acc) {
@@ -30,6 +54,12 @@ class AccountsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
     final accounts = appState.accounts;
+    if (widget.openAddDialogOnStart && !_initialDialogScheduled) {
+      _initialDialogScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showAddAccountDialog(context, appState);
+      });
+    }
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -380,7 +410,6 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
                   }
 
                   try {
-                    Navigator.pop(context);
                     await widget.appState.addAccount(
                       name: name,
                       balance: balance,
@@ -391,12 +420,7 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
                       isBusiness: isBusiness ? 1 : 0,
                       currency: currency,
                     );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('✅ Счёт "$name" успешно создан!'),
-                        backgroundColor: AppTheme.income,
-                      ),
-                    );
+                    if (mounted) Navigator.pop(context, true);
                   } catch (e) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
