@@ -905,6 +905,9 @@ class AppState extends ChangeNotifier {
     double? customRate,
   }) async {
     if (_token == null) return;
+    if (kind == 'transfer' && !hasFeature('transfer')) {
+      throw Exception('Функция перевода доступна только в Premium версии');
+    }
     _isLoading = true;
     notifyListeners();
 
