@@ -40,12 +40,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final activeAccounts = appState.accounts.where((a) => !a.isSaving && a.accType != 'deposit').toList();
     final targetAccount = activeAccounts.isNotEmpty ? activeAccounts.first : appState.accounts.first;
 
-    // Find category for default account
-    Account? initialAccount;
+    late final Category templateCategory;
     try {
-      final cat = appState.categories.firstWhere((c) => c.name == template.categoryName);
-      if (cat.defaultAccountId != null && cat.defaultAccountId! > 0) {
-        initialAccount = appState.accounts.firstWhere((a) => a.id == cat.defaultAccountId);
+      templateCategory = appState.categories.firstWhere(
+        (c) => c.name == template.categoryName && c.kind == template.kind,
+      );
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Категория этой быстрой операции больше недоступна. Настройте её заново.')),
+      );
+      return;
+    }
+
+    Account? initialAccount;
+    if (template.accountId != null) {
+      try {
+        initialAccount = appState.accounts.firstWhere((a) => a.id == template.accountId);
+      } catch (_) {}
+    }
+    try {
+      if (initialAccount == null && templateCategory.defaultAccountId != null && templateCategory.defaultAccountId! > 0) {
+        initialAccount = appState.accounts.firstWhere((a) => a.id == templateCategory.defaultAccountId);
       }
     } catch (_) {}
     initialAccount ??= targetAccount;
@@ -71,7 +86,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Быстрый ввод: ${template.title}',
+                      'Быстрая операция: ${template.title}',
                       style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -108,9 +123,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    const Text(
-                      'Списать со счёта:',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                    Text(
+                      template.kind == 'income' ? 'Зачислить на счёт:' : 'Списать со счёта:',
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<Account>(
@@ -181,7 +196,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     try {
                       await appState.addTransaction(
                         amount: enteredAmount,
-                        kind: 'expense',
+                        kind: template.kind,
                         categoryName: template.categoryName,
                         categoryEmoji: template.categoryEmoji,
                         accountName: selectedAccount!.name,
@@ -189,7 +204,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('✅ Добавлен расход: ${template.title} — $enteredAmount ${selectedAccount!.currency}'),
+                          content: Text(
+                            '✅ ${template.kind == 'income' ? 'Добавлен доход' : 'Добавлен расход'}: '
+                            '${template.title} — $enteredAmount ${selectedAccount!.currency}',
+                          ),
                           backgroundColor: AppTheme.income,
                         ),
                       );
@@ -251,39 +269,126 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 24),
                   const Text(
-                    'Настройка быстрого расхода',
+                    'Быстрые операции',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 16),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: templates.length,
-                    itemBuilder: (context, index) {
-                      final template = templates[index];
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: AppTheme.glassCardDecoration(radius: 12),
-                        child: ListTile(
-                          leading: Text(template.categoryEmoji, style: const TextStyle(fontSize: 24)),
-                          title: Text(template.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          subtitle: Text('${_formatBase(template.amount)} • ${template.categoryName}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                          trailing: const Icon(Icons.edit_outlined, color: AppTheme.primary, size: 20),
-                          onTap: () async {
-                            final changed = await _showEditQuickAddTemplateDialog(context, appState, template);
-                            if (changed == true) {
-                              setSheetState(() {});
-                            }
-                          },
-                        ),
-                      );
-                    },
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Перетащите операции, чтобы изменить порядок',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Готово', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.52),
+                    child: templates.isEmpty
+                        ? const Center(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 24),
+                              child: Text('Добавьте первую быструю операцию', style: TextStyle(color: AppTheme.textSecondary)),
+                            ),
+                          )
+                        : ReorderableListView.builder(
+                            shrinkWrap: true,
+                            buildDefaultDragHandles: false,
+                            itemCount: templates.length,
+                            onReorder: (oldIndex, newIndex) async {
+                              await appState.reorderQuickAddTemplates(oldIndex, newIndex);
+                              setSheetState(() {});
+                            },
+                            itemBuilder: (context, index) {
+                              final template = templates[index];
+                              Account? account;
+                              try {
+                                account = appState.accounts.firstWhere((a) => a.id == template.accountId);
+                              } catch (_) {}
+                              return Container(
+                                key: ValueKey(template.id),
+                                margin: const EdgeInsets.only(bottom: 10),
+                                decoration: AppTheme.glassCardDecoration(radius: 8),
+                                child: ListTile(
+                                  leading: Text(template.categoryEmoji, style: const TextStyle(fontSize: 24)),
+                                  title: Text(template.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                  subtitle: Text(
+                                    '${template.kind == 'income' ? 'Доход' : 'Расход'} • ${_formatQuickTemplateAmount(appState, template)}'
+                                    '\n${template.categoryName}${account == null ? '' : ' • ${account.name}'}',
+                                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                                  ),
+                                  isThreeLine: true,
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        tooltip: 'Редактировать',
+                                        icon: const Icon(Icons.edit_outlined, color: AppTheme.primary, size: 20),
+                                        onPressed: () async {
+                                          final changed = await _showEditQuickAddTemplateDialog(context, appState, template);
+                                          if (changed == true) setSheetState(() {});
+                                        },
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Удалить',
+                                        icon: const Icon(Icons.delete_outline, color: AppTheme.expense, size: 20),
+                                        onPressed: () async {
+                                          final confirmed = await showDialog<bool>(
+                                            context: context,
+                                            builder: (context) => AlertDialog(
+                                              title: const Text('Удалить быструю операцию?'),
+                                              content: Text('«${template.title}» исчезнет с главной.'),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed: () => Navigator.pop(context, false),
+                                                  child: const Text('Отмена'),
+                                                ),
+                                                TextButton(
+                                                  onPressed: () => Navigator.pop(context, true),
+                                                  child: const Text('Удалить'),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                          if (confirmed == true) {
+                                            await appState.deleteQuickAddTemplate(template.id);
+                                            setSheetState(() {});
+                                          }
+                                        },
+                                      ),
+                                      ReorderableDragStartListener(
+                                        index: index,
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(8),
+                                          child: Icon(Icons.drag_handle, color: AppTheme.textSecondary),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final changed = await _showEditQuickAddTemplateDialog(context, appState, null);
+                            if (changed == true) setSheetState(() {});
+                          },
+                          icon: const Icon(Icons.add),
+                          label: const Text('Добавить'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Готово'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -294,20 +399,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Future<bool?> _showEditQuickAddTemplateDialog(BuildContext context, AppState appState, QuickAddTemplate template) {
-    final titleController = TextEditingController(text: template.title);
-    final amountController = TextEditingController(text: template.amount.toString());
-    
-    // Filter categories to only expense ones
-    final expenseCategories = appState.categories.where((c) => c.kind == 'expense').toList();
-    
+  Future<bool?> _showEditQuickAddTemplateDialog(
+    BuildContext context,
+    AppState appState,
+    QuickAddTemplate? template,
+  ) {
+    final titleController = TextEditingController(text: template?.title ?? '');
+    final amountController = TextEditingController(text: template?.amount.toString() ?? '');
+    String selectedKind = template?.kind ?? 'expense';
+    List<Category> matchingCategories() => appState.categories.where((c) => c.kind == selectedKind).toList();
     Category? selectedCategory;
     try {
-      selectedCategory = expenseCategories.firstWhere((c) => c.name == template.categoryName);
+      selectedCategory = matchingCategories().firstWhere((c) => c.name == template?.categoryName);
     } catch (_) {
-      if (expenseCategories.isNotEmpty) {
-        selectedCategory = expenseCategories.first;
-      }
+      if (matchingCategories().isNotEmpty) selectedCategory = matchingCategories().first;
+    }
+    Account? selectedAccount;
+    final templateAccountId = template?.accountId;
+    if (templateAccountId != null) {
+      try {
+        selectedAccount = appState.accounts.firstWhere((a) => a.id == templateAccountId);
+      } catch (_) {}
     }
 
     return showDialog<bool>(
@@ -321,7 +433,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 borderRadius: BorderRadius.circular(16),
                 side: const BorderSide(color: AppTheme.border),
               ),
-              title: const Text('Редактировать шаблон', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+              title: Text(
+                template == null ? 'Новая быстрая операция' : 'Настроить операцию',
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+              ),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -338,6 +453,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'expense', label: Text('Расход'), icon: Icon(Icons.remove_circle_outline)),
+                        ButtonSegment(value: 'income', label: Text('Доход'), icon: Icon(Icons.add_circle_outline)),
+                      ],
+                      selected: {selectedKind},
+                      onSelectionChanged: (selection) {
+                        setDialogState(() {
+                          selectedKind = selection.first;
+                          final categories = matchingCategories();
+                          selectedCategory = categories.isEmpty ? null : categories.first;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
                     TextField(
                       controller: amountController,
                       keyboardType: TextInputType.number,
@@ -345,7 +475,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       decoration: InputDecoration(
                         labelText: 'Сумма по умолчанию',
                         labelStyle: const TextStyle(color: AppTheme.textSecondary),
-                        suffixText: cu.currencySymbol(appState.baseCurrency),
+                        suffixText: cu.currencySymbol(selectedAccount?.currency ?? appState.baseCurrency),
                         suffixStyle: const TextStyle(color: Colors.white70),
                         enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.border)),
                         focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: AppTheme.primary)),
@@ -353,7 +483,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 20),
                     const Text(
-                      'Категория расхода:',
+                      'Категория:',
                       style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                     ),
                     const SizedBox(height: 8),
@@ -378,7 +508,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           borderSide: const BorderSide(color: AppTheme.primary),
                         ),
                       ),
-                      items: expenseCategories.map((cat) {
+                      items: matchingCategories().map((cat) {
                         return DropdownMenuItem<Category>(
                           value: cat,
                           child: Text('${cat.emoji} ${cat.name}'),
@@ -389,6 +519,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           selectedCategory = val;
                         });
                       },
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Счёт по умолчанию:',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<Account>(
+                      dropdownColor: AppTheme.surfaceCard,
+                      value: selectedAccount,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.02),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      items: [
+                        const DropdownMenuItem<Account>(value: null, child: Text('Выбирать при добавлении')),
+                        ...appState.accounts.map((account) => DropdownMenuItem<Account>(
+                          value: account,
+                          child: Text('${account.name} (${account.currency})'),
+                        )),
+                      ],
+                      onChanged: (val) => setDialogState(() => selectedAccount = val),
                     ),
                   ],
                 ),
@@ -421,13 +576,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       return;
                     }
 
-                    await appState.updateQuickAddTemplate(
-                      template.id,
-                      title: title,
-                      amount: amount,
-                      categoryName: selectedCategory!.name,
-                      categoryEmoji: selectedCategory!.emoji,
-                    );
+                    if (template == null) {
+                      await appState.addQuickAddTemplate(
+                        title: title,
+                        amount: amount,
+                        kind: selectedKind,
+                        categoryName: selectedCategory!.name,
+                        categoryEmoji: selectedCategory!.emoji,
+                        accountId: selectedAccount?.id,
+                      );
+                    } else {
+                      await appState.updateQuickAddTemplate(
+                        template.id,
+                        title: title,
+                        amount: amount,
+                        kind: selectedKind,
+                        categoryName: selectedCategory!.name,
+                        categoryEmoji: selectedCategory!.emoji,
+                        accountId: selectedAccount?.id,
+                      );
+                    }
 
                     Navigator.pop(context, true);
                   },
@@ -451,6 +619,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _formatCurrency(int amount, String currency) {
     return cu.formatCurrency(amount, currency);
+  }
+
+  String _formatQuickTemplateAmount(AppState appState, QuickAddTemplate template) {
+    String currency = appState.baseCurrency;
+    if (template.accountId != null) {
+      try {
+        currency = appState.accounts.firstWhere((account) => account.id == template.accountId).currency;
+      } catch (_) {}
+    }
+    return cu.formatCurrency(template.amount, currency);
   }
 
   /// Format amount in user's base currency
@@ -1585,7 +1763,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        'Быстрый расход',
+                        'Быстрые операции',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
                       ),
                       IconButton(
@@ -1604,8 +1782,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
-                      itemCount: quickAddTemplates.length,
+                      itemCount: quickAddTemplates.length + 1,
                       itemBuilder: (context, index) {
+                        if (index == quickAddTemplates.length) {
+                          return GestureDetector(
+                            onTap: () async {
+                              await _showEditQuickAddTemplateDialog(context, appState, null);
+                            },
+                            child: Container(
+                              margin: const EdgeInsets.only(right: 12),
+                              child: GlassCard(
+                                radius: 8,
+                                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                                child: const Icon(Icons.add, color: AppTheme.primary),
+                              ),
+                            ),
+                          );
+                        }
                         final template = quickAddTemplates[index];
                         return GestureDetector(
                           onTap: () => _quickAdd(context, appState, template),
@@ -1628,7 +1821,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        _formatBase(template.amount),
+                                        _formatQuickTemplateAmount(appState, template),
                                         style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
                                       ),
                                     ],

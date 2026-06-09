@@ -299,15 +299,19 @@ class QuickAddTemplate {
   final int id;
   final String title;
   final int amount;
+  final String kind;
   final String categoryName;
   final String categoryEmoji;
+  final int? accountId;
 
   QuickAddTemplate({
     required this.id,
     required this.title,
     required this.amount,
+    this.kind = 'expense',
     required this.categoryName,
     required this.categoryEmoji,
+    this.accountId,
   });
 
   factory QuickAddTemplate.fromJson(Map<String, dynamic> json) {
@@ -315,8 +319,10 @@ class QuickAddTemplate {
       id: json['id'] as int,
       title: json['title'] as String? ?? '',
       amount: json['amount'] as int? ?? 0,
+      kind: json['kind'] as String? ?? 'expense',
       categoryName: json['category_name'] as String? ?? json['categoryName'] as String? ?? 'Прочее',
       categoryEmoji: json['category_emoji'] as String? ?? json['categoryEmoji'] as String? ?? '📦',
+      accountId: json['account_id'] as int? ?? json['accountId'] as int?,
     );
   }
 
@@ -324,7 +330,9 @@ class QuickAddTemplate {
     'id': id,
     'title': title,
     'amount': amount,
+    'kind': kind,
     'category_name': categoryName,
     'category_emoji': categoryEmoji,
+    'account_id': accountId,
   };
 }
