@@ -48,6 +48,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+if len(settings.secret_key) < 32:
+    raise RuntimeError("SECRET_KEY must contain at least 32 characters")
+
 SECRET_KEY = settings.secret_key.encode()
 SUPPORTED_CURRENCIES = {"KZT", "USD", "EUR", "RUB"}
 

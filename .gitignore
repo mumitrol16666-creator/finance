@@ -97,3 +97,5 @@ build/*
 *.bak
 *.tmp
 *.temp
+/scratch/
+/codebase_export.txt
