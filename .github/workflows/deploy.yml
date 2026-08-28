@@ -1,0 +1,223 @@
+# =============================================================================
+# GitHub Actions — Auto-deploy FinanceBot to server
+# =============================================================================
+# Triggers on push to `main` branch.
+# Connects to your server via SSH and deploys the latest code.
+#
+# ── Required GitHub Secrets (Settings → Secrets and variables → Actions) ──
+#
+#   SERVER_HOST        — IP-адрес или домен сервера (например 123.45.67.89)
+#   SERVER_USER        — SSH-пользователь (например root или deploy)
+#   SERVER_SSH_KEY     — Приватный SSH-ключ (содержимое id_rsa / id_ed25519)
+#   SERVER_PORT        — (опционально) SSH-порт, по умолчанию 22
+#
+# =============================================================================
+
+name: Deploy FinanceBot
+
+on:
+  push:
+    branches: [master]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  validate-python:
+    name: Validate Python 3.14 backend
+    runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: ci-validation-token
+      SECRET_KEY: ci-only-secret-key-for-backend-validation
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          cache: pip
+
+      - name: Install backend dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Validate backend
+        run: |
+          python -m pip check
+          python -m compileall -q app main.py scripts
+          python scripts/check_backend_workflows.py
+
+  deploy:
+    name: 🚀 Deploy to Server
+    needs: validate-python
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout code ───────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Build the Flutter web app from source ──────────────────────
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Flutter web app
+        working-directory: mobile_app
+        run: |
+          flutter pub get
+          flutter build web --release
+
+      # ── 3. Deploy backend via SSH ──────────────────────────────────────
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.PORT || 22 }}
+          script: |
+            set -e
+
+            # Ensure github.com is in known_hosts to bypass host key verification
+            mkdir -p ~/.ssh
+            ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+            APP_DIR="/opt/finance-bot"
+            REPO_URL="https://${{ github.token }}@github.com/${{ github.repository }}.git"
+            BRANCH="master"
+            PREVIOUS_REV=""
+            DB_BACKUP=""
+
+            rollback() {
+              echo "Deploy failed. Rolling back code and database..."
+              sudo systemctl stop finance-bot finance-api || true
+              if [ -n "$DB_BACKUP" ] && [ -f "$DB_BACKUP" ]; then
+                cp "$DB_BACKUP" "$APP_DIR/data/bot.db"
+              fi
+              if [ -n "$PREVIOUS_REV" ]; then
+                cd "$APP_DIR"
+                git reset --hard "$PREVIOUS_REV"
+              fi
+              sudo systemctl start finance-bot finance-api finance-web || true
+            }
+            trap rollback ERR
+
+            echo "▸ Deploying $BRANCH to $APP_DIR …"
+
+            # Clone or pull latest code
+            if [ ! -d "$APP_DIR" ]; then
+              git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+              cd "$APP_DIR"
+            else
+              cd "$APP_DIR"
+              PREVIOUS_REV="$(git rev-parse HEAD 2>/dev/null || true)"
+              if [ ! -d ".git" ]; then
+                git init
+              fi
+              git remote remove origin 2>/dev/null || true
+              git remote add origin "$REPO_URL"
+              git fetch origin "$BRANCH"
+              git reset --hard "origin/$BRANCH"
+              git clean -fd
+            fi
+
+            # Ensure API secrets exist before any validation imports the API.
+            if [ ! -f "$APP_DIR/.env" ] && [ -f "/root/Finance_bot/.env" ]; then
+              echo "▸ Migrating .env from /root/Finance_bot to $APP_DIR …"
+              cp /root/Finance_bot/.env "$APP_DIR/.env"
+            fi
+            if ! grep -Eq '^SECRET_KEY=.{32,}$' "$APP_DIR/.env" 2>/dev/null; then
+              printf '\nSECRET_KEY=%s\n' "$(openssl rand -hex 32)" >> "$APP_DIR/.env"
+              echo "Generated a persistent API signing key. Existing sessions must log in again."
+            fi
+
+            # Create virtual environment if missing
+            if [ ! -d ".venv" ]; then
+              python3 -m venv .venv
+            fi
+
+            # Install / update dependencies
+            .venv/bin/pip install --upgrade pip
+            .venv/bin/pip install -r requirements.txt
+            .venv/bin/python scripts/check_backend_workflows.py
+
+            # ── Migration & Systemd Service Update ──────────────────────────
+            # Database is now exclusively in /opt/finance-bot/data/bot.db
+            # We no longer sync from /root/Finance_bot to avoid overwriting!
+            mkdir -p "$APP_DIR/data"
+
+            # Stop database writers, make a backup, then migrate once.
+            sudo systemctl stop finance-bot finance-api || true
+            if [ -f "$APP_DIR/data/bot.db" ]; then
+              mkdir -p "/opt/finance-bot-backups"
+              DB_BACKUP="/opt/finance-bot-backups/bot-$(date +%Y%m%d-%H%M%S).db"
+              cp "$APP_DIR/data/bot.db" "$DB_BACKUP"
+            fi
+            .venv/bin/python scripts/run_migrations.py
+
+            # 3. Copy service files and reload systemd to switch to /opt/finance-bot
+            echo "▸ Updating systemd service files …"
+            sudo cp "$APP_DIR/finance-bot.service" /etc/systemd/system/finance-bot.service
+            sudo cp "$APP_DIR/finance-api.service" /etc/systemd/system/finance-api.service
+            sudo cp "$APP_DIR/finance-web.service" /etc/systemd/system/finance-web.service
+            sudo systemctl daemon-reload
+
+            # Restart the bot, API, and web server (systemd services)
+            echo "=== SYSTEMD SERVICE INFO ==="
+            sudo systemctl cat finance-bot || true
+            sudo systemctl cat finance-api || true
+            sudo systemctl cat finance-web || true
+            
+            echo "=== PYTHON PROCESSES BEFORE RESTART ==="
+            ps aux | grep python || true
+
+            sudo systemctl start finance-bot
+            sudo systemctl start finance-api
+            sudo systemctl enable finance-web
+            sudo systemctl restart finance-web
+
+            echo "=== VERIFYING SERVICES ==="
+            sudo systemctl is-active --quiet finance-bot
+            sudo systemctl is-active --quiet finance-api
+            sudo systemctl is-active --quiet finance-web
+            curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8000/health
+            curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8080/ >/dev/null
+
+            echo "=== PYTHON PROCESSES AFTER RESTART ==="
+            ps aux | grep python || true
+
+            trap - ERR
+            rm -rf /tmp/finance-web-next
+            echo "✓ Deploy complete"
+
+      # ── 4. Upload the freshly built web app ───────────────────────────
+      - name: Upload Flutter web build
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.PORT || 22 }}
+          source: "mobile_app/build/web/*"
+          target: "/tmp/finance-web-next"
+          strip_components: 3
+          overwrite: true
+
+      - name: Activate Flutter web build
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.PORT || 22 }}
+          script: |
+            set -e
+            rm -rf /opt/finance-bot/mobile_app/build/web
+            mkdir -p /opt/finance-bot/mobile_app/build
+            mv /tmp/finance-web-next /opt/finance-bot/mobile_app/build/web
+            sudo systemctl restart finance-web
+            curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8080/ >/dev/null
