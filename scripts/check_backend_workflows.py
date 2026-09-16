@@ -29,6 +29,7 @@ from app.db.migrate import run_migrations
 from app.db.repositories.settings_repo import list_notify_targets
 from app.domain.auth import hash_password
 from app.scheduler.notify_scheduler import _is_in_quiet_hours
+from scripts.check_financial_integrity import check as check_financial_integrity
 
 
 async def check() -> None:
@@ -118,6 +119,11 @@ async def check() -> None:
         Path(f"{path}{suffix}").unlink(missing_ok=True)
 
 
+async def run_all_checks() -> None:
+    await check()
+    await check_financial_integrity()
+
+
 if __name__ == "__main__":
-    asyncio.run(check())
-    print("Backend workflow checks OK")
+    asyncio.run(run_all_checks())
+    print("Backend workflow and financial integrity checks OK")
