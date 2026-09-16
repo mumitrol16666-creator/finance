@@ -30,6 +30,7 @@ from app.db.repositories.settings_repo import list_notify_targets
 from app.domain.auth import hash_password
 from app.scheduler.notify_scheduler import _is_in_quiet_hours
 from scripts.check_financial_integrity import check as check_financial_integrity
+from scripts.check_deposit_accrual_concurrency import check as check_deposit_accrual_concurrency
 
 
 async def check() -> None:
@@ -122,6 +123,7 @@ async def check() -> None:
 async def run_all_checks() -> None:
     await check()
     await check_financial_integrity()
+    await check_deposit_accrual_concurrency()
 
 
 if __name__ == "__main__":
