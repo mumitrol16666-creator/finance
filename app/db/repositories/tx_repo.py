@@ -21,6 +21,18 @@ async def _category_belongs_to_user(db: aiosqlite.Connection, user_id: int, cate
     return await cur.fetchone() is not None
 
 
+async def _linked_debt_payment(db: aiosqlite.Connection, user_id: int, tx_id: int):
+    try:
+        cur = await db.execute(
+            "SELECT debt_id FROM debt_payments WHERE user_id=? AND tx_id=? LIMIT 1",
+            (user_id, tx_id),
+        )
+        return await cur.fetchone()
+    except Exception:
+        # Older databases may not have the debt_payments table until migrations run.
+        return None
+
+
 async def create_tx(db: aiosqlite.Connection, user_id: int, ts_iso: str, tx_type: str, amount: int,
                     account_id: int, category_id: int | None, note: str | None, created_at: str,
                     related_tx_id: int | None = None, tier: str = 'routine') -> int:
@@ -91,6 +103,10 @@ async def delete_tx(db: aiosqlite.Connection, user_id: int, tx_id: int):
             return False, "not_found"
 
         _id, tx_type, amount, account_id, related = row
+
+        if await _linked_debt_payment(db, user_id, tx_id):
+            await db.rollback()
+            return False, "linked_debt_payment"
 
         from datetime import datetime, timezone
         deleted_at = datetime.now(timezone.utc).isoformat()
@@ -283,6 +299,10 @@ async def update_tx(db: aiosqlite.Connection, user_id: int, tx_id: int, *,
             return False
 
         tx_id, ttype, amount, account_id, category_id, note, related_tx_id = row
+
+        if await _linked_debt_payment(db, user_id, tx_id):
+            await db.rollback()
+            return False
 
         if new_category_id is not None and new_category_id != -1:
             if not await _category_belongs_to_user(db, user_id, int(new_category_id)):
