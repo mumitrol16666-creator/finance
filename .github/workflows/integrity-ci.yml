@@ -1,0 +1,37 @@
+name: Financial Integrity CI
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  backend-integrity:
+    name: Backend financial integrity
+    runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: ci-validation-token
+      SECRET_KEY: ci-only-secret-key-for-backend-validation
+      OPENAI_API_KEY: ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip check
+
+      - name: Compile backend
+        run: python -m compileall -q app main.py scripts
+
+      - name: Run workflow and financial integrity checks
+        run: python scripts/check_backend_workflows.py
