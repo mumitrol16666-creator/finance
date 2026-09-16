@@ -6,9 +6,9 @@ Branch: `refactor/financial-integrity-v1`
 
 - [x] Serialize deposit interest accrual before reading accrual markers.
 - [x] Add a regression script for concurrent deposit accrual.
-- [ ] Move transaction update/delete reads inside the write lock.
-- [ ] Preserve destination amount / FX rate when editing cross-currency transfers.
-- [ ] Validate ownership of account/category targets before balance mutations.
+- [x] Move transaction update/delete reads inside the write lock.
+- [x] Preserve destination amount / FX ratio when editing cross-currency transfers.
+- [x] Validate ownership of account/category targets before balance mutations.
 - [ ] Add idempotency keys for planned, recurring, debt-payment and deposit occurrences.
 - [ ] Make debt payment, transaction and debt history mutations one atomic command.
 
@@ -21,8 +21,8 @@ Branch: `refactor/financial-integrity-v1`
 
 ## P1 — test gate
 
-- [ ] Add concurrency/invariant checks to CI before deploy.
-- [ ] Add transaction/transfer/debt/planned regression tests.
+- [x] Add concurrency/invariant checks to the existing backend CI gate.
+- [ ] Add debt/planned/recurring idempotency regression tests.
 - [ ] Add real Flutter widget/integration tests and remove template counter test.
 
 ## P1 — architecture
