@@ -181,7 +181,45 @@ async def check() -> None:
         assert await _balance(path, ids["main"]) == 98000
         assert await _balance(path, ids["other"]) == 50000
 
-        # 5. FX edits preserve the original conversion ratio.
+        # 5. Transactions linked to debt history cannot be edited/deleted through
+        # the generic transaction API; otherwise debt balance and payment history
+        # would diverge from the account ledger.
+        now = "2026-09-16T01:30:00+00:00"
+        db = await open_db(str(path))
+        try:
+            debt = await db.execute(
+                "INSERT INTO debts(user_id,direction,dtype,title,total_amount,remaining_amount,payment_amount,"
+                "next_payment_date,status,is_active,created_at,updated_at) "
+                "VALUES(1,'out','private','Linked debt',5000,3000,2000,'2026-10-01','active',1,?,?)",
+                (now, now),
+            )
+            debt_id = int(debt.lastrowid)
+            await db.execute(
+                "INSERT INTO debt_payments(debt_id,user_id,tx_id,account_id,amount,payment_date,created_at) "
+                "VALUES(?,?,?,?,?,date('now'),datetime('now'))",
+                (debt_id, 1, tx_id, ids["main"], 2000),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        db = await open_db(str(path))
+        try:
+            deleted, reason = await delete_tx(db, 1, tx_id)
+        finally:
+            await db.close()
+        assert deleted is False and reason == "linked_debt_payment"
+        assert await _balance(path, ids["main"]) == 98000
+
+        db = await open_db(str(path))
+        try:
+            ok = await update_tx(db, 1, tx_id, new_amount=2500)
+        finally:
+            await db.close()
+        assert ok is False
+        assert await _balance(path, ids["main"]) == 98000
+
+        # 6. FX edits preserve the original conversion ratio.
         now = "2026-09-16T02:00:00+00:00"
         db = await open_db(str(path))
         try:
